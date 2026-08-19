@@ -227,6 +227,11 @@ const stockHoldingsTool = {
 
 // ============= 插件入口 =============
 
+// Cordis 插件契约：必须导出 name 和 inject（声明依赖的服务），
+// 否则访问 ctx.tools 会抛 "cannot get property 'tools' without inject"。
+const name = "dsh-plugin-stock";
+const inject = ["tools", "systemPrompt"];
+
 async function apply(ctx) {
     // 注册 4 个 AI 工具（原始对象，完整 JSON Schema）
     ctx.tools.register(stockQuoteTool);
@@ -268,4 +273,4 @@ DSH 股票监控插件已激活。你拥有以下工具：
     ctx.logger?.info?.("dsh-plugin-stock: 已注册 stock_quote / stock_kline / stock_screen / stock_holdings 工具");
 }
 
-export { apply };
+export { apply, inject, name };

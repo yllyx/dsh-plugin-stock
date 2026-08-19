@@ -13,6 +13,11 @@
 - 龙虎榜/北向资金集成
 - 自选股导入导出
 
+## [0.2.5] - 2026-08-19
+
+### 修复
+- **修复 `cannot get property "tools" without inject`**：Cordis 插件契约要求模块导出 `name` 和 `inject` 数组才能访问 `ctx.tools` 等服务；补充导出 `inject = ["tools", "systemPrompt"]`（与 dsh-mnemon 同款做法）
+
 ## [0.2.4] - 2026-08-19
 
 ### 修复
