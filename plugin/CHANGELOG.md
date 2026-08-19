@@ -13,6 +13,14 @@
 - 龙虎榜/北向资金集成
 - 自选股导入导出
 
+## [0.2.2] - 2026-08-19
+
+### 修复
+- 修复 package.json 中 3 处 `your-name` 占位符（repository / bugs / homepage URL）
+- 重命名 catalog-submission 文件：`your-name--dsh-plugin-stock.json` → `yllyx--dsh-plugin-stock.json`
+- 同步更新 catalog 内容（id、repository）
+- 改进 `publish-and-submit.js`：支持新旧两种模板文件名查找
+
 ## [0.2.1] - 2026-08-19
 
 ### 新增

@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-stock",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DSH 股票监控插件 - 在 DeepSeek Harness 中查看行情、监控持仓、K线、AI对话式查询（自动管理 Python 后端，仅监控，不做交易）",
   "license": "MIT",
   "type": "module",
