@@ -1,0 +1,9 @@
+# Profile-bundle layer: mount the dsh-plugin-stock entry without replacing
+# any default composition. The plugin contributes:
+#   - 4 AI tools (stock_quote / stock_kline / stock_screen / stock_holdings)
+#   - Sidebar region "📈 股票" with watchlist + K-line + alerts
+#   - Auto-managed Python backend (pytdx 行情数据 + 选股 + 持仓监控)
+
+- insert:
+    - id: dsh-plugin-stock
+      name: dsh-plugin-stock

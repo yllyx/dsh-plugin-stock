@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.venv/
+venv/
+
+# 用户运行时数据
+backend/config.json
+backend/alerts.json
+backend/test_smoke.py
+backend/launch.bat
+backend/launch.sh
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 构建产物
+build/
+dist/
+*.tgz
+node_modules/
+
+# 日志
+*.log
+logs/
+
+# 环境配置
+.env
+.env.local
+.env.*
+
+# 测试产物
+coverage/
+.nyc_output/
+*.test.js
+*.spec.js
+
+# 但保留我们自己写的测试
+!test_apply.js
+!test_backend.js

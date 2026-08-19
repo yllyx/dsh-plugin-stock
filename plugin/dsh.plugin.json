@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "name": "dsh-plugin-stock",
+  "displayName": "DSH 股票监控插件",
+  "version": "0.2.1",
+  "kind": "profile-bundle",
+  "package": "dsh-plugin-stock",
+  "bundlePatch": "./cordis.patch.yml",
+  "entry": "./lib/index.js",
+  "clientEntry": "./lib/client.js",
+  "compatibility": {
+    "node": ">=18",
+    "python": ">=3.10"
+  },
+  "capabilities": {
+    "network": true,
+    "filesystem": true,
+    "shell": true,
+    "modelVisible": true
+  },
+  "effects": [
+    "sidebar/registerRegion",
+    "tools/register",
+    "process/spawn-python"
+  ],
+  "description": {
+    "en": "A-share monitoring plugin: real-time tickers, K-line charts, holdings tracker, screener, and AI-assisted queries. Auto-starts a Python backend (pytdx). Read-only, no auto-execution.",
+    "zh": "A 股监控插件：实时行情、K线图、持仓监控、选股、AI 对话式查询。自动启动 Python 后端（pytdx）。仅监控，不做任何自动交易。"
+  },
+  "tools": [
+    {
+      "name": "stock_quote",
+      "description": "查询 A 股实时行情"
+    },
+    {
+      "name": "stock_kline",
+      "description": "查询股票 K线数据"
+    },
+    {
+      "name": "stock_screen",
+      "description": "执行选股策略"
+    },
+    {
+      "name": "stock_holdings",
+      "description": "管理持仓（监控用，不做自动交易）"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "data_source": {
+    "type": "pytdx",
+    "auto_reconnect": true,
+    "reconnect_interval_seconds": 30
+  },
+  "alert": {
+    "check_interval_seconds": 30,
+    "cooldown_seconds": 300,
+    "default_stop_loss_pct": -7,
+    "default_take_profit_pct": 15
+  },
+  "screen": {
+    "max_results": 30,
+    "default_pool_size": 50,
+    "kline_count_for_screen": 250
+  },
+  "websocket": {
+    "quote_broadcast_interval_seconds": 3
+  },
+  "notification": {
+    "wechat_webhook": "",
+    "dingtalk_webhook": "",
+    "telegram": {
+      "bot_token": "",
+      "chat_id": ""
+    }
+  }
+}

@@ -1,0 +1,28 @@
+# DSH 股票插件 - Python 后端依赖
+
+# 实时行情数据（通达信协议）
+pytdx>=1.72
+
+# 数据处理
+pandas>=2.0
+numpy>=1.24
+
+# Web 框架
+fastapi>=0.110
+uvicorn[standard]>=0.27
+websockets>=11.0
+pydantic>=2.0
+
+# 数据存储
+sqlalchemy>=2.0
+aiosqlite>=0.19
+
+# 通知
+requests>=2.31
+
+# 定时任务
+apscheduler>=3.10
+
+# 工具
+python-dotenv>=1.0
+loguru>=0.7

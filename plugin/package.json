@@ -1,0 +1,105 @@
+{
+  "name": "dsh-plugin-stock",
+  "version": "0.2.1",
+  "description": "DSH 股票监控插件 - 在 DeepSeek Harness 中查看行情、监控持仓、K线、AI对话式查询（自动管理 Python 后端，仅监控，不做交易）",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./dsh.plugin.json": "./dsh.plugin.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "backend/main.py",
+    "backend/data_source.py",
+    "backend/screener.py",
+    "backend/alert_engine.py",
+    "backend/ws_manager.py",
+    "backend/requirements.txt",
+    "backend/launch.bat",
+    "backend/launch.sh",
+    "backend/config.example.json",
+    "cordis.patch.yml",
+    "dsh.plugin.json",
+    "README.md",
+    "PUBLISHING.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "publish": "node publish.js",
+    "publish:dry": "node publish.js",
+    "publish:patch": "node publish.js --bump patch --publish",
+    "publish:minor": "node publish.js --bump minor --publish",
+    "publish:major": "node publish.js --bump major --publish",
+    "publish-and-submit": "node publish-and-submit.js",
+    "submit-marketplace": "node publish-and-submit.js",
+    "test": "node test_apply.js && node test_backend.js",
+    "test:apply": "node test_apply.js",
+    "test:backend": "node test_backend.js",
+    "pack": "npm pack"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "cordis",
+    "stock",
+    "china-stock",
+    "a-share",
+    "pytdx",
+    "monitoring",
+    "kline"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-name/dsh-plugin-stock.git",
+    "directory": "plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/your-name/dsh-plugin-stock/issues"
+  },
+  "homepage": "https://github.com/your-name/dsh-plugin-stock#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-schemastery": "^3.18.1"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.0-rc.7",
+    "@deepseek-ai/dsh-client-ui-theme": "^0.1.0-rc.7"
+  }
+}
