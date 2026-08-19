@@ -3,17 +3,20 @@
  *
  * 职责：
  * 1. 自动启动并管理 Python 后端进程（无需用户手动）
- * 2. 注册 AI 助手工具（让 AI 在对话中查询行情/持仓/K线/选股）
+ * 2. 注册 AI 助手工具（stock_quote / stock_kline / stock_screen / stock_holdings）
  * 3. 严格只读监控，不做自动交易
+ *
+ * 注意：这里不用 @deepseek-ai/dsh-tools 的 defineTool()。
+ * defineTool 的 parameters 走 property-map DSL（会拒绝标准 JSON Schema），
+ * 而 ctx.tools.register() 直接接受完整 JSON Schema（dsh-mnemon 等插件同款做法），
+ * 且 register 只校验 output.schema（assertSupportedJsonSchema），不校验 parameters。
  */
 
-import { defineTool } from "@deepseek-ai/dsh-tools";
 import { BackendManager, resolveBackendDir } from "./backend-manager.js";
 
 const DEFAULT_PORT = Number(process.env.STOCK_BACKEND_PORT) || 8765;
 const BACKEND_DIR = resolveBackendDir(import.meta.url);
 
-// 全局后端管理器实例（单例）
 let backend = null;
 
 function getBackend() {
@@ -44,9 +47,12 @@ function backendStatusError() {
     return `后端不可用（${b.state}）：${detail}`;
 }
 
-// ============= 工具定义 =============
+// 宽松 output schema：与 dsh-mnemon 的 JSON_OBJECT_OUTPUT 同款
+const JSON_OBJECT_OUTPUT = { type: "object", additionalProperties: true };
 
-const stockQuoteTool = defineTool({
+// ============= 工具定义（原始对象，完整 JSON Schema parameters）=============
+
+const stockQuoteTool = {
     name: "stock_quote",
     description: "获取 A 股实时行情。输入 6 位股票代码，返回当前价格、涨跌幅、成交量等。6 开头为沪市，0/3 开头为深市。",
     parameters: {
@@ -57,7 +63,7 @@ const stockQuoteTool = defineTool({
         required: ["code"],
     },
     output: {
-        schema: { type: "object" },
+        schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
             if (!value || value.error) return `获取 ${args.code} 行情失败：${value?.error || "未知错误"}`;
             return [
@@ -71,11 +77,12 @@ const stockQuoteTool = defineTool({
     async execute(args) {
         const err = backendStatusError();
         if (err) return { error: err };
+        if (!args.code) return { error: "缺少 code 参数" };
         return await makeToolRequest(`/api/quote/${args.code}`);
     },
-});
+};
 
-const stockKlineTool = defineTool({
+const stockKlineTool = {
     name: "stock_kline",
     description: "获取股票K线数据。可用于技术分析、计算均线、MACD 等指标。",
     parameters: {
@@ -88,12 +95,12 @@ const stockKlineTool = defineTool({
                 enum: [0, 1, 2, 3, 5, 6, 9],
                 default: 9,
             },
-            count: { type: "integer", description: "K线数量（建议 60-500）", minimum: 10, maximum: 1000, default: 120 },
+            count: { type: "integer", description: "K线数量（建议 60-500）", default: 120 },
         },
         required: ["code"],
     },
     output: {
-        schema: { type: "object" },
+        schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
             if (!value || value.error) return `获取 ${args.code} K线失败：${value?.error || "未知错误"}`;
             const data = value.data || [];
@@ -111,11 +118,12 @@ const stockKlineTool = defineTool({
     async execute(args) {
         const err = backendStatusError();
         if (err) return { error: err };
+        if (!args.code) return { error: "缺少 code 参数" };
         return await makeToolRequest(`/api/kline/${args.code}?category=${args.category || 9}&count=${args.count || 120}`);
     },
-});
+};
 
-const stockScreenTool = defineTool({
+const stockScreenTool = {
     name: "stock_screen",
     description: "执行选股策略。可选类型：institutional(机构抱团股/趋势跟随) / breakout(启动股/捕捉主升浪起点) / trend(均线多头/经典趋势) / speculative(题材妖股/短线博弈)。",
     parameters: {
@@ -126,12 +134,12 @@ const stockScreenTool = defineTool({
                 description: "选股类型",
                 enum: ["institutional", "breakout", "trend", "speculative"],
             },
-            max_results: { type: "integer", description: "最大结果数", minimum: 1, maximum: 100, default: 20 },
+            max_results: { type: "integer", description: "最大结果数", default: 20 },
         },
         required: ["screen_type"],
     },
     output: {
-        schema: { type: "object" },
+        schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
             if (!value || value.error) return `选股失败：${value?.error || "未知错误"}`;
             const results = value.results || [];
@@ -146,15 +154,16 @@ const stockScreenTool = defineTool({
     async execute(args) {
         const err = backendStatusError();
         if (err) return { error: err };
+        if (!args.screen_type) return { error: "缺少 screen_type 参数" };
         return await makeToolRequest(`/api/screen`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ screen_type: args.screen_type, max_results: args.max_results || 20 }),
         });
     },
-});
+};
 
-const stockHoldingsTool = defineTool({
+const stockHoldingsTool = {
     name: "stock_holdings",
     description: "管理持仓（仅记账和监控）。可以列出当前持仓、添加新持仓、删除持仓、查看总盈亏。注意：本工具不做任何自动交易。",
     parameters: {
@@ -171,7 +180,7 @@ const stockHoldingsTool = defineTool({
         required: ["action"],
     },
     output: {
-        schema: { type: "object" },
+        schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
             if (!value || value.error) return `操作失败：${value?.error || "未知错误"}`;
             if (args.action === "add") return value.status === "ok" ? `已添加 ${args.code} ${args.name}` : "添加失败";
@@ -214,12 +223,12 @@ const stockHoldingsTool = defineTool({
         }
         return { error: `未知操作：${args.action}` };
     },
-});
+};
 
 // ============= 插件入口 =============
 
 async function apply(ctx) {
-    // 注册 4 个 AI 工具
+    // 注册 4 个 AI 工具（原始对象，完整 JSON Schema）
     ctx.tools.register(stockQuoteTool);
     ctx.tools.register(stockKlineTool);
     ctx.tools.register(stockScreenTool);

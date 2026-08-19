@@ -13,6 +13,13 @@
 - 龙虎榜/北向资金集成
 - 自选股导入导出
 
+## [0.2.4] - 2026-08-19
+
+### 修复
+- **修复插件加载失败**（`parameters.type must be a value schema object`）：不再使用 `@deepseek-ai/dsh-tools` 的 `defineTool()`（其 parameters 走 property-map DSL，拒绝标准 JSON Schema），改为与 dsh-mnemon 相同的做法——直接把原始工具对象传给 `ctx.tools.register()`，parameters 使用完整 JSON Schema（type/properties/required）
+- output.schema 改用 `{ type: "object", additionalProperties: true }`（与 dsh-mnemon 的 JSON_OBJECT_OUTPUT 一致，通过 register 的 assertSupportedJsonSchema 校验）
+- 移除全部 npm dependencies（插件只用 node 内置模块，@deepseek-ai 包由 DSH 运行时提供），安装更轻、不再有解析风险
+
 ## [0.2.3] - 2026-08-19
 
 ### 修复
