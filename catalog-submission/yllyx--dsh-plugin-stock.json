@@ -1,8 +1,8 @@
 {
   "$schema": "../schema/plugin.schema.json",
-  "id": "your-name/dsh-plugin-stock",
+  "id": "yllyx/dsh-plugin-stock",
   "name": "dsh-plugin-stock",
-  "repository": "https://github.com/your-name/dsh-plugin-stock",
+  "repository": "https://github.com/yllyx/dsh-plugin-stock",
   "category": "tools",
   "description": {
     "en": "A-share (沪深) monitoring plugin: real-time tickers via pytdx, K-line charts (klinecharts), holdings tracker with stop-loss / take-profit alerts, four screener strategies (institutional, breakout, trend, speculative), and AI-conversational queries via four stock_* tools. Auto-starts a Python backend on plugin load (no manual launch). Read-only — no auto-trading, no broker account access, no funds.",

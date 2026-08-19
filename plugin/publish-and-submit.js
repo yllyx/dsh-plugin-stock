@@ -78,10 +78,14 @@ log.title("\n[3/4] 准备插件市场提交文件");
 mkdirSync(SUBMIT_DIR, { recursive: true });
 const submitFile = join(SUBMIT_DIR, `${owner}--${pkg.name}.json`);
 
-// 从模板读取并替换占位符
+// 查找模板：优先 <owner>--<name>.json，回退到 your-name--<name>.json
 let content;
-const templatePath = join(SUBMIT_DIR, "your-name--dsh-plugin-stock.json");
-if (existsSync(templatePath)) {
+const candidates = [
+    join(SUBMIT_DIR, `${owner}--${pkg.name}.json`),
+    join(SUBMIT_DIR, `your-name--${pkg.name}.json`),
+];
+const templatePath = candidates.find((p) => existsSync(p));
+if (templatePath) {
     content = readFileSync(templatePath, "utf-8");
     content = content
         .replace(/your-name/g, owner)
@@ -90,7 +94,7 @@ if (existsSync(templatePath)) {
     writeFileSync(submitFile, content, "utf-8");
     log.success(`已生成: ${submitFile}`);
 } else {
-    log.warn("找不到模板文件 your-name--dsh-plugin-stock.json");
+    log.warn(`找不到模板文件，请确保 catalog-submission/ 下有 your-name--${pkg.name}.json 或 ${owner}--${pkg.name}.json`);
     process.exit(1);
 }
 

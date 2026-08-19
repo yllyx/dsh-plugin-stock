@@ -38,11 +38,11 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "publish": "node publish.js",
-    "publish:dry": "node publish.js",
-    "publish:patch": "node publish.js --bump patch --publish",
-    "publish:minor": "node publish.js --bump minor --publish",
-    "publish:major": "node publish.js --bump major --publish",
+    "release": "node publish.js",
+    "release:dry": "node publish.js",
+    "release:patch": "node publish.js --bump patch --publish",
+    "release:minor": "node publish.js --bump minor --publish",
+    "release:major": "node publish.js --bump major --publish",
     "publish-and-submit": "node publish-and-submit.js",
     "submit-marketplace": "node publish-and-submit.js",
     "test": "node test_apply.js && node test_backend.js",
@@ -67,13 +67,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-name/dsh-plugin-stock.git",
+    "url": "https://github.com/yllyx/dsh-plugin-stock.git",
     "directory": "plugin"
   },
   "bugs": {
-    "url": "https://github.com/your-name/dsh-plugin-stock/issues"
+    "url": "https://github.com/yllyx/dsh-plugin-stock/issues"
   },
-  "homepage": "https://github.com/your-name/dsh-plugin-stock#readme",
+  "homepage": "https://github.com/yllyx/dsh-plugin-stock#readme",
   "engines": {
     "node": ">=18"
   },
