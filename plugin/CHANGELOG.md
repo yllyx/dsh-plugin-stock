@@ -13,6 +13,11 @@
 - 龙虎榜/北向资金集成
 - 自选股导入导出
 
+## [0.2.3] - 2026-08-19
+
+### 修复
+- 修复 dependencies 中包名错误：`@deepseek-ai/dsh-schemastery` → `@deepseek-ai/schemastery`（DSH 2.0.1 装的是后者）
+
 ## [0.2.2] - 2026-08-19
 
 ### 修复
