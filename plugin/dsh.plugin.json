@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "dsh-plugin-stock",
   "displayName": "DSH 股票监控插件",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "kind": "profile-bundle",
   "package": "dsh-plugin-stock",
   "bundlePatch": "./cordis.patch.yml",
@@ -24,8 +24,8 @@
     "process/spawn-python"
   ],
   "description": {
-    "en": "A-share monitoring plugin: real-time tickers, K-line charts, holdings tracker, screener, and AI-assisted queries. Auto-starts a Python backend (pytdx). Read-only, no auto-execution.",
-    "zh": "A 股监控插件：实时行情、K线图、持仓监控、选股、AI 对话式查询。自动启动 Python 后端（pytdx）。仅监控，不做任何自动交易。"
+    "en": "A-share trading-system assistant: market timing (bottom exhaustion + stabilization signals), sentiment & style detection (institutional vs speculative), sector & leader monitoring, position sizing, trailing/ladder stop alerts, screener, K-line charts. Read-only, no auto-execution.",
+    "zh": "A 股交易体系助手：大盘择时（跌无可跌+企稳信号）、情绪与风格判定（机构抱团vs题材妖股）、板块监控与龙头候选、仓位体检、移动/阶梯止盈止损预警、全市场选股、K线图。仅监控建议，不做自动交易。"
   },
   "tools": [
     {
@@ -37,12 +37,28 @@
       "description": "查询股票 K线数据"
     },
     {
+      "name": "stock_market_timing",
+      "description": "大盘择时诊断（阶段/跌无可跌/企稳信号/建议仓位）"
+    },
+    {
+      "name": "stock_sentiment",
+      "description": "市场情绪统计 + 风格判定（抱团 vs 妖股）"
+    },
+    {
+      "name": "stock_sectors",
+      "description": "板块排行与龙头候选"
+    },
+    {
       "name": "stock_screen",
       "description": "执行选股策略"
     },
     {
       "name": "stock_holdings",
       "description": "管理持仓（监控用，不做自动交易）"
+    },
+    {
+      "name": "stock_position",
+      "description": "仓位体检（总仓位/单票/行业集中度）"
     }
   ]
 }

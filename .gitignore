@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# 运行时生成的用户数据（不入库）
+plugin/backend/alerts.json
+plugin/backend/account.json
+plugin/backend/config.json
+
+# 工具/编辑器
+.zcode/
+node_modules/
+*.tgz
+.DS_Store

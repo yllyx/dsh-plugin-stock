@@ -5,8 +5,8 @@
   "repository": "https://github.com/yllyx/dsh-plugin-stock",
   "category": "tools",
   "description": {
-    "en": "A-share (沪深) monitoring plugin: real-time tickers via pytdx, K-line charts (klinecharts), holdings tracker with stop-loss / take-profit alerts, four screener strategies (institutional, breakout, trend, speculative), and AI-conversational queries via four stock_* tools. Auto-starts a Python backend on plugin load (no manual launch). Read-only — no auto-trading, no broker account access, no funds.",
-    "zh": "A 股（沪深）监控插件：通过 pytdx 提供实时行情、klinecharts 提供专业 K线图、持仓监控与止止止损预警、四种选股策略（机构抱团 / 启动股 / 均线多头 / 题材妖股），以及四个 stock_* 工具支持 AI 对话式查询。插件加载时自动启动 Python 后端（无需用户手动）。严格只读——不做自动交易、不接入券商账户、不读取资金。"
+    "en": "A-share trading-system assistant: market timing (bottom-exhaustion checklist + stabilization signals + suggested position by regime), sentiment & style detection (institutional-clustering vs speculative theme phases), sector monitoring with stage labels (initiating/fermenting/climax/retreat) and leader candidates, position sizing checks (total/single-stock/industry caps), trailing/ladder stop-loss alerts with time-stop, full-market screener (4 strategies), real-time tickers via pytdx, K-line charts, and 8 stock_* AI tools. Auto-starts a Python backend. Read-only — no auto-trading, no broker access.",
+    "zh": "A 股交易体系助手：大盘择时（跌无可跌多因子清单 + 企稳信号确认 + 阶段判定与建议仓位）、情绪与风格识别（机构抱团期 vs 题材妖股期判定）、板块监控（启动/发酵/高潮/退潮阶段标签）与龙头候选、仓位体检（总仓位/单票≤25%/同行业≤40%）、移动止损与阶梯止盈预警（含时间止损提醒）、全市场选股（4策略预热池）、pytdx 实时行情与 K线图、8 个 stock_* AI 对话工具。插件加载时自动启动 Python 后端。严格只读——不做自动交易、不接入券商账户。"
   },
   "added": "2026-08-19"
 }

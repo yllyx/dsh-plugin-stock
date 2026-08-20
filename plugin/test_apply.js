@@ -54,8 +54,8 @@ for (const t of registeredTools) {
 console.log(`[OK] system prompt section: ${promptSection?.name || "未注册"}`);
 console.log(`[OK] effect 注册数: ${effectDisposers.length} (后端启动 + 清理)`);
 
-if (registeredTools.length !== 4) {
-    console.error(`[FAIL] 期望 4 个工具，实际注册 ${registeredTools.length}`);
+if (registeredTools.length !== 8) {
+    console.error(`[FAIL] 期望 8 个工具，实际注册 ${registeredTools.length}`);
     process.exit(1);
 }
 

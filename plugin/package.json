@@ -1,7 +1,7 @@
 {
   "name": "dsh-plugin-stock",
-  "version": "0.2.5",
-  "description": "DSH 股票监控插件 - 在 DeepSeek Harness 中查看行情、监控持仓、K线、AI对话式查询（自动管理 Python 后端，仅监控，不做交易）",
+  "version": "0.3.1",
+  "description": "DSH 股票交易体系助手 - 大盘择时(跌无可跌+企稳信号)、情绪与风格判定(抱团vs妖股)、板块监控与龙头候选、仓位体检、移动/阶梯止盈止损预警、全市场选股、K线（自动管理 Python 后端，仅监控建议，不做交易）",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -22,11 +22,7 @@
   "files": [
     "lib/**/*.js",
     "lib/**/*.d.ts",
-    "backend/main.py",
-    "backend/data_source.py",
-    "backend/screener.py",
-    "backend/alert_engine.py",
-    "backend/ws_manager.py",
+    "backend/*.py",
     "backend/requirements.txt",
     "backend/launch.bat",
     "backend/launch.sh",

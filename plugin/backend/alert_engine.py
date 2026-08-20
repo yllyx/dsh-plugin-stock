@@ -1,14 +1,24 @@
 """
-预警引擎
+预警引擎 2.0 - 持仓止盈止损 + 自定义预警
 
-负责监控持仓股票和关注股票的价格变动、止盈止损、技术指标
+止损止盈模式（stop_mode）：
+- fixed:    固定百分比止损/止盈（默认，兼容旧数据）
+- trailing: 移动止损 —— 盈利>5%后止损线上移到成本（保本），从最高点回撤超阈值触发
+- ladder:   阶梯止盈 —— +20% 提示卖1/3，+50% 再卖1/3，剩余按移动止损保护
+
+附加：时间止损（买入超5个交易日仍不赚钱 → 提示走势不符预期）
+规则管理：预警规则可增删启停；触发历史持久化（最近200条）
+
+只预警，不自动交易。
 """
 
 import asyncio
 import time
 import json
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
+
 from loguru import logger
 
 from data_source import data_source, normalize_stock_code
@@ -16,6 +26,8 @@ from ws_manager import ws_manager
 
 
 ALERTS_FILE = Path(__file__).parent / "alerts.json"
+MAX_HISTORY = 200
+TRADING_DAY_HOURS = 24  # 简化：用自然日近似交易日
 
 
 class AlertEngine:
@@ -24,63 +36,80 @@ class AlertEngine:
     def __init__(self):
         self.alerts: List[Dict[str, Any]] = []
         self.holdings: Dict[str, Dict[str, Any]] = {}
+        self.history: List[Dict[str, Any]] = []
         self.last_check: Dict[str, float] = {}
         self.cooldown = 300
 
+    # ---------- 持久化 ----------
+
     def load(self):
-        """加载配置"""
         if ALERTS_FILE.exists():
             try:
                 with open(ALERTS_FILE, encoding="utf-8") as f:
                     data = json.load(f)
                 self.holdings = data.get("holdings", {})
                 self.alerts = data.get("alerts", [])
-                logger.info(f"加载 {len(self.holdings)} 持仓，{len(self.alerts)} 预警规则")
+                self.history = data.get("history", [])
+                logger.info(f"加载 {len(self.holdings)} 持仓，{len(self.alerts)} 预警规则，{len(self.history)} 条历史")
             except Exception as e:
                 logger.error(f"加载配置失败: {e}")
 
     def save(self):
-        """保存配置"""
         try:
             with open(ALERTS_FILE, "w", encoding="utf-8") as f:
                 json.dump({
                     "holdings": self.holdings,
                     "alerts": self.alerts,
+                    "history": self.history[-MAX_HISTORY:],
                 }, f, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.error(f"保存配置失败: {e}")
+
+    # ---------- 持仓管理 ----------
 
     def add_holding(
         self, code: str, name: str,
         buy_price: float, shares: int,
         stop_loss_pct: float = -7,
         take_profit_pct: float = 15,
+        stop_mode: str = "fixed",
+        trail_drawdown_pct: float = 10,
     ):
-        """添加持仓"""
         self.holdings[code] = {
             "name": name,
             "buy_price": buy_price,
             "shares": shares,
             "stop_loss_pct": stop_loss_pct,
             "take_profit_pct": take_profit_pct,
+            "stop_mode": stop_mode,
+            "trail_drawdown_pct": trail_drawdown_pct,
+            "high_water_mark": buy_price,
             "buy_date": time.strftime("%Y-%m-%d"),
         }
         self.save()
-        logger.info(f"已添加持仓: {code} {name}")
+        logger.info(f"已添加持仓: {code} {name} 模式={stop_mode}")
+
+    def update_holding(self, code: str, updates: Dict[str, Any]) -> bool:
+        """修改持仓的止盈止损参数"""
+        if code not in self.holdings:
+            return False
+        allowed = {"stop_loss_pct", "take_profit_pct", "stop_mode",
+                   "trail_drawdown_pct", "shares", "buy_price", "name"}
+        for k, v in updates.items():
+            if k in allowed:
+                self.holdings[code][k] = v
+        self.save()
+        return True
 
     def remove_holding(self, code: str):
-        """删除持仓"""
         if code in self.holdings:
             del self.holdings[code]
             self.save()
             logger.info(f"已删除持仓: {code}")
 
-    def add_alert(
-        self, code: str, alert_type: str,
-        threshold: float = 0,
-        message: str = "",
-    ):
-        """添加预警规则"""
+    # ---------- 预警规则管理 ----------
+
+    def add_alert(self, code: str, alert_type: str, threshold: float = 0, message: str = ""):
         self.alerts.append({
             "id": f"{code}-{alert_type}-{int(time.time())}",
             "code": code,
@@ -92,85 +121,174 @@ class AlertEngine:
         })
         self.save()
 
+    def remove_alert(self, alert_id: str) -> bool:
+        before = len(self.alerts)
+        self.alerts = [a for a in self.alerts if a.get("id") != alert_id]
+        changed = len(self.alerts) < before
+        if changed:
+            self.save()
+        return changed
+
+    def toggle_alert(self, alert_id: str, enabled: bool) -> bool:
+        for a in self.alerts:
+            if a.get("id") == alert_id:
+                a["enabled"] = enabled
+                self.save()
+                return True
+        return False
+
+    # ---------- 止盈止损 2.0 检查 ----------
+
+    def _fire(self, triggered: List[Dict[str, Any]], item: Dict[str, Any], key: str):
+        """冷却控制 + 记录 + 广播"""
+        last = self.last_check.get(key, 0)
+        if time.time() - last < self.cooldown:
+            return
+        self.last_check[key] = time.time()
+        triggered.append(item)
+        self.history.append(item)
+        self.history = self.history[-MAX_HISTORY:]
+
     async def check_holdings(self) -> List[Dict[str, Any]]:
-        """检查持仓的止盈止损"""
         if not self.holdings:
             return []
 
-        triggered = []
         codes = list(self.holdings.keys())
-        market_codes = []
-        for code in codes:
-            market, sec_code = normalize_stock_code(code)
-            market_codes.append((market, sec_code))
-
+        market_codes = [normalize_stock_code(c) for c in codes]
         quotes = data_source.get_security_quotes(market_codes)
         if not quotes:
             return []
 
+        triggered = []
+        dirty = False
+        today = time.strftime("%Y-%m-%d")
+
         for q in quotes:
             code = q["code"]
-            if code not in self.holdings:
+            h = self.holdings.get(code)
+            if not h:
+                continue
+            buy_price = h["buy_price"]
+            price = q["price"]
+            if not buy_price or not price:
                 continue
 
-            holding = self.holdings[code]
-            buy_price = holding["buy_price"]
-            current_price = q["price"]
+            profit_pct = (price - buy_price) / buy_price * 100
+            mode = h.get("stop_mode", "fixed")
+            trail_pct = h.get("trail_drawdown_pct", 10)
 
-            if buy_price == 0:
-                continue
+            # 更新最高水位
+            hwm = max(h.get("high_water_mark") or buy_price, price)
+            if hwm != h.get("high_water_mark"):
+                h["high_water_mark"] = hwm
+                dirty = True
+            drawdown_from_hwm = (price - hwm) / hwm * 100
 
-            profit_pct = (current_price - buy_price) / buy_price * 100
-            last_check_time = self.last_check.get(code, 0)
+            # 保本标记：曾盈利超5%
+            if profit_pct > 5 and not h.get("_breakeven"):
+                h["_breakeven"] = True
+                dirty = True
 
-            if profit_pct <= holding["stop_loss_pct"]:
-                if (time.time() - last_check_time) > self.cooldown:
-                    triggered.append({
-                        "type": "stop_loss",
-                        "code": code,
-                        "name": holding["name"],
-                        "price": current_price,
-                        "profit_pct": profit_pct,
-                        "message": f"{holding['name']}({code}) 触及止损位，亏损 {profit_pct:.2f}%",
-                        "severity": "high",
-                        "timestamp": time.time(),
-                    })
-                    self.last_check[code] = time.time()
-            elif profit_pct >= holding["take_profit_pct"]:
-                if (time.time() - last_check_time) > self.cooldown:
-                    triggered.append({
-                        "type": "take_profit",
-                        "code": code,
-                        "name": holding["name"],
-                        "price": current_price,
-                        "profit_pct": profit_pct,
-                        "message": f"{holding['name']}({code}) 触及止盈位，盈利 {profit_pct:.2f}%",
-                        "severity": "medium",
-                        "timestamp": time.time(),
-                    })
-                    self.last_check[code] = time.time()
+            name = h["name"]
+
+            # 1. 基础固定止损（所有模式都保留）
+            if profit_pct <= h.get("stop_loss_pct", -7):
+                self._fire(triggered, {
+                    "type": "stop_loss", "code": code, "name": name, "price": price,
+                    "profit_pct": round(profit_pct, 2),
+                    "message": f"{name}({code}) 触及止损位 {h.get('stop_loss_pct', -7)}%，现亏 {profit_pct:.2f}%，纪律执行离场",
+                    "severity": "high", "timestamp": time.time(),
+                }, f"{code}:stop_loss")
+
+            # 2. 模式化止盈止损
+            if mode == "trailing":
+                if h.get("_breakeven") and price < buy_price and profit_pct > h.get("stop_loss_pct", -7):
+                    self._fire(triggered, {
+                        "type": "breakeven_stop", "code": code, "name": name, "price": price,
+                        "profit_pct": round(profit_pct, 2),
+                        "message": f"{name}({code}) 曾盈利后跌回成本，保本止损触发（{profit_pct:.2f}%）",
+                        "severity": "high", "timestamp": time.time(),
+                    }, f"{code}:breakeven")
+                if drawdown_from_hwm <= -trail_pct and profit_pct > 0:
+                    self._fire(triggered, {
+                        "type": "trailing_stop", "code": code, "name": name, "price": price,
+                        "profit_pct": round(profit_pct, 2),
+                        "message": f"{name}({code}) 从高点{hwm:.2f}回撤{-drawdown_from_hwm:.1f}%（阈值{trail_pct}%），移动止损触发，仍盈利{profit_pct:.1f}%",
+                        "severity": "medium", "timestamp": time.time(),
+                    }, f"{code}:trailing")
+
+            elif mode == "ladder":
+                if profit_pct >= 20 and not h.get("_l20"):
+                    h["_l20"] = True
+                    dirty = True
+                    self._fire(triggered, {
+                        "type": "ladder_tp", "code": code, "name": name, "price": price,
+                        "profit_pct": round(profit_pct, 2),
+                        "message": f"{name}({code}) 盈利{profit_pct:.1f}% 达阶梯第一档(+20%)，建议卖出1/3锁定利润",
+                        "severity": "medium", "timestamp": time.time(),
+                    }, f"{code}:l20")
+                if profit_pct >= 50 and not h.get("_l50"):
+                    h["_l50"] = True
+                    dirty = True
+                    self._fire(triggered, {
+                        "type": "ladder_tp", "code": code, "name": name, "price": price,
+                        "profit_pct": round(profit_pct, 2),
+                        "message": f"{name}({code}) 盈利{profit_pct:.1f}% 达阶梯第二档(+50%)，建议再卖1/3，剩余移动止盈持有",
+                        "severity": "medium", "timestamp": time.time(),
+                    }, f"{code}:l50")
+                if h.get("_l50") and drawdown_from_hwm <= -10:
+                    self._fire(triggered, {
+                        "type": "trailing_stop", "code": code, "name": name, "price": price,
+                        "profit_pct": round(profit_pct, 2),
+                        "message": f"{name}({code}) 高点回撤{-drawdown_from_hwm:.1f}%，尾仓移动止盈保护触发",
+                        "severity": "medium", "timestamp": time.time(),
+                    }, f"{code}:trailing")
+
+            else:  # fixed
+                if profit_pct >= h.get("take_profit_pct", 15):
+                    self._fire(triggered, {
+                        "type": "take_profit", "code": code, "name": name, "price": price,
+                        "profit_pct": round(profit_pct, 2),
+                        "message": f"{name}({code}) 触及止盈位 {h.get('take_profit_pct', 15)}%，现盈利 {profit_pct:.2f}%，可分批兑现",
+                        "severity": "medium", "timestamp": time.time(),
+                    }, f"{code}:take_profit")
+
+            # 3. 时间止损（所有模式）：买入超5个交易日且盈利不足2%
+            buy_date = h.get("buy_date")
+            if buy_date:
+                try:
+                    days = (datetime.now() - datetime.strptime(buy_date, "%Y-%m-%d")).days
+                    if days >= 7 and profit_pct < 2 and h.get("_time_alert_date") != today:
+                        h["_time_alert_date"] = today
+                        dirty = True
+                        self._fire(triggered, {
+                            "type": "time_stop", "code": code, "name": name, "price": price,
+                            "profit_pct": round(profit_pct, 2),
+                            "message": f"{name}({code}) 买入已{days}天仍无像样涨幅（{profit_pct:.2f}%），时间止损提醒：判断可能出错",
+                            "severity": "low", "timestamp": time.time(),
+                        }, f"{code}:time")
+                except (ValueError, TypeError):
+                    pass
+
+        if dirty:
+            self.save()
 
         if triggered:
             for t in triggered:
-                await ws_manager.broadcast({
-                    "type": "alert",
-                    "data": t,
-                })
+                await ws_manager.broadcast({"type": "alert", "data": t})
+            self.save()
 
         return triggered
 
+    # ---------- 自定义预警 ----------
+
     async def check_custom_alerts(self) -> List[Dict[str, Any]]:
-        """检查自定义预警"""
         if not self.alerts:
             return []
 
         triggered = []
         codes = list(set(a["code"] for a in self.alerts if a.get("enabled")))
-        market_codes = []
-        for code in codes:
-            market, sec_code = normalize_stock_code(code)
-            market_codes.append((market, sec_code))
-
+        market_codes = [normalize_stock_code(c) for c in codes]
         if not market_codes:
             return []
 
@@ -180,40 +298,31 @@ class AlertEngine:
             for alert in self.alerts:
                 if alert["code"] != code or not alert.get("enabled"):
                     continue
-
+                item = None
                 if alert["type"] == "price_above" and q["price"] >= alert["threshold"]:
-                    triggered.append({
-                        "type": "price_above",
-                        "code": code,
-                        "price": q["price"],
-                        "message": f"{code} 突破 {alert['threshold']}",
-                        "timestamp": time.time(),
-                    })
+                    item = {"type": "price_above", "code": code, "name": q.get("name", code), "price": q["price"],
+                            "message": f"{q.get('name', code)}({code}) 突破 {alert['threshold']}",
+                            "severity": "medium", "timestamp": time.time()}
                 elif alert["type"] == "price_below" and q["price"] <= alert["threshold"]:
-                    triggered.append({
-                        "type": "price_below",
-                        "code": code,
-                        "price": q["price"],
-                        "message": f"{code} 跌破 {alert['threshold']}",
-                        "timestamp": time.time(),
-                    })
+                    item = {"type": "price_below", "code": code, "name": q.get("name", code), "price": q["price"],
+                            "message": f"{q.get('name', code)}({code}) 跌破 {alert['threshold']}",
+                            "severity": "high", "timestamp": time.time()}
                 elif alert["type"] == "change_pct_above" and q["change_pct"] >= alert["threshold"]:
-                    triggered.append({
-                        "type": "change_pct_above",
-                        "code": code,
-                        "change_pct": q["change_pct"],
-                        "message": f"{code} 涨幅超 {alert['threshold']}%",
-                        "timestamp": time.time(),
-                    })
+                    item = {"type": "change_pct_above", "code": code, "name": q.get("name", code),
+                            "change_pct": q["change_pct"],
+                            "message": f"{q.get('name', code)}({code}) 涨幅超 {alert['threshold']}%",
+                            "severity": "medium", "timestamp": time.time()}
+                if item:
+                    self._fire(triggered, item, f"{code}:{alert['type']}:{alert['id']}")
 
         if triggered:
             for t in triggered:
                 await ws_manager.broadcast({"type": "alert", "data": t})
+            self.save()
 
         return triggered
 
     async def run_loop(self, interval: int = 30):
-        """主循环"""
         logger.info(f"预警引擎启动，检查间隔 {interval}s")
         while True:
             try:
