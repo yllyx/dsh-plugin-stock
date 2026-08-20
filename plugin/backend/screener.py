@@ -7,6 +7,7 @@
 - 默认池：东财列表不可用时退回内置白马池
 """
 
+import sqlite3
 import time
 import threading
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,7 +16,9 @@ import pandas as pd
 from loguru import logger
 
 from data_source import data_source, normalize_stock_code
+from storage import storage
 import eastmoney
+import tencent
 
 
 def ma(series, n):
@@ -155,8 +158,10 @@ DEFAULT_POOL = ["600519", "000858", "000001", "600036", "000333",
 
 class MarketPool:
     """
-    后台线程预热全市场日K缓存（独立 pytdx 连接）。
-    状态量 warmed/total 供 API 展示进度。
+    全市场日K缓存池：
+    - 内存 DataFrame 缓存（选股扫描用）
+    - SQLite 持久化（storage.data_dir/market.db）：启动整库载入，
+      预热循环增量 upsert 当日bar，进程重启后断点续传、选股开机即可用
     """
 
     def __init__(self):
@@ -168,7 +173,113 @@ class MarketPool:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._db: Optional[sqlite3.Connection] = None
+        self._db_lock = threading.Lock()
+        self._db_upsert_buffer: List[tuple] = []
+        self._alt_source = False   # K线源切换标志（东财连续失败→腾讯）
         self.warming = False
+        self._db_rows: int = 0
+
+    # ---------- SQLite 持久化 ----------
+
+    def _db_conn(self) -> sqlite3.Connection:
+        with self._db_lock:
+            if self._db is None:
+                self._db = sqlite3.connect(str(storage.path("market.db")), check_same_thread=False)
+                self._db.execute("PRAGMA journal_mode=WAL")
+                self._db.execute("PRAGMA synchronous=NORMAL")
+                self._db.execute("""
+                    CREATE TABLE IF NOT EXISTS kline_daily (
+                        code TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        open REAL, high REAL, low REAL, close REAL,
+                        volume REAL, amount REAL,
+                        PRIMARY KEY (code, date)
+                    ) WITHOUT ROWID""")
+                self._db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+                self._db_rows = self._db.execute("SELECT COUNT(*) FROM kline_daily").fetchone()[0]
+            return self._db
+
+    def db_close(self):
+        with self._db_lock:
+            if self._db is not None:
+                try:
+                    self._db.commit()
+                    self._db.close()
+                except Exception:
+                    pass
+                self._db = None
+
+    def db_load_all(self):
+        """启动时整库载入内存（约3-8秒），未预热的日期由预热循环补"""
+        t0 = time.time()
+        conn = self._db_conn()
+        by_code: Dict[str, Dict[str, list]] = {}
+        for code, date, o, h, l, c, v, a in conn.execute(
+                "SELECT code, date, open, high, low, close, volume, amount FROM kline_daily ORDER BY code, date"):
+            cols = by_code.setdefault(code, {"open": [], "high": [], "low": [], "close": [],
+                                             "volume": [], "amount": [], "dates": []})
+            cols["open"].append(o); cols["high"].append(h); cols["low"].append(l)
+            cols["close"].append(c); cols["volume"].append(v); cols["amount"].append(a)
+            cols["dates"].append(date)
+        with self._lock:
+            for code, cols in by_code.items():
+                # 只保留最近250根，与在线预热口径一致
+                n = max(0, len(cols["close"]) - 250)
+                self._dfs[code] = pd.DataFrame({
+                    "open": cols["open"][n:], "high": cols["high"][n:],
+                    "low": cols["low"][n:], "close": cols["close"][n:],
+                    "volume": cols["volume"][n:], "amount": cols["amount"][n:],
+                })
+                self._fetch_date[code] = cols["dates"][-1]
+        logger.info(f"K线库载入 {len(by_code)} 只（{time.time()-t0:.1f}s，{self._db_rows} 行）")
+
+    def _db_upsert(self, code: str, bars: List[Dict[str, Any]]):
+        """缓存写入（只保留最近250根，与内存口径一致），攒批200行一个事务"""
+        for b in bars[-250:]:
+            date = str(b.get("datetime", ""))[:10]
+            if not date:
+                continue
+            self._db_upsert_buffer.append((code, date, b["open"], b["high"], b["low"],
+                                           b["close"], b["volume"], b["amount"]))
+        if len(self._db_upsert_buffer) >= 200:
+            self._db_flush()
+
+    def _db_flush(self):
+        if not self._db_upsert_buffer:
+            return
+        try:
+            conn = self._db_conn()
+            with self._db_lock:
+                conn.executemany(
+                    "INSERT OR REPLACE INTO kline_daily VALUES (?,?,?,?,?,?,?,?)",
+                    self._db_upsert_buffer)
+                conn.commit()
+                self._db_rows = conn.execute("SELECT COUNT(*) FROM kline_daily").fetchone()[0]
+            self._db_upsert_buffer = []
+        except Exception as e:
+            logger.debug(f"K线库写入失败: {e}")
+
+    def db_prune(self, keep_days: int = 400):
+        """清理超过保留期的旧K线，防止库无限增长"""
+        try:
+            conn = self._db_conn()
+            cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - keep_days * 86400))
+            with self._db_lock:
+                cur = conn.execute("DELETE FROM kline_daily WHERE date < ?", (cutoff,))
+                conn.commit()
+            if cur.rowcount > 0:
+                logger.info(f"K线库清理 {cur.rowcount} 行旧数据（<{cutoff}）")
+        except Exception as e:
+            logger.debug(f"K线库清理失败: {e}")
+
+    def db_reload(self):
+        """数据目录切换后：关旧连接、清内存、从新位置重载"""
+        self.db_close()
+        with self._lock:
+            self._dfs.clear()
+            self._fetch_date.clear()
+        self.db_load_all()
 
     # ---------- 对外 ----------
 
@@ -181,6 +292,8 @@ class MarketPool:
 
     def stop(self):
         self._stop.set()
+        self._db_flush()
+        self.db_close()
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
@@ -190,6 +303,9 @@ class MarketPool:
                 "progress_pct": round(len(self._dfs) / len(self._codes) * 100, 1) if self._codes else 0,
                 "warming": self.warming,
                 "codes_date": self._codes_date,
+                "db_rows": self._db_rows,
+                "db_file": str(storage.path("market.db")),
+                "alt_source": "tencent" if self._alt_source else "eastmoney",
             }
 
     def get_df(self, code: str) -> Optional[pd.DataFrame]:
@@ -241,7 +357,75 @@ class MarketPool:
                 self._codes_date = today
             logger.info(f"全市场池: {len(codes)} 只 A 股")
 
+    def load_local_tdx(self) -> int:
+        """
+        从本地通达信 vipdoc 载入全市场日线（内存保留完整深度历史）。
+        SQLite 只入最近250根。批量事务写入，8000只秒级~半分钟完成。
+        """
+        from config import config
+        from tdx_local import resolve_vipdoc_dir, iter_local_daily
+
+        vipdoc = resolve_vipdoc_dir(config.tdx_install_dir)
+        if not vipdoc:
+            return 0
+
+        t0 = time.time()
+        count = 0
+        db_rows: List[tuple] = []
+        conn = self._db_conn()
+        for code, market, bars in iter_local_daily(vipdoc):
+            df = pd.DataFrame([{
+                "open": b["open"], "high": b["high"], "low": b["low"], "close": b["close"],
+                "volume": b["volume"], "amount": b["amount"],
+            } for b in bars])
+            with self._lock:
+                old = self._dfs.get(code)
+                # 本地更深（历史更长）或内存无数据时采用本地
+                if old is None or len(df) > len(old):
+                    self._dfs[code] = df
+                    self._fetch_date[code] = bars[-1]["datetime"]
+            for b in bars[-250:]:
+                db_rows.append((code, str(b["datetime"])[:10], b["open"], b["high"],
+                                b["low"], b["close"], b["volume"], b["amount"]))
+            count += 1
+            # 每2000只提交一个事务
+            if len(db_rows) >= 500_000:
+                with self._db_lock:
+                    conn.executemany("INSERT OR REPLACE INTO kline_daily VALUES (?,?,?,?,?,?,?,?)", db_rows)
+                    conn.commit()
+                db_rows = []
+        if db_rows:
+            with self._db_lock:
+                conn.executemany("INSERT OR REPLACE INTO kline_daily VALUES (?,?,?,?,?,?,?,?)", db_rows)
+                conn.commit()
+            self._db_rows = conn.execute("SELECT COUNT(*) FROM kline_daily").fetchone()[0]
+        logger.info(f"本地通达信载入 {count} 只（{time.time()-t0:.1f}s，目录 {vipdoc}）")
+        return count
+
+    def _fetch_kline(self, market: int, code: str) -> List[Dict[str, Any]]:
+        """在线补缺：东财↔腾讯自适应轮换（连续失败自动切换，下一轮恢复默认顺序）"""
+        if self._alt_source:
+            order = [tencent.get_kline, eastmoney.get_kline]
+        else:
+            order = [eastmoney.get_kline, tencent.get_kline]
+        for fetch in order:
+            bars = fetch(code, market, klt=101, lmt=250)
+            if bars:
+                return bars
+        return []
+
     def _warm_loop(self):
+        # 三层载入：SQLite持久库（秒级）→ 本地通达信vipdoc（秒级、千根深度）→ 在线补缺
+        try:
+            self.db_load_all()
+        except Exception as e:
+            logger.warning(f"K线库载入失败（将全量在线预热）: {e}")
+        try:
+            self.load_local_tdx()
+        except Exception as e:
+            logger.warning(f"本地通达信数据载入失败: {e}")
+
+        from config import config
         while not self._stop.is_set():
             try:
                 self._refresh_codes()
@@ -267,9 +451,10 @@ class MarketPool:
                 if fresh:
                     continue
                 try:
-                    bars = eastmoney.get_kline(f"{market}.{code}", klt=101, lmt=250)
+                    bars = self._fetch_kline(market, code)
                     if bars:
                         consecutive_fail = 0
+                        self._alt_source = False
                         df = pd.DataFrame([{
                             "open": b["open"], "high": b["high"],
                             "low": b["low"], "close": b["close"],
@@ -277,25 +462,32 @@ class MarketPool:
                         } for b in bars])
                         with self._lock:
                             self._dfs[code] = df
-                            self._fetch_date[code] = today
+                            self._fetch_date[code] = str(bars[-1].get("datetime", ""))[:10] or today
+                        self._db_upsert(code, bars)
                         done += 1
                     else:
                         consecutive_fail += 1
+                        # 主源连续失败10次 → 切换备源重试当前股票
+                        if consecutive_fail == 10 and not self._alt_source:
+                            self._alt_source = True
+                            logger.warning("K线主源(东财)连续失败，本轮切换腾讯源")
                         if consecutive_fail >= 30:
-                            # K线接口连续失败（可能被限流），熔断本轮，10分钟后重试
+                            # 双源均连续失败（均被限流），熔断本轮，10分钟后重试
                             logger.warning("K线接口连续失败30次，预热熔断，10分钟后重试")
                             aborted = True
                             break
                 except Exception as e:
                     logger.debug(f"预热 {code} 失败: {e}")
-                # 限速：约 5-6 只/秒，全部预热约 20 分钟（东财K线接口）
-                self._stop.wait(0.18)
+                # 限速：约 3 只/秒（放缓降低东财限流风险）；本地/缓存命中的不等待
+                self._stop.wait(0.35)
 
             self.warming = False
+            self._db_flush()
             if done:
                 logger.info(f"本轮预热完成，新拉取 {done} 只，缓存共 {len(self._dfs)} 只")
-            # 预热完等待 60 分钟再检查过期；熔断则 10 分钟后重试
-            self._stop.wait(600 if aborted else 3600)
+                self.db_prune()
+            # 预热完等待配置的间隔再检查过期；熔断则 10 分钟后重试
+            self._stop.wait(600 if aborted else config.warm_interval)
 
 
 market_pool = MarketPool()

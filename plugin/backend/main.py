@@ -13,10 +13,12 @@ import time
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
 
-from fastapi import FastAPI, WebSocket, HTTPException, Query
+from fastapi import FastAPI, Request, WebSocket, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 from loguru import logger
+from pathlib import Path
 
 from data_source import data_source, normalize_stock_code
 from screener import run_screen, market_pool
@@ -26,6 +28,9 @@ from market_timing import market_timing
 from market_sentiment import market_sentiment
 from sector_monitor import sector_monitor
 from position_manager import position_manager
+from storage import storage
+from config import config
+import system_api
 
 
 # 配置日志
@@ -117,6 +122,10 @@ async def sentiment_refresh_loop():
 async def lifespan(app: FastAPI):
     logger.info("DSH 股票后端启动...")
 
+    # 安装内存日志环形缓冲（系统Tab查看用）
+    system_api.install_log_sink()
+    logger.info(f"数据目录: {storage.data_dir}")
+
     alert_engine.load()
     position_manager.load()
 
@@ -124,7 +133,7 @@ async def lifespan(app: FastAPI):
     logger.info("行情连接将在后台建立（不阻塞启动）")
     keepalive_task = asyncio.create_task(connection_keepalive_loop())
     broadcaster_task = asyncio.create_task(broadcaster.start(interval=3))
-    alert_task = asyncio.create_task(alert_engine.run_loop(interval=30))
+    alert_task = asyncio.create_task(alert_engine.run_loop(interval=config.alert_interval))
     sentiment_task = asyncio.create_task(sentiment_refresh_loop())
     market_pool.start()
 
@@ -154,6 +163,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============= 静态资源（K线库本地服务，避免CDN被墙） =============
+STATIC_DIR = Path(__file__).parent / "static"
+_STATIC_MIME = {
+    "klinecharts.min.js": "application/javascript; charset=utf-8",
+    "klinecharts.js": "application/javascript; charset=utf-8",
+}
+
+
+@app.get("/api/static/{filename}")
+async def serve_static(filename: str):
+    """本地静态资源服务（K线库等，避免依赖外部CDN）"""
+    if filename not in _STATIC_MIME:
+        raise HTTPException(status_code=404, detail="资源不存在")
+    p = STATIC_DIR / filename
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"文件未打包: {filename}")
+    return Response(content=p.read_bytes(), media_type=_STATIC_MIME[filename])
+
+
+@app.get("/api/system/kline-library")
+async def kline_library_check():
+    """检查K线库本地文件是否可用（前端据此决定是否走本地）"""
+    p = STATIC_DIR / "klinecharts.min.js"
+    return {"local_available": p.exists(), "version": "9.8.12", "size_kb": round(p.stat().st_size / 1024) if p.exists() else 0}
 
 
 # ============= 健康检查 =============
@@ -188,18 +223,31 @@ async def get_quotes(codes: List[str]):
 
 @app.get("/api/index-quotes")
 async def get_index_quotes():
-    """主要指数行情（市场代码显式指定）"""
+    """主要指数行情（pytdx 优先，不可用时回退东财）"""
     market_codes = [(m, c) for m, c, _ in INDEX_LIST]
     quotes = await asyncio.to_thread(data_source.get_security_quotes, market_codes)
 
     result = {}
-    for i, (_, code, name) in enumerate(INDEX_LIST):
-        if i < len(quotes):
-            result[code] = quotes[i]
-            result[code]["display_name"] = name
+    if quotes:
+        for i, (_, code, name) in enumerate(INDEX_LIST):
+            if i < len(quotes):
+                result[code] = quotes[i]
+                result[code]["display_name"] = name
+    else:
+        # 东财回退：一次请求全部指数
+        import eastmoney as em
+        name_map = {c: n for _, c, n in INDEX_LIST}
+        secids = [f"{m}.{c}" for m, c, _ in INDEX_LIST]
+        eq = await asyncio.to_thread(em.get_index_quotes, secids)
+        for q in eq:
+            code = q.get("code")
+            if code in name_map:
+                q["display_name"] = name_map[code]
+                result[code] = q
 
     return {
         "indices": result,
+        "source": "pytdx" if quotes else ("eastmoney" if result else "unavailable"),
         "timestamp": time.time(),
     }
 
@@ -224,24 +272,25 @@ async def get_kline(
 
 # ============= 择时 / 情绪 / 板块 =============
 @app.get("/api/market/timing")
-async def get_market_timing():
+async def get_market_timing(force: bool = Query(False, description="跳过缓存立即重算")):
     """大盘择时：跌无可跌清单 + 企稳信号 + 阶段判定 + 建议仓位"""
-    return await asyncio.to_thread(market_timing.get)
+    return await asyncio.to_thread(market_timing.get, force)
 
 
 @app.get("/api/market/sentiment")
-async def get_market_sentiment():
+async def get_market_sentiment(force: bool = Query(False)):
     """市场情绪统计 + 风格判定（抱团 vs 妖股）"""
-    return await asyncio.to_thread(market_sentiment.get)
+    return await asyncio.to_thread(market_sentiment.get, force)
 
 
 @app.get("/api/sectors")
 async def get_sectors(
     board_type: str = Query("industry", description="industry=行业, concept=概念"),
     top_n: int = Query(15, ge=5, le=50),
+    force: bool = Query(False),
 ):
     """板块排行（含5日动量与阶段标签）"""
-    return await asyncio.to_thread(sector_monitor.get_ranking, board_type, top_n)
+    return await asyncio.to_thread(sector_monitor.get_ranking, board_type, top_n, force)
 
 
 @app.get("/api/sectors/{bk_code}/leaders")
@@ -418,6 +467,54 @@ async def toggle_alert(alert_id: str, req: AlertRuleUpdate):
 async def alert_history():
     """最近触发的预警（持久化，最多200条）"""
     return {"history": list(reversed(alert_engine.history))[:50]}
+
+
+# ============= 系统管理 =============
+@app.get("/api/system/status")
+async def api_system_status():
+    """系统状态总览（版本/连接/预热池/数据目录）"""
+    return await system_api.system_status()
+
+
+@app.get("/api/system/tdx-probe")
+async def api_tdx_probe():
+    """并行探测全部通达信服务器"""
+    return await system_api.tdx_probe()
+
+
+@app.post("/api/system/tdx-reconnect")
+async def api_tdx_reconnect():
+    """强制断开并重连通达信"""
+    return await system_api.tdx_reconnect()
+
+
+@app.post("/api/system/tdx-client-update")
+async def api_tdx_client_update():
+    """启动通达信客户端并尽力拉取最新本地数据（自动登录尝试+盘后下载+变化监测自动重载）"""
+    return await system_api.tdx_client_update()
+
+
+@app.get("/api/system/config")
+async def api_get_config():
+    return await system_api.get_config()
+
+
+@app.put("/api/system/config")
+async def api_update_config(req: system_api.ConfigUpdate, request: Request):
+    """更新配置；data_dir 走迁移流程（复制旧数据到新目录并在线切换）"""
+    return await system_api.update_config(req, request)
+
+
+@app.get("/api/system/logs")
+async def api_system_logs(level: str = Query("INFO"), limit: int = Query(200, le=500)):
+    """最近内存日志（环形缓冲500条）"""
+    return await system_api.get_logs(level, limit)
+
+
+@app.post("/api/system/restart")
+async def api_system_restart(request: Request):
+    """后端自重启（分离进程2秒后拉起，前端靠health轮询恢复）"""
+    return await system_api.restart_backend(request)
 
 
 # ============= WebSocket =============

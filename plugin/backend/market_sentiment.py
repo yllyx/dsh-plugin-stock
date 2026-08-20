@@ -45,15 +45,20 @@ class MarketSentiment:
 
     # ---------- 主入口 ----------
 
-    def get(self, force: bool = False) -> Dict[str, Any]:
-        """获取情绪+风格数据（带缓存）"""
+    def get(self, force: bool = False, light: bool = False) -> Dict[str, Any]:
+        """
+        获取情绪+风格数据（带缓存）
+        light=True：冷缓存时跳过全市场广度扫描（约60-90秒的重操作），
+        只取涨跌停池等轻数据——供择时首次分析快速出结果；
+        后台刷新循环稍后会补全量数据。
+        """
         if not force and self._cache and (time.time() - self._cache_time) < CACHE_TTL:
             return self._cache
         if self._refreshing:
             return self._cache or {"error": "数据加载中"}
         self._refreshing = True
         try:
-            self._cache = self._collect()
+            self._cache = self._collect(light=light and not self._cache)
             self._cache_time = time.time()
             return self._cache
         except Exception as e:
@@ -64,7 +69,7 @@ class MarketSentiment:
 
     # ---------- 数据采集 ----------
 
-    def _collect(self) -> Dict[str, Any]:
+    def _collect(self, light: bool = False) -> Dict[str, Any]:
         zt = eastmoney.get_zt_pool()
         dt = eastmoney.get_dt_pool()
         zb = eastmoney.get_zb_pool()
@@ -75,12 +80,17 @@ class MarketSentiment:
 
         # 连板梯队
         ladder = self._ladder(zt)
-        # 全市场涨跌家数 / 两市成交额（东财代码表 + pytdx 批量行情）
-        # 注：不能用行业板块 f104/f105 求和——东财行业板块含多级嵌套会重复计数
-        breadth = self._market_breadth(self._all_a_codes)
-        up_count = breadth.get("up", 0)
-        down_count = breadth.get("down", 0)
-        total_amount = breadth.get("amount", 0)
+        if light:
+            # 轻模式：跳过全市场广度扫描（重操作），交给后台刷新补全
+            up_count = down_count = 0
+            total_amount = 0
+        else:
+            # 全市场涨跌家数 / 两市成交额（东财代码表 + pytdx 批量行情）
+            # 注：不能用行业板块 f104/f105 求和——东财行业板块含多级嵌套会重复计数
+            breadth = self._market_breadth(self._all_a_codes)
+            up_count = breadth.get("up", 0)
+            down_count = breadth.get("down", 0)
+            total_amount = breadth.get("amount", 0)
 
         sentiment = {
             "zt_count": zt_count,

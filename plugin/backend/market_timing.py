@@ -27,7 +27,8 @@ from market_sentiment import market_sentiment
 INDEX_HS300 = (1, "000300")
 INDEX_SZZS = (1, "000001")
 
-CACHE_TTL = 300
+CACHE_TTL = 120
+ERROR_TTL = 15   # 错误结果只短缓存，避免故障期一错两分钟
 
 STAGE_CONFIG = {
     "主升": {"position": "70-80%", "action": "趋势持有为主，可重仓，注意分批兑现"},
@@ -53,7 +54,8 @@ class MarketTiming:
         self._refreshing = True
         try:
             self._cache = self.analyze()
-            self._cache_time = time.time()
+            ttl = ERROR_TTL if "error" in self._cache else CACHE_TTL
+            self._cache_time = time.time() - (CACHE_TTL - ttl)
             return self._cache
         except Exception as e:
             logger.error(f"择时分析异常: {e}")
@@ -66,7 +68,7 @@ class MarketTiming:
     def analyze(self) -> Dict[str, Any]:
         bars = data_source.get_security_bars(INDEX_HS300[1], INDEX_HS300[0], category=9, count=1100)
         if not bars or len(bars) < 120:
-            return {"error": "无法获取沪深300日K（通达信未连接）"}
+            return {"error": "沪深300日K获取失败（已尝试通达信/东财/腾讯三源），多为瞬时网络问题，请稍后点刷新重试"}
 
         df = pd.DataFrame(bars)
         close, high, low, vol, amount = df["close"], df["high"], df["low"], df["volume"], df["amount"]
@@ -127,7 +129,7 @@ class MarketTiming:
         item("成交额萎缩至6成以下", vr < 0.6, f"5日/60日均额比 {vr:.2f}", "地量见地价")
 
         # 6. 跌停家数 > 涨停家数（恐慌宣泄）
-        senti = market_sentiment.get()
+        senti = market_sentiment.get(light=True)
         s = senti.get("sentiment", {})
         if s.get("data_available"):
             item("跌停家数>涨停家数", s["dt_count"] > s["zt_count"],
@@ -216,7 +218,7 @@ class MarketTiming:
 
         # 4. 多板块联动反弹（行业板块上涨家数占比>60% 且当日指数上涨）
         try:
-            senti = market_sentiment.get()
+            senti = market_sentiment.get(light=True)
             s = senti.get("sentiment", {})
             idx_change = 0.0
             quotes = data_source.get_security_quotes([INDEX_HS300])

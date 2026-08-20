@@ -19,7 +19,13 @@ const PLUGIN_API_BASE = (() => {
     } catch { return "http://127.0.0.1:8765"; }
 })();
 const STORAGE_KEY = "dsh-plugin-stock:order";
-const KLINECHART_CDN = "https://cdn.jsdelivr.net/npm/klinecharts@9.8.5/dist/klinecharts.min.js";
+// K线库加载顺序：① 本地后端服务（随插件打包，最稳）② 国内CDN回退 ③ 国际CDN兜底
+const KLINECHART_CDNS = [
+    `${PLUGIN_API_BASE}/api/static/klinecharts.min.js`,
+    "https://cdn.staticfile.net/klinecharts/9.8.12/klinecharts.min.js",
+    "https://cdn.jsdelivr.net/npm/klinecharts@9.8.12/dist/klinecharts.min.js",
+    "https://unpkg.com/klinecharts@9.8.12/dist/klinecharts.min.js",
+];
 
 window.__ModuleLoader__.load({
     id: "dsh-plugin-stock",
@@ -77,13 +83,41 @@ window.__ModuleLoader__.load({
             if (window.klinecharts) return Promise.resolve(window.klinecharts);
             if (klineLoading) return klineLoading;
             klineLoading = new Promise((resolve, reject) => {
-                const script = document.createElement("script");
-                script.src = KLINECHART_CDN;
-                script.onload = () => resolve(window.klinecharts);
-                script.onerror = () => reject(new Error("加载 K线库失败"));
-                document.head.appendChild(script);
+                let idx = 0;
+                const tryNext = () => {
+                    if (idx >= KLINECHART_CDNS.length) {
+                        klineLoading = null;
+                        reject(new Error("K线库加载失败（本地服务与全部CDN均不可用，请检查后端是否运行）"));
+                        return;
+                    }
+                    const script = document.createElement("script");
+                    script.src = KLINECHART_CDNS[idx++];
+                    script.onload = () => (window.klinecharts ? resolve(window.klinecharts) : tryNext());
+                    script.onerror = tryNext;
+                    document.head.appendChild(script);
+                };
+                tryNext();
             });
             return klineLoading;
+        }
+
+        // ============= 通用小组件 =============
+        function RefreshBtn({ onClick, loading, title }) {
+            return React.createElement("button", {
+                className: `dsh-stock-refresh ${loading ? "spin" : ""}`,
+                onClick, title: title || "立即刷新",
+            }, loading ? "⟳" : "↻");
+        }
+
+        function TabHead({ title, extra, onRefresh, refreshing }) {
+            return React.createElement("div", { className: "dsh-stock-tab-head" },
+                React.createElement("span", { className: "dsh-stock-tab-title" }, title),
+                extra,
+                onRefresh && React.createElement(RefreshBtn, { onClick: onRefresh, loading: refreshing }));
+        }
+
+        function LoadingBar({ show }) {
+            return show ? React.createElement("div", { className: "dsh-stock-loadingbar" }) : null;
         }
 
         // ============= K线模态框 =============
@@ -219,23 +253,32 @@ window.__ModuleLoader__.load({
             const [timing, setTiming] = useState(null);
             const [indices, setIndices] = useState(null);
             const [error, setError] = useState(null);
+            const [refreshing, setRefreshing] = useState(false);
 
-            const load = useCallback(async () => {
+            const load = useCallback(async (force) => {
+                if (force) setRefreshing(true);
                 try {
                     const [t, idx] = await Promise.all([
-                        api("/api/market/timing"),
+                        api(`/api/market/timing${force ? "?force=1" : ""}`),
                         api("/api/index-quotes"),
                     ]);
                     setTiming(t.error ? null : t);
-                    if (t.error) setError(t.error);
-                    else setError(null);
+                    setError(t.error || null);
                     setIndices(idx.indices || {});
                 } catch (e) { setError(e.message); }
+                if (force) setRefreshing(false);
             }, []);
-            usePolling(load, 120000, []);
+            usePolling(() => load(false), 60000, []);
 
             const stageColors = { "主升": "good", "震荡": "mid", "下跌": "bad", "主跌": "bad" };
             return React.createElement("div", { className: "dsh-stock-tab-body" },
+                React.createElement(TabHead, {
+                    title: "⏱ 大盘择时",
+                    onRefresh: () => load(true), refreshing,
+                    extra: indices && React.createElement("span", { className: "dsh-stock-src-tag" },
+                        `指数源: ${indices["000300"] ? "实时" : "-"}`),
+                }),
+                React.createElement(LoadingBar, { show: refreshing && !timing }),
                 React.createElement(ErrorBox, { error }),
                 indices && React.createElement("div", { className: "dsh-stock-indices" },
                     Object.entries(indices).map(([code, idx]) =>
@@ -266,19 +309,29 @@ window.__ModuleLoader__.load({
         function SentimentTab({ openStock }) {
             const [data, setData] = useState(null);
             const [error, setError] = useState(null);
+            const [refreshing, setRefreshing] = useState(false);
 
-            const load = useCallback(async () => {
+            const load = useCallback(async (force) => {
+                if (force) setRefreshing(true);
                 try {
-                    const d = await api("/api/market/sentiment");
-                    if (d.error) { setError(d.error); return; }
-                    setError(null);
-                    setData(d);
+                    const d = await api(`/api/market/sentiment${force ? "?force=1" : ""}`);
+                    if (d.error) { setError(d.error); }
+                    else { setError(null); setData(d); }
                 } catch (e) { setError(e.message); }
+                if (force) setRefreshing(false);
             }, []);
-            usePolling(load, 60000, []);
+            usePolling(() => load(false), 60000, []);
 
-            if (error) return React.createElement("div", { className: "dsh-stock-tab-body" }, React.createElement(ErrorBox, { error }));
-            if (!data) return React.createElement("div", { className: "dsh-stock-tab-body" }, React.createElement("div", { className: "dsh-stock-loading" }, "加载中…"));
+            return React.createElement("div", { className: "dsh-stock-tab-body" },
+                React.createElement(TabHead, { title: "🔥 市场情绪与风格", onRefresh: () => load(true), refreshing }),
+                React.createElement(LoadingBar, { show: refreshing && !data }),
+                error && React.createElement(ErrorBox, { error }),
+                !data && !error && React.createElement("div", { className: "dsh-stock-loading" }, "加载中…"),
+                data && React.createElement(SentimentBody, { data, openStock }),
+            );
+        }
+
+        function SentimentBody({ data, openStock }) {
 
             const s = data.sentiment || {};
             const st = data.style || {};
@@ -340,19 +393,21 @@ window.__ModuleLoader__.load({
             const [boardType, setBoardType] = useState("industry");
             const [data, setData] = useState(null);
             const [error, setError] = useState(null);
+            const [loading, setLoading] = useState(true);
             const [expanded, setExpanded] = useState(null);
             const [leaders, setLeaders] = useState(null);
             const [leadersLoading, setLeadersLoading] = useState(false);
 
-            const load = useCallback(async () => {
+            const load = useCallback(async (force) => {
+                setLoading(true);
                 try {
-                    const d = await api(`/api/sectors?board_type=${boardType}&top_n=20`);
-                    if (d.error) { setError(d.error); setData(null); return; }
-                    setError(null);
-                    setData(d);
+                    const d = await api(`/api/sectors?board_type=${boardType}&top_n=20${force ? "&force=1" : ""}`);
+                    if (d.error) { setError(d.error); setData(null); }
+                    else { setError(null); setData(d); }
                 } catch (e) { setError(e.message); }
+                setLoading(false);
             }, [boardType]);
-            usePolling(load, 60000, [boardType]);
+            usePolling(() => load(false), 60000, [boardType]);
 
             const toggle = async (bk) => {
                 if (expanded === bk.bk_code) { setExpanded(null); return; }
@@ -367,14 +422,21 @@ window.__ModuleLoader__.load({
             };
 
             return React.createElement("div", { className: "dsh-stock-tab-body" },
+                React.createElement(TabHead, {
+                    title: "🧩 板块监控与龙头",
+                    onRefresh: () => load(true), refreshing: loading,
+                }),
                 React.createElement("div", { className: "dsh-stock-seg" },
                     ["industry", "concept"].map((t) =>
                         React.createElement("button", {
-                            key: t, className: boardType === t ? "active" : "",
+                            key: t,
+                            className: boardType === t ? "active" : "",
+                            disabled: loading,
                             onClick: () => { setBoardType(t); setExpanded(null); },
                         }, t === "industry" ? "行业板块" : "概念板块"))),
+                React.createElement(LoadingBar, { show: loading }),
                 React.createElement(ErrorBox, { error }),
-                !data && !error && React.createElement("div", { className: "dsh-stock-loading" }, "加载中…"),
+                !data && !error && !loading && React.createElement("div", { className: "dsh-stock-loading" }, "加载中…"),
                 data && data.boards && React.createElement("div", { className: "dsh-stock-table" },
                     React.createElement("div", { className: "dsh-stock-thead" },
                         React.createElement("span", null, "板块"),
@@ -431,6 +493,7 @@ window.__ModuleLoader__.load({
             const [overview, setOverview] = useState(null);
             const [account, setAccount] = useState(null);
             const [error, setError] = useState(null);
+            const [refreshing, setRefreshing] = useState(false);
             const [capitalInput, setCapitalInput] = useState("");
             const [showForm, setShowForm] = useState(false);
             const [form, setForm] = useState({
@@ -440,7 +503,8 @@ window.__ModuleLoader__.load({
             const [formError, setFormError] = useState(null);
             const [saving, setSaving] = useState(false);
 
-            const load = useCallback(async () => {
+            const load = useCallback(async (force) => {
+                if (force) setRefreshing(true);
                 try {
                     const [ov, acc] = await Promise.all([
                         api(`/api/position/overview?t=${Date.now()}`),
@@ -450,8 +514,9 @@ window.__ModuleLoader__.load({
                     setError(ov.error || null);
                     setAccount(acc);
                 } catch (e) { setError(e.message); }
+                if (force) setRefreshing(false);
             }, [refreshTick]);
-            usePolling(load, 10000, [refreshTick]);
+            usePolling(() => load(false), 10000, [refreshTick]);
 
             const saveCapital = async () => {
                 const v = Number(capitalInput);
@@ -502,6 +567,7 @@ window.__ModuleLoader__.load({
 
             const cap = account && account.total_capital;
             return React.createElement("div", { className: "dsh-stock-tab-body" },
+                React.createElement(TabHead, { title: "💼 持仓与仓位", onRefresh: () => load(true), refreshing }),
                 React.createElement(ErrorBox, { error }),
                 React.createElement("div", { className: "dsh-stock-account-row" },
                     React.createElement("span", { className: "dsh-stock-account-label" },
@@ -517,18 +583,17 @@ window.__ModuleLoader__.load({
                         showForm ? "收起" : "＋ 添加持仓")),
                 showForm && React.createElement("div", { className: "dsh-stock-form" },
                     React.createElement("div", { className: "dsh-stock-form-grid" },
-                        ["code", "name"].map((k) =>
-                            React.createElement("input", {
-                                key: k, className: "dsh-stock-input",
-                                placeholder: k === "code" ? "代码 600519" : "名称 贵州茅台",
-                                value: form[k], onChange: (e) => setForm({ ...form, [k]: e.target.value }),
-                            })),
-                        ["buy_price", "shares", "stop_loss_pct", "take_profit_pct"].map((k) =>
-                            React.createElement("input", {
-                                key: k, className: "dsh-stock-input",
-                                placeholder: { buy_price: "成本价", shares: "股数", stop_loss_pct: "止损%(如-7)", take_profit_pct: "止盈%(如15)" }[k],
-                                value: form[k], onChange: (e) => setForm({ ...form, [k]: e.target.value }),
-                            }))),
+                        ["code", "name", "buy_price", "shares", "stop_loss_pct", "take_profit_pct"].map((k) =>
+                            React.createElement("label", { key: k, className: "dsh-stock-field" },
+                                React.createElement("span", { className: "dsh-stock-field-label" },
+                                    { code: "股票代码", name: "股票名称", buy_price: "成本价(元)",
+                                      shares: "持股数(股)", stop_loss_pct: "止损线(%)", take_profit_pct: "止盈线(%)" }[k]),
+                                React.createElement("input", {
+                                    className: "dsh-stock-input",
+                                    placeholder: { code: "如 600519", name: "如 贵州茅台", buy_price: "如 1500",
+                                                   shares: "如 100", stop_loss_pct: "默认 -7", take_profit_pct: "默认 15" }[k],
+                                    value: form[k], onChange: (e) => setForm({ ...form, [k]: e.target.value }),
+                                })))),
                     React.createElement("div", { className: "dsh-stock-form-row" },
                         React.createElement("span", { className: "dsh-stock-form-label" }, "止盈止损模式："),
                         Object.entries(STOP_MODE_LABEL).map(([v, label]) =>
@@ -536,12 +601,14 @@ window.__ModuleLoader__.load({
                                 key: v, className: `dsh-stock-seg-btn ${form.stop_mode === v ? "active" : ""}`,
                                 onClick: () => setForm({ ...form, stop_mode: v }),
                             }, label)),
-                        form.stop_mode === "trailing" && React.createElement("input", {
-                            className: "dsh-stock-input sm",
-                            placeholder: "回撤阈值% 默认10",
-                            value: form.trail_drawdown_pct,
-                            onChange: (e) => setForm({ ...form, trail_drawdown_pct: e.target.value }),
-                        })),
+                        form.stop_mode === "trailing" && React.createElement("label", { className: "dsh-stock-field inline" },
+                            React.createElement("span", { className: "dsh-stock-field-label" }, "高点回撤阈值(%)"),
+                            React.createElement("input", {
+                                className: "dsh-stock-input sm",
+                                placeholder: "默认 10",
+                                value: form.trail_drawdown_pct,
+                                onChange: (e) => setForm({ ...form, trail_drawdown_pct: e.target.value }),
+                            }))),
                     formError && React.createElement("div", { className: "dsh-stock-error-box" }, formError),
                     React.createElement("div", { className: "dsh-stock-form-row" },
                         React.createElement("button", { className: "dsh-stock-btn", disabled: saving, onClick: addHolding },
@@ -757,6 +824,247 @@ window.__ModuleLoader__.load({
             );
         }
 
+        // ============= Tab 7: 系统 =============
+        const PROBE_STATUS = { ok: "✓ 可用", no_data: "⊘ 无数据", timeout: "✗ 超时" };
+
+        function SystemTab() {
+            const [status, setStatus] = useState(null);
+            const [probe, setProbe] = useState(null);
+            const [probing, setProbing] = useState(false);
+            const [reconnecting, setReconnecting] = useState(false);
+            const [restarting, setRestarting] = useState(false);
+            const [logs, setLogs] = useState([]);
+            const [logLevel, setLogLevel] = useState("INFO");
+            const [configData, setConfigData] = useState(null);
+            const [cfgForm, setCfgForm] = useState(null);
+            const [cfgMsg, setCfgMsg] = useState(null);
+            const [dirInput, setDirInput] = useState("");
+            const [error, setError] = useState(null);
+
+            const loadStatus = useCallback(async () => {
+                try { setStatus(await api("/api/system/status")); } catch (e) { setError(e.message); }
+            }, []);
+            usePolling(loadStatus, 10000, []);
+
+            const loadCfg = useCallback(async () => {
+                try {
+                    const c = await api("/api/system/config");
+                    setConfigData(c);
+                    setCfgForm({
+                        custom_tdx_hosts: (c.custom_tdx_hosts || []).join("\n"),
+                        alert_interval: c.alert_interval,
+                        alert_cooldown: c.alert_cooldown,
+                        warm_interval: c.warm_interval,
+                        tdx_install_dir: c.tdx_install_dir || "",
+                        tdx_username: c.tdx_username || "",
+                        tdx_password: c.tdx_password || "",
+                    });
+                    setDirInput(c.data_dir || "");
+                } catch (e) { setError(e.message); }
+            }, []);
+            useEffect(() => { loadCfg(); }, []);
+
+            const loadLogs = useCallback(async () => {
+                try {
+                    const d = await api(`/api/system/logs?level=${logLevel}&limit=200`);
+                    setLogs(d.logs || []);
+                } catch { /* ignore */ }
+            }, [logLevel]);
+            usePolling(loadLogs, 15000, [logLevel]);
+
+            const doProbe = async () => {
+                setProbing(true); setProbe(null);
+                try { setProbe(await api("/api/system/tdx-probe")); }
+                catch (e) { setError(e.message); }
+                setProbing(false);
+            };
+            const doReconnect = async () => {
+                setReconnecting(true);
+                try { await post("/api/system/tdx-reconnect", {}); loadStatus(); }
+                catch (e) { setError(e.message); }
+                setReconnecting(false);
+            };
+            const doRestart = async () => {
+                if (!window.confirm("确认重启股票后端？约3-5秒后自动恢复。")) return;
+                setRestarting(true);
+                try { await post("/api/system/restart", {}); } catch { /* 进程退出导致请求中断，忽略 */ }
+                // 等待新进程起来
+                setTimeout(() => { setRestarting(false); loadStatus(); loadCfg(); }, 5000);
+            };
+            const saveCfg = async () => {
+                setCfgMsg(null);
+                try {
+                    const hosts = (cfgForm.custom_tdx_hosts || "").split("\n").map(s => s.trim()).filter(Boolean);
+                    const r = await put("/api/system/config", {
+                        custom_tdx_hosts: hosts,
+                        alert_interval: Number(cfgForm.alert_interval),
+                        alert_cooldown: Number(cfgForm.alert_cooldown),
+                        warm_interval: Number(cfgForm.warm_interval),
+                        tdx_install_dir: (cfgForm.tdx_install_dir || "").trim(),
+                        tdx_username: (cfgForm.tdx_username || "").trim(),
+                        tdx_password: cfgForm.tdx_password || "",
+                    });
+                    setConfigData(r.config);
+                    setCfgMsg("✓ 配置已保存并生效");
+                } catch (e) { setCfgMsg(`✗ 保存失败: ${e.message}`); }
+            };
+            const tdxClientUpdate = async () => {
+                setCfgMsg("启动客户端中…");
+                try {
+                    const r = await post("/api/system/tdx-client-update", {});
+                    setCfgMsg((r.ok ? "🚀 " : "⚠️ ") + r.message);
+                    setTimeout(loadStatus, 3000);
+                } catch (e) { setCfgMsg(`✗ 启动失败: ${e.message}`); }
+            };
+            const migrateDir = async () => {
+                if (!dirInput || !window.confirm(
+                    `确认切换数据目录到？\n${dirInput}\n\n将复制持仓/资金/配置/K线库到新目录（同名文件不覆盖），之后所有数据保存在新目录。`)) return;
+                setCfgMsg("迁移中…");
+                try {
+                    const r = await put("/api/system/config", { data_dir: dirInput });
+                    setCfgMsg(`✓ ${r.data_dir_result.message}（复制: ${(r.data_dir_result.copied || []).join("、") || "无"}）`);
+                    loadStatus(); loadCfg();
+                } catch (e) { setCfgMsg(`✗ 迁移失败: ${e.message}`); }
+            };
+
+            const up = (s) => s ? Math.floor(s / 60) + "分钟" : "-";
+            const fmtBytes = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.round(n / 1024) + "KB";
+            const pool = status && status.market_pool;
+
+            return React.createElement("div", { className: "dsh-stock-tab-body" },
+                React.createElement(TabHead, { title: "⚙️ 系统管理", onRefresh: loadStatus, refreshing: false }),
+                React.createElement(ErrorBox, { error }),
+                restarting && React.createElement("div", { className: "dsh-stock-error-box" }, "⟳ 后端重启中，约3-5秒后自动恢复…"),
+
+                status && React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" }, "📊 运行状态"),
+                    React.createElement("div", { className: "dsh-stock-sys-grid" },
+                        [
+                            ["插件版本", status.plugin_version],
+                            ["运行时长", up(status.uptime_sec)],
+                            ["通达信", status.tdx.connected ? `✓ 已连接 ${status.tdx.current_host}` : "✗ 未连接"],
+                            ["预热池", pool ? `${pool.warmed}/${pool.total} 只${pool.warming ? " · 预热中" : ""}` : "-"],
+                            ["K线库", pool && pool.db_rows ? `${pool.db_rows} 行 (${fmtBytes((status.data_dir.files.find(f => f.name === "market.db") || {}).size || 0)})` : "空"],
+                            ["K线源", pool ? (pool.alt_source === "tencent" ? "腾讯(备源)" : "东财(主源)") : "-"],
+                        ].map(([k, v], i) =>
+                            React.createElement("div", { key: i, className: "dsh-stock-sys-item" },
+                                React.createElement("span", { className: "label" }, k),
+                                React.createElement("span", { className: "value" }, v)))),
+                    status.tdx_local && status.tdx_local.available && React.createElement("div", { className: "dsh-stock-detail" },
+                        `💾 本地通达信数据: ${status.tdx_local.sh_count + status.tdx_local.sz_count} 只日线 · 最新 ${status.tdx_local.latest_date}` +
+                        (status.tdx_local.up_to_date ? "（当日✓）" : "（非当日，可点击下方按钮更新）") +
+                        (status.tdx_client_running ? " · 客户端运行中" : "")),
+                    React.createElement("div", { className: "dsh-stock-form-row" },
+                        React.createElement("button", { className: "dsh-stock-btn sm", disabled: reconnecting, onClick: doReconnect },
+                            reconnecting ? "重连中…" : "🔄 重连通达信"),
+                        React.createElement("button", { className: "dsh-stock-btn sm ghost", disabled: probing, onClick: doProbe },
+                            probing ? "体检中…" : "🩺 服务器体检"),
+                        React.createElement("button", { className: "dsh-stock-btn sm ghost", disabled: restarting, onClick: tdxClientUpdate },
+                            "💾 启动通达信更新数据"),
+                        React.createElement("button", { className: "dsh-stock-btn sm danger", disabled: restarting, onClick: doRestart }, "⚡ 重启后端"))),
+
+                probe && React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" },
+                        "🩺 通达信服务器体检",
+                        React.createElement("span", { className: "dsh-stock-badge" },
+                            `${probe.ok_count}/${probe.total} 可用${probe.best ? ` · 最快 ${probe.best.host}(${probe.best.latency_ms}ms)` : ""}`)),
+                    React.createElement("div", { className: "dsh-stock-probe-list" },
+                        probe.results.map((r, i) =>
+                            React.createElement("div", { key: i, className: `dsh-stock-probe-row ${r.status}` },
+                                React.createElement("span", { className: "host" }, r.host),
+                                React.createElement("span", { className: "status" }, PROBE_STATUS[r.status] || r.status),
+                                React.createElement("span", { className: "ms" }, r.latency_ms + "ms"))))),
+
+                cfgForm && React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" }, "🗂 数据目录"),
+                    React.createElement("div", { className: "dsh-stock-detail" },
+                        `当前: ${configData.data_dir}`,
+                        (status.data_dir.files || []).filter(f => f.exists).map(f => ` · ${f.name} ${fmtBytes(f.size)}`).join("")),
+                    React.createElement("div", { className: "dsh-stock-form-row" },
+                        React.createElement("input", {
+                            className: "dsh-stock-input", style: { flex: 1, minWidth: 220 },
+                            placeholder: "新数据目录绝对路径，如 D:\\stock-data",
+                            value: dirInput, onChange: (e) => setDirInput(e.target.value),
+                        }),
+                        React.createElement("button", { className: "dsh-stock-btn sm", onClick: migrateDir }, "保存并迁移数据")),
+                    React.createElement("div", { className: "dsh-stock-form-hint" },
+                        "持仓/资金/配置/K线库都保存在数据目录（插件升级不丢失）。切换时复制旧数据到新目录，同名文件不覆盖。")),
+
+                cfgForm && React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" }, "💾 通达信本地数据源"),
+                    React.createElement("label", { className: "dsh-stock-field" },
+                        React.createElement("span", { className: "dsh-stock-field-label" }, "通达信安装目录（本地 vipdoc 数据优先使用，秒级载入全市场；留空自动探测常见位置）"),
+                        React.createElement("input", {
+                            className: "dsh-stock-input", style: { width: "100%" },
+                            placeholder: "如 D:\\app\\tdx",
+                            value: cfgForm.tdx_install_dir,
+                            onChange: (e) => setCfgForm({ ...cfgForm, tdx_install_dir: e.target.value }),
+                        })),
+                    React.createElement("div", { className: "dsh-stock-form-grid" },
+                        React.createElement("label", { className: "dsh-stock-field" },
+                            React.createElement("span", { className: "dsh-stock-field-label" }, "客户端账号（可选，仅弹登录框时用）"),
+                            React.createElement("input", {
+                                className: "dsh-stock-input",
+                                placeholder: "行情通常免登录",
+                                value: cfgForm.tdx_username,
+                                onChange: (e) => setCfgForm({ ...cfgForm, tdx_username: e.target.value }),
+                            })),
+                        React.createElement("label", { className: "dsh-stock-field" },
+                            React.createElement("span", { className: "dsh-stock-field-label" }, "客户端密码（可选）"),
+                            React.createElement("input", {
+                                className: "dsh-stock-input", type: "password",
+                                placeholder: "明文保存在本机，注意风险",
+                                value: cfgForm.tdx_password,
+                                onChange: (e) => setCfgForm({ ...cfgForm, tdx_password: e.target.value }),
+                            }))),
+                    React.createElement("div", { className: "dsh-stock-form-hint" },
+                        "「启动通达信更新数据」= 启动客户端→尝试自动登录→尝试触发盘后下载→监测到新数据自动载入（30分钟）。自动触发失败时在客户端手动：系统→盘后数据下载（勾选日线+分钟线）。")),
+
+                cfgForm && React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" }, "🔧 运行配置"),
+                    React.createElement("label", { className: "dsh-stock-field" },
+                        React.createElement("span", { className: "dsh-stock-field-label" }, "自定义通达信服务器（每行一个 ip:port，优先探测；留空用内置列表）"),
+                        React.createElement("textarea", {
+                            className: "dsh-stock-textarea",
+                            placeholder: "如\n119.147.212.81:7709",
+                            value: cfgForm.custom_tdx_hosts,
+                            onChange: (e) => setCfgForm({ ...cfgForm, custom_tdx_hosts: e.target.value }),
+                        })),
+                    React.createElement("div", { className: "dsh-stock-form-grid" },
+                        [["alert_interval", "预警检查间隔(秒)"], ["alert_cooldown", "预警冷却(秒)"], ["warm_interval", "预热间隔(秒)"]].map(([k, label]) =>
+                            React.createElement("label", { key: k, className: "dsh-stock-field" },
+                                React.createElement("span", { className: "dsh-stock-field-label" }, label),
+                                React.createElement("input", {
+                                    className: "dsh-stock-input",
+                                    value: cfgForm[k],
+                                    onChange: (e) => setCfgForm({ ...cfgForm, [k]: e.target.value }),
+                                })))),
+                    React.createElement("div", { className: "dsh-stock-form-row" },
+                        React.createElement("button", { className: "dsh-stock-btn sm", onClick: saveCfg }, "保存配置"),
+                        cfgMsg && React.createElement("span", { className: "dsh-stock-cfg-msg" }, cfgMsg))),
+
+                React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" },
+                        "📜 运行日志",
+                        React.createElement("select", {
+                            className: "dsh-stock-select",
+                            value: logLevel,
+                            onChange: (e) => setLogLevel(e.target.value),
+                        }, ["INFO", "WARNING", "ERROR"].map(l =>
+                            React.createElement("option", { key: l, value: l }, l)))),
+                    React.createElement("div", { className: "dsh-stock-logs" },
+                        logs.length === 0
+                            ? React.createElement("div", { className: "dsh-stock-empty-inline" }, "暂无日志")
+                            : logs.slice().reverse().map((l, i) =>
+                                React.createElement("div", { key: i, className: `dsh-stock-log-line ${l.level}` },
+                                    React.createElement("span", { className: "t" }, l.time),
+                                    React.createElement("span", { className: "lv" }, l.level),
+                                    React.createElement("span", { className: "mod" }, l.module),
+                                    React.createElement("span", { className: "txt" }, l.text)))),
+                    React.createElement("div", { className: "dsh-stock-form-hint" }, "最近500条内存日志，15秒自动刷新；完整日志在 DSH 的 logs 目录")),
+            );
+        }
+
         // ============= 主面板 =============
         const TABS = [
             { id: "timing", label: "⏱ 择时" },
@@ -765,6 +1073,7 @@ window.__ModuleLoader__.load({
             { id: "position", label: "💼 持仓仓位" },
             { id: "alert", label: "⚠️ 预警" },
             { id: "screen", label: "🔍 选股" },
+            { id: "system", label: "⚙️ 系统" },
         ];
 
         function WatchlistPanel(props) {
@@ -854,6 +1163,7 @@ window.__ModuleLoader__.load({
                 position: React.createElement(PositionTab, { openStock, refreshTick }),
                 alert: React.createElement(AlertTab, { openStock, liveAlerts }),
                 screen: React.createElement(ScreenTab, { openStock }),
+                system: React.createElement(SystemTab),
             }[tab];
 
             return React.createElement("div", { className: "dsh-stock-panel" },
@@ -1048,16 +1358,53 @@ window.__ModuleLoader__.load({
                 .dsh-stock-srow .num { font-variant-numeric: tabular-nums; }
                 .dsh-stock-srow-reason { font-size: 10px; color: var(--dsw-alias-label-secondary); flex-basis: 100%; padding-left: 4px; }
                 .dsh-stock-error-box { padding: 8px 10px; border-radius: 6px; background: rgba(245,158,11,.08); color: #f59e0b; font-size: 11px; }
-                /* K线弹窗 */
+                /* Tab 头部与刷新 */
+                .dsh-stock-tab-head { display: flex; align-items: center; gap: 8px; }
+                .dsh-stock-tab-title { font-weight: 700; font-size: 13px; flex: 1; }
+                .dsh-stock-src-tag { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-refresh { background: transparent; border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); border-radius: 4px; width: 24px; height: 24px; cursor: pointer; font-size: 13px; line-height: 1; }
+                .dsh-stock-refresh:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-button-primary, #3b82f6); }
+                .dsh-stock-refresh.spin { animation: dsh-spin 1s linear infinite; color: var(--dsw-alias-button-primary, #3b82f6); }
+                @keyframes dsh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                .dsh-stock-loadingbar { height: 2px; background: linear-gradient(90deg, transparent, var(--dsw-alias-button-primary, #3b82f6), transparent); animation: dsh-slide 1.2s ease infinite; border-radius: 1px; }
+                @keyframes dsh-slide { 0% { opacity: .3; } 50% { opacity: 1; } 100% { opacity: .3; } }
+                /* 表单字段 */
+                .dsh-stock-field { display: flex; flex-direction: column; gap: 3px; }
+                .dsh-stock-field.inline { flex-direction: row; align-items: center; gap: 6px; }
+                .dsh-stock-field-label { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-textarea { background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); border-radius: 4px; padding: 6px 8px; font-size: 11px; min-height: 54px; resize: vertical; font-family: inherit; }
+                /* 系统Tab */
+                .dsh-stock-sys-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+                .dsh-stock-sys-item { background: var(--dsw-alias-bg-base); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+                .dsh-stock-sys-item .label { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-sys-item .value { font-size: 12px; font-weight: 600; word-break: break-all; }
+                .dsh-stock-probe-list { display: flex; flex-direction: column; gap: 2px; max-height: 200px; overflow-y: auto; }
+                .dsh-stock-probe-row { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 6px; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-variant-numeric: tabular-nums; }
+                .dsh-stock-probe-row.ok .status { color: #22c55e; }
+                .dsh-stock-probe-row.no_data .status { color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-probe-row.timeout .status { color: #ef4444; }
+                .dsh-stock-probe-row .ms { color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-logs { display: flex; flex-direction: column; gap: 1px; max-height: 220px; overflow-y: auto; background: var(--dsw-alias-bg-base); border-radius: 6px; padding: 6px; font-family: var(--dsh-font-mono, monospace); }
+                .dsh-stock-log-line { display: flex; gap: 6px; font-size: 10px; line-height: 1.6; }
+                .dsh-stock-log-line .t { color: var(--dsw-alias-label-secondary); flex: none; }
+                .dsh-stock-log-line .lv { flex: none; width: 52px; font-weight: 600; }
+                .dsh-stock-log-line.WARNING .lv { color: #f59e0b; }
+                .dsh-stock-log-line.ERROR .lv { color: #ef4444; }
+                .dsh-stock-log-line.INFO .lv { color: #3b82f6; }
+                .dsh-stock-log-line .mod { color: var(--dsw-alias-label-secondary); flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; }
+                .dsh-stock-log-line .txt { word-break: break-all; }
+                .dsh-stock-cfg-msg { font-size: 11px; }
+                /* K线弹窗（显式配色，不依赖主题变量，避免深色主题下文字不可见） */
                 .dsh-stock-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 9999; display: flex; align-items: center; justify-content: center; }
-                .dsh-stock-modal { background: var(--dsw-alias-bg, #1a1a1a); color: var(--dsw-alias-label-primary); border-radius: 12px; width: 90vw; max-width: 900px; height: 80vh; max-height: 600px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); position: relative; }
-                .dsh-stock-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); font-size: 16px; font-weight: 600; }
-                .dsh-stock-modal-header .close-btn { background: transparent; border: none; color: inherit; font-size: 18px; cursor: pointer; padding: 0 4px; }
-                .dsh-stock-periods { display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
-                .dsh-stock-periods button { background: transparent; border: 1px solid var(--dsw-alias-border-l2); color: inherit; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-                .dsh-stock-periods button.active { background: var(--dsw-alias-button-elevated-fill); font-weight: 600; }
-                .dsh-stock-kline { flex: 1; min-height: 0; }
-                .dsh-stock-modal-overlay { position: absolute; top: 100px; left: 0; right: 0; padding: 20px; text-align: center; color: var(--dsw-alias-label-secondary); pointer-events: none; }
+                .dsh-stock-modal { background: #171b26; color: #e8eaf0; border-radius: 12px; width: 90vw; max-width: 900px; height: 80vh; max-height: 600px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); position: relative; border: 1px solid #2a3040; }
+                .dsh-stock-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #2a3040; font-size: 16px; font-weight: 600; color: #e8eaf0; }
+                .dsh-stock-modal-header .close-btn { background: transparent; border: none; color: #9aa3b5; font-size: 18px; cursor: pointer; padding: 0 4px; }
+                .dsh-stock-modal-header .close-btn:hover { color: #e8eaf0; }
+                .dsh-stock-periods { display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid #2a3040; }
+                .dsh-stock-periods button { background: transparent; border: 1px solid #3a4254; color: #b8c0d0; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+                .dsh-stock-periods button.active { background: #2b344a; color: #fff; font-weight: 600; border-color: #4a90d9; }
+                .dsh-stock-kline { flex: 1; min-height: 0; background: #171b26; }
+                .dsh-stock-modal-overlay { position: absolute; top: 100px; left: 0; right: 0; padding: 20px; text-align: center; color: #9aa3b5; pointer-events: none; }
                 .dsh-stock-modal-overlay.error { color: #ef4444; }
                 /* 后端状态卡 */
                 .dsh-stock-backend { padding: 16px; border-radius: 8px; margin-bottom: 12px; background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); }

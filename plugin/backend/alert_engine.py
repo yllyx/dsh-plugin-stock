@@ -21,11 +21,12 @@ from typing import Dict, List, Any
 
 from loguru import logger
 
+from config import config
+from storage import storage
 from data_source import data_source, normalize_stock_code
 from ws_manager import ws_manager
 
 
-ALERTS_FILE = Path(__file__).parent / "alerts.json"
 MAX_HISTORY = 200
 TRADING_DAY_HOURS = 24  # 简化：用自然日近似交易日
 
@@ -38,15 +39,22 @@ class AlertEngine:
         self.holdings: Dict[str, Dict[str, Any]] = {}
         self.history: List[Dict[str, Any]] = []
         self.last_check: Dict[str, float] = {}
-        self.cooldown = 300
+
+    @property
+    def cooldown(self) -> int:
+        return config.alert_cooldown
 
     # ---------- 持久化 ----------
 
+    def _file(self) -> Path:
+        return storage.path("alerts.json")
+
     def load(self):
-        if ALERTS_FILE.exists():
+        f = self._file()
+        if f.exists():
             try:
-                with open(ALERTS_FILE, encoding="utf-8") as f:
-                    data = json.load(f)
+                with open(f, encoding="utf-8") as fh:
+                    data = json.load(fh)
                 self.holdings = data.get("holdings", {})
                 self.alerts = data.get("alerts", [])
                 self.history = data.get("history", [])
@@ -56,7 +64,7 @@ class AlertEngine:
 
     def save(self):
         try:
-            with open(ALERTS_FILE, "w", encoding="utf-8") as f:
+            with open(self._file(), "w", encoding="utf-8") as f:
                 json.dump({
                     "holdings": self.holdings,
                     "alerts": self.alerts,
@@ -323,14 +331,14 @@ class AlertEngine:
         return triggered
 
     async def run_loop(self, interval: int = 30):
-        logger.info(f"预警引擎启动，检查间隔 {interval}s")
+        logger.info(f"预警引擎启动（间隔 {config.alert_interval}s，冷却 {config.alert_cooldown}s）")
         while True:
             try:
                 await self.check_holdings()
                 await self.check_custom_alerts()
             except Exception as e:
                 logger.error(f"预警检查异常: {e}")
-            await asyncio.sleep(interval)
+            await asyncio.sleep(config.alert_interval)
 
 
 alert_engine = AlertEngine()

@@ -20,12 +20,15 @@ class TdxDataSource:
     def __init__(self):
         self.api: Optional[TdxHq_API] = None
         self.connected = False
+        self.current_host: Optional[str] = None
+        self._preferred_host: Optional[tuple] = None   # 上次验证可用的服务器，重连优先
         self.last_connect_time = 0
         self.connect_interval = 30
         self._connect_lock = threading.Lock()
 
     def connect(self) -> bool:
-        """连接行情服务器（自动选可用）。并发调用时只允许一个探测进行中。"""
+        """连接行情服务器（自动选可用）。并发调用时只允许一个探测进行中。
+        优先探测用户自定义服务器（config.custom_tdx_hosts），再试内置列表。"""
         if self.connected and (time.time() - self.last_connect_time) < self.connect_interval:
             return True
         if not self._connect_lock.acquire(blocking=False):
@@ -36,9 +39,15 @@ class TdxDataSource:
                 time.sleep(0.2)
             return self.connected
         try:
-            for host in hq_hosts[:8]:
+            from config import config
+            # 候选顺序：上次可用的服务器（粘性，1次即中）> 用户自定义 > 内置列表
+            candidates: List[tuple] = []
+            if self._preferred_host:
+                candidates.append(self._preferred_host)
+            candidates += list(config.custom_tdx_hosts)
+            candidates += [self._host_addr(h) for h in hq_hosts[:8]]
+            for ip, port in candidates:
                 try:
-                    ip, port = self._host_addr(host)
                     probe_api = TdxHq_API()
                     start = time.time()
                     probe_api.connect(ip, port, time_out=2.5)
@@ -47,14 +56,17 @@ class TdxDataSource:
                     if q and q[0].get("price"):
                         self.api = probe_api
                         self.connected = True
+                        self.current_host = f"{ip}:{port}"
+                        self._preferred_host = (ip, port)
                         self.last_connect_time = time.time()
                         logger.info(f"已连接通达信: {ip} 延迟: {latency:.3f}s（数据验证通过）")
                         return True
                     probe_api.disconnect()
                 except Exception as e:
-                    logger.debug(f"{host} 连接失败: {e}")
+                    logger.debug(f"{ip}:{port} 连接失败: {e}")
                     continue
 
+            self._preferred_host = None
             logger.warning("所有服务器连接失败")
             return False
         except Exception as e:
@@ -78,12 +90,19 @@ class TdxDataSource:
             except Exception:
                 pass
         self.connected = False
+        self.current_host = None
 
     def ensure_connected(self) -> bool:
-        """确保连接有效"""
+        """
+        确保连接有效。
+
+        不做高频主动重连：持久TCP连接健康时无需更换，僵尸连接会在
+        请求抛异常时置 connected=False 并由下次调用重连。
+        仅每10分钟做一次预防性换新（避免长连接被服务端静默丢弃）。
+        """
         if not self.connected:
             return self.connect()
-        if (time.time() - self.last_connect_time) > 60:
+        if (time.time() - self.last_connect_time) > 600:
             try:
                 self.api.disconnect()
             except Exception:
@@ -144,18 +163,30 @@ class TdxDataSource:
         获取K线数据（统一入口，自动路由数据源）
         category: 0=5分, 1=15分, 2=30分, 3=60分, 4=日, 5=周, 6=月, 9=日
 
-        路由规则（2026-08 实测）：
-        - 指数：pytdx get_index_bars（协议干净；个股命令 get_security_bars
-          在新版服务器返回的数据上解析错位，已不可用）
-        - 个股：东财 push2his K线接口
+        路由规则：
+        - 指数：pytdx get_index_bars 优先（协议干净），不可用时回退东财K线
+        - 个股：东财 push2his K线接口（pytdx 个股命令已损坏）
         """
         from eastmoney import get_kline
 
-        if self._is_index(code, market):
-            return self._index_bars(code, market, category, start, count)
-
         klt = {9: 101, 4: 101, 5: 102, 6: 103, 0: 5, 1: 15, 2: 30, 3: 60, 8: 1}.get(category, 101)
+
+        if self._is_index(code, market):
+            bars = self._index_bars(code, market, category, start, count)
+            if bars:
+                return bars
+            # 三级回退：东财 → 腾讯（择时不再被单一数据源故障卡死）
+            bars = get_kline(f"{market}.{code}", klt=klt, lmt=count)
+            if not bars:
+                import tencent
+                bars = tencent.get_kline(code, market, klt=klt, lmt=count)
+            return bars[start:start + count] if start else bars
+
+        # 个股：东财K线 → 腾讯回退（双源互为灾备，绕开单源限流）
+        import tencent
         bars = get_kline(f"{market}.{code}", klt=klt, lmt=count)
+        if not bars:
+            bars = tencent.get_kline(code, market, klt=klt, lmt=count)
         return bars[start:start + count] if start else bars
 
     @staticmethod

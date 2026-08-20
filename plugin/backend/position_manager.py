@@ -15,10 +15,9 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 import eastmoney
+from storage import storage
 from data_source import data_source, normalize_stock_code
 from market_timing import market_timing
-
-ACCOUNT_FILE = Path(__file__).parent / "account.json"
 
 SINGLE_STOCK_LIMIT = 25      # 单票仓位上限 %
 SECTOR_LIMIT = 40            # 同行业合计上限 %
@@ -32,16 +31,20 @@ class PositionManager:
 
     # ---------- 账户 ----------
 
+    def _file(self) -> Path:
+        return storage.path("account.json")
+
     def load(self):
-        if ACCOUNT_FILE.exists():
+        f = self._file()
+        if f.exists():
             try:
-                self.account = json.loads(ACCOUNT_FILE.read_text(encoding="utf-8"))
+                self.account = json.loads(f.read_text(encoding="utf-8"))
             except Exception as e:
                 logger.error(f"加载账户失败: {e}")
 
     def save(self):
         try:
-            ACCOUNT_FILE.write_text(
+            self._file().write_text(
                 json.dumps(self.account, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as e:
             logger.error(f"保存账户失败: {e}")

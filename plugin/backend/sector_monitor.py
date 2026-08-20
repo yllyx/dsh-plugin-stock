@@ -35,9 +35,9 @@ class SectorMonitor:
 
     # ---------- 板块排行 ----------
 
-    def get_ranking(self, board_type: str = "industry", top_n: int = 15) -> Dict[str, Any]:
+    def get_ranking(self, board_type: str = "industry", top_n: int = 15, force: bool = False) -> Dict[str, Any]:
         cached = self._rank_cache.get(board_type)
-        if cached and time.time() - cached["time"] < RANK_TTL:
+        if not force and cached and time.time() - cached["time"] < RANK_TTL:
             return {"boards": cached["data"][:top_n], "cached": True}
 
         boards = eastmoney.get_board_rank(board_type)
@@ -46,26 +46,32 @@ class SectorMonitor:
                 return {"boards": cached["data"][:top_n], "cached": True, "degraded": True}
             return {"error": "板块数据不可用（东财接口失败）", "boards": []}
 
-        total_amount = sum(b["amount"] for b in boards) or 1
-        # 只对成交额前列的板块做K线阶段判定，控制请求数
-        top_by_amount = sorted(boards, key=lambda b: b["amount"], reverse=True)[:30]
-        today = time.strftime("%Y-%m-%d")
-        for b in top_by_amount:
-            k = self._board_kline(b["bk_code"])
-            if k is not None and len(k) >= 10:
-                k = self._append_today_bar(k, b, today)
-                b["momentum_5d"] = self._momentum(k, 5)
-                b["stage"], b["stage_detail"] = self._stage(k)
-            else:
-                b["momentum_5d"] = None
-                b["stage"], b["stage_detail"] = "未知", "K线数据不可用"
-
+        # 先按涨幅排序，只对实际展示的 top_n 板块做K线阶段判定（并行拉取，控制耗时）
         boards.sort(key=lambda b: (b.get("change_pct") is not None, b.get("change_pct") or -99), reverse=True)
+        display = boards[:top_n]
+        today = time.strftime("%Y-%m-%d")
+        total_amount = sum(b["amount"] for b in boards) or 1
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = {b["bk_code"]: pool.submit(self._classify, b, today) for b in display}
+            for bk, fut in futures.items():
+                b = next(x for x in display if x["bk_code"] == bk)
+                b["momentum_5d"], b["stage"], b["stage_detail"] = fut.result()
+
         for b in boards:
             b["amount_ratio_pct"] = round(b["amount"] / total_amount * 100, 1)
 
         self._rank_cache[board_type] = {"data": boards, "time": time.time()}
-        return {"boards": boards[:top_n], "cached": False}
+        return {"boards": display, "cached": False}
+
+    def _classify(self, b: Dict[str, Any], today: str):
+        """单个板块的动量与阶段判定（供并行调用）"""
+        k = self._board_kline(b["bk_code"])
+        if k is not None and len(k) >= 10:
+            k = self._append_today_bar(k, b, today)
+            return self._momentum(k, 5), *self._stage(k)
+        return None, "未知", "K线数据不可用"
 
     # ---------- 龙头候选 ----------
 

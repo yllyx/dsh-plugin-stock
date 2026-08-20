@@ -199,12 +199,12 @@ def _fmt_num(v) -> Optional[float]:
         return None
 
 
-def get_board_rank(board_type: str = "industry") -> List[Dict[str, Any]]:
-    """行业/概念板块排行"""
+def get_board_rank(board_type: str = "industry", max_count: int = 200) -> List[Dict[str, Any]]:
+    """行业/概念板块排行（接口按涨跌幅降序返回，取前 max_count 个已够排行展示）"""
     fs = _BOARD_FS.get(board_type)
     if not fs:
         return []
-    diff = _page_clist(fs, _BOARD_FIELDS, max_count=600)
+    diff = _page_clist(fs, _BOARD_FIELDS, max_count=max_count)
     result = []
     for d in diff:
         result.append({
@@ -334,6 +334,43 @@ def get_margin_balance(days: int = 10) -> Optional[List[Dict[str, Any]]]:
         except (TypeError, ValueError):
             continue
     return result if result else None
+
+
+# ============= 指数实时行情（pytdx 不可用时的回退源） =============
+
+def get_index_quotes(secids: List[str]) -> List[Dict[str, Any]]:
+    """
+    指数实时行情（东财 ulist，一次请求多个指数）
+    secids 形如 ["1.000001", "0.399001", "1.000300"]
+    返回与 pytdx 行情同构的 dict 列表
+    """
+    params = {
+        "fltt": 2,
+        "invt": 2,
+        "fields": "f2,f3,f4,f12,f13,f14",
+        "secids": ",".join(secids),
+        "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+        "np": 1,
+    }
+    data = _api_get("/api/qt/ulist.np/get", params)
+    if not data:
+        return []
+    diff = (data.get("data") or {}).get("diff") or []
+    result = []
+    for d in diff:
+        price = _fmt_num(d.get("f2"))
+        pct = _fmt_num(d.get("f3"))
+        if price is None:
+            continue
+        result.append({
+            "code": d.get("f12", ""),
+            "name": d.get("f14", "") or "",
+            "price": price,
+            "change_pct": pct if pct is not None else 0.0,
+            "change": _fmt_num(d.get("f4")) or 0.0,
+            "last_close": round(price / (1 + (pct or 0) / 100), 3),
+        })
+    return result
 
 
 # ============= 个股所属行业 =============
