@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import json
 import os
 import subprocess
 import sys
@@ -25,7 +26,18 @@ from ws_manager import ws_manager
 
 BACKEND_DIR = Path(__file__).parent
 START_TIME = time.time()
-PLUGIN_VERSION = "0.3.1"
+
+
+def _load_version() -> str:
+    """从 package.json 自动读取版本号（避免漏改硬编码常量）"""
+    pkg = BACKEND_DIR.parent / "package.json"
+    try:
+        return json.loads(pkg.read_text(encoding="utf-8")).get("version", "unknown")
+    except Exception:
+        return "unknown"
+
+
+PLUGIN_VERSION = _load_version()
 
 # ============= 内存日志环形缓冲 =============
 LOG_BUFFER: deque = deque(maxlen=500)

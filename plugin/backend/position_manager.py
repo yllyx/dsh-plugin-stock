@@ -100,6 +100,14 @@ class PositionManager:
                 "weight_pct": round(weight, 1) if weight is not None else None,
                 "industry": industry,
                 "advice": self._holding_advice(h, profit_pct),
+                "stop_mode": h.get("stop_mode", "fixed"),
+                "stop_loss_pct": h.get("stop_loss_pct", -7),
+                "take_profit_pct": h.get("take_profit_pct", 15),
+                "trail_drawdown_pct": h.get("trail_drawdown_pct", 10),
+                "alerts_enabled": h.get("alerts_enabled") or {
+                    "stop_loss": True, "take_profit": True, "trailing_stop": True,
+                    "breakeven_stop": True, "ladder_tp": True, "time_stop": True,
+                },
             })
             total_value += market_value
 

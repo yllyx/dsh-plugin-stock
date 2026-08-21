@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "dsh-plugin-stock",
   "displayName": "DSH 股票监控插件",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "kind": "profile-bundle",
   "package": "dsh-plugin-stock",
   "bundlePatch": "./cordis.patch.yml",

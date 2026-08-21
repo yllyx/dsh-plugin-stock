@@ -65,13 +65,15 @@ const stockQuoteTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `获取 ${args.code} 行情失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) {
+                return [{ type: "text", text: `获取 ${args.code} 行情失败：${value?.error || "未知错误"}` }];
+            }
             return [
-                `【${value.name} (${value.code})】`,
-                `当前：${value.price?.toFixed(2) ?? "N/A"}  涨跌：${value.change >= 0 ? "+" : ""}${value.change?.toFixed(2) ?? "N/A"} (${value.change_pct >= 0 ? "+" : ""}${value.change_pct?.toFixed(2) ?? "N/A"}%)`,
-                `今开：${value.open?.toFixed(2) ?? "N/A"}  最高：${value.high?.toFixed(2) ?? "N/A"}  最低：${value.low?.toFixed(2) ?? "N/A"}  昨收：${value.last_close?.toFixed(2) ?? "N/A"}`,
-                `成交量：${value.volume ? (value.volume / 10000).toFixed(0) + "万" : "N/A"}  成交额：${value.amount ? (value.amount / 100000000).toFixed(2) + "亿" : "N/A"}`,
-            ].join("\n");
+                { type: "text", text: `【${value.name} (${value.code})】` },
+                { type: "text", text: `当前：${value.price?.toFixed(2) ?? "N/A"}  涨跌：${value.change >= 0 ? "+" : ""}${value.change?.toFixed(2) ?? "N/A"} (${value.change_pct >= 0 ? "+" : ""}${value.change_pct?.toFixed(2) ?? "N/A"}%)` },
+                { type: "text", text: `今开：${value.open?.toFixed(2) ?? "N/A"}  最高：${value.high?.toFixed(2) ?? "N/A"}  最低：${value.low?.toFixed(2) ?? "N/A"}  昨收：${value.last_close?.toFixed(2) ?? "N/A"}` },
+                { type: "text", text: `成交量：${value.volume ? (value.volume / 10000).toFixed(0) + "万" : "N/A"}  成交额：${value.amount ? (value.amount / 100000000).toFixed(2) + "亿" : "N/A"}` },
+            ];
         },
     },
     async execute(args) {
@@ -102,17 +104,22 @@ const stockKlineTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `获取 ${args.code} K线失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) {
+                return [{ type: "text", text: `获取 ${args.code} K线失败：${value?.error || "未知错误"}` }];
+            }
             const data = value.data || [];
-            if (!data.length) return `未获取到 ${args.code} 的K线数据`;
+            if (!data.length) return [{ type: "text", text: `未获取到 ${args.code} 的K线数据` }];
             const last = data[data.length - 1];
             return [
-                `【${value.code} K线 - 共 ${data.length} 条】`,
-                `最新：${last.datetime}  收：${last.close?.toFixed(2)}`,
-                `区间最高：${Math.max(...data.map((d) => d.high)).toFixed(2)}  最低：${Math.min(...data.map((d) => d.low)).toFixed(2)}`,
-                `\n最近 5 条：`,
-                ...data.slice(-5).reverse().map((d) => `  ${d.datetime} O:${d.open?.toFixed(2)} H:${d.high?.toFixed(2)} L:${d.low?.toFixed(2)} C:${d.close?.toFixed(2)} V:${((d.volume || 0) / 10000).toFixed(0)}万`),
-            ].join("\n");
+                { type: "text", text: `【${value.code} K线 - 共 ${data.length} 条】` },
+                { type: "text", text: `最新：${last.datetime}  收：${last.close?.toFixed(2)}` },
+                { type: "text", text: `区间最高：${Math.max(...data.map((d) => d.high)).toFixed(2)}  最低：${Math.min(...data.map((d) => d.low)).toFixed(2)}` },
+                { type: "text", text: `\n最近 5 条：` },
+                ...data.slice(-5).reverse().map((d) => ({
+                    type: "text",
+                    text: `  ${d.datetime} O:${d.open?.toFixed(2)} H:${d.high?.toFixed(2)} L:${d.low?.toFixed(2)} C:${d.close?.toFixed(2)} V:${((d.volume || 0) / 10000).toFixed(0)}万`,
+                })),
+            ];
         },
     },
     async execute(args) {
@@ -141,14 +148,18 @@ const stockScreenTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `选股失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) return [{ type: "text", text: `选股失败：${value?.error || "未知错误"}` }];
             const results = value.results || [];
             const name = { institutional: "机构抱团股", breakout: "启动股", trend: "均线多头", speculative: "题材妖股" }[args.screen_type] || args.screen_type;
-            if (!results.length) return `【${name}选股】未找到符合条件的股票`;
-            return [
-                `【${name}选股】共 ${results.length} 只：`,
-                ...results.map((r) => `  ${r.code} ${r.name} 现价：${r.price?.toFixed(2)} 涨跌：${r.change_pct >= 0 ? "+" : ""}${r.change_pct?.toFixed(2)}%`),
-            ].join("\n");
+            if (!results.length) return [{ type: "text", text: `【${name}选股】未找到符合条件的股票` }];
+            const lines = [
+                { type: "text", text: `【${name}选股】共 ${results.length} 只：${value.pool_mode === "market" ? "（全市场）" : ""}` },
+                ...results.map((r) => ({
+                    type: "text",
+                    text: `  ${r.code} ${r.name} 现价：${r.price?.toFixed(2)} 涨跌：${r.change_pct >= 0 ? "+" : ""}${r.change_pct?.toFixed(2)}%${r.reason ? "  理由：" + r.reason : ""}`,
+                })),
+            ];
+            return lines;
         },
     },
     async execute(args) {
@@ -184,23 +195,22 @@ const stockHoldingsTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `操作失败：${value?.error || "未知错误"}`;
-            if (args.action === "add") return value.status === "ok" ? `已添加 ${args.code} ${args.name}（${args.stop_mode || "fixed"} 模式）` : "添加失败";
-            if (args.action === "remove") return value.status === "ok" ? `已删除 ${args.code}` : "删除失败";
+            if (!value || value.error) return [{ type: "text", text: `操作失败：${value?.error || "未知错误"}` }];
+            if (args.action === "add") return [{ type: "text", text: value.status === "ok" ? `已添加 ${args.code} ${args.name}（${args.stop_mode || "fixed"} 模式）` : "添加失败" }];
+            if (args.action === "remove") return [{ type: "text", text: value.status === "ok" ? `已删除 ${args.code}` : "删除失败" }];
             const holdings = value.holdings || [];
-            if (!holdings.length) return "当前无持仓";
+            if (!holdings.length) return [{ type: "text", text: "当前无持仓" }];
             const MODE = { fixed: "固定", trailing: "移动", ladder: "阶梯" };
             const lines = [
-                `【当前持仓】共 ${holdings.length} 只`,
-                `总市值：${value.total_value?.toFixed(0) ?? "N/A"}  总盈亏：${value.total_profit?.toFixed(0) ?? "N/A"} (${value.total_profit_pct?.toFixed(2) ?? "N/A"}%)`,
-                "",
+                { type: "text", text: `【当前持仓】共 ${holdings.length} 只` },
+                { type: "text", text: `总市值：${value.total_value?.toFixed(0) ?? "N/A"}  总盈亏：${value.total_profit?.toFixed(0) ?? "N/A"} (${value.total_profit_pct?.toFixed(2) ?? "N/A"}%)` },
+                { type: "text", text: "" },
+                ...holdings.map((h) => ({
+                    type: "text",
+                    text: `${h.profit_pct <= h.stop_loss_pct ? "🛑止损" : h.profit_pct >= h.take_profit_pct ? "🎯止盈" : "•持有"}  ${h.code} ${h.name} 成本：${h.buy_price?.toFixed(2)} 现价：${h.current_price?.toFixed(2)} ${h.shares}股  ${h.profit_pct >= 0 ? "+" : ""}${h.profit_pct?.toFixed(2)}% (${h.profit_pct >= 0 ? "+" : ""}${h.profit_amount?.toFixed(0)}元) [${MODE[h.stop_mode] || h.stop_mode}模式]`,
+                })),
             ];
-            for (const h of holdings) {
-                const sign = h.profit_pct >= 0 ? "+" : "";
-                const flag = h.profit_pct <= h.stop_loss_pct ? "🛑止损" : h.profit_pct >= h.take_profit_pct ? "🎯止盈" : "•持有";
-                lines.push(`${flag}  ${h.code} ${h.name} 成本：${h.buy_price?.toFixed(2)} 现价：${h.current_price?.toFixed(2)} ${h.shares}股  ${sign}${h.profit_pct?.toFixed(2)}% (${sign}${h.profit_amount?.toFixed(0)}元) [${MODE[h.stop_mode] || h.stop_mode}模式]`);
-            }
-            return lines.join("\n");
+            return lines;
         },
     },
     async execute(args) {
@@ -239,7 +249,7 @@ const stockMarketTimingTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `择时分析失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) return [{ type: "text", text: `择时分析失败：${value?.error || "未知错误"}` }];
             const lines = [
                 `【大盘择时】阶段：${value.stage?.stage}  建议仓位：${value.suggested_position}`,
                 value.stage?.detail || "",
@@ -255,7 +265,7 @@ const stockMarketTimingTool = {
                 `结论：${value.bottom_exhaustion?.conclusion || ""}；${value.stabilization?.conclusion || ""}`,
                 `节奏：${value.rhythm}`,
             ];
-            return lines.join("\n");
+            return lines.map((t) => ({ type: "text", text: t }));
         },
     },
     async execute() {
@@ -272,7 +282,7 @@ const stockSentimentTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `情绪分析失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) return [{ type: "text", text: `情绪分析失败：${value?.error || "未知错误"}` }];
             const s = value.sentiment || {};
             const st = value.style || {};
             const ladder = s.ladder || {};
@@ -288,7 +298,7 @@ const stockSentimentTool = {
             for (const h of heights.slice(0, 5)) {
                 lines.push(`  ${h.height}板×${h.count}：${h.stocks.map((x) => x.name).join("、")}`);
             }
-            return lines.join("\n");
+            return lines.map((t) => ({ type: "text", text: t }));
         },
     },
     async execute() {
@@ -312,21 +322,22 @@ const stockSectorsTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `板块分析失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) return [{ type: "text", text: `板块分析失败：${value?.error || "未知错误"}` }];
+            const toBlocks = (lines) => lines.map((t) => ({ type: "text", text: t }));
             if (value.leaders) {
                 const lines = [`【${value.name || args.leaders_of} 龙头候选】板块5日 ${value.board_pct_5d ?? "-"}%`];
                 for (const [i, l] of (value.leaders || []).entries()) {
                     lines.push(`  #${i + 1} ${l.name}(${l.code}) ${l.change_pct >= 0 ? "+" : ""}${l.change_pct}% 换手${l.turnover_rate?.toFixed(0)}% 流通${l.float_mv_yi}亿`);
                     lines.push(`     理由：${(l.reasons || []).join("、")}`);
                 }
-                return lines.join("\n");
+                return toBlocks(lines);
             }
             const lines = [`【板块排行 · ${args.board_type === "concept" ? "概念" : "行业"}】`];
             for (const b of value.boards || []) {
                 lines.push(`  ${b.name} ${b.change_pct >= 0 ? "+" : ""}${b.change_pct}% 成交${(b.amount / 1e8).toFixed(0)}亿 5日${b.momentum_5d != null ? (b.momentum_5d >= 0 ? "+" : "") + b.momentum_5d + "%" : "-"} [${b.stage}] 领涨:${b.leader_name}`);
             }
             lines.push(`提示：可用 leaders_of=BK代码 查看某板块的龙头候选`);
-            return lines.join("\n");
+            return toBlocks(lines);
         },
     },
     async execute(args) {
@@ -346,7 +357,7 @@ const stockPositionTool = {
     output: {
         schema: JSON_OBJECT_OUTPUT,
         render(args, value) {
-            if (!value || value.error) return `仓位分析失败：${value?.error || "未知错误"}`;
+            if (!value || value.error) return [{ type: "text", text: `仓位分析失败：${value?.error || "未知错误"}` }];
             const lines = [`【仓位体检】${value.summary || ""}`];
             if (value.position_pct != null) {
                 lines.push(`  总仓位 ${value.position_pct}%（现金 ${value.cash_pct}%）· 建议 ${value.suggested_position}（${value.timing_stage}阶段）`);
@@ -357,7 +368,7 @@ const stockPositionTool = {
                 lines.push(`  · ${h.name}(${h.code}) 成本${h.buy_price} 现价${h.current_price} 盈亏${h.profit_pct >= 0 ? "+" : ""}${h.profit_pct}%${h.weight_pct != null ? ` 仓位${h.weight_pct}%` : ""} ${h.industry ? `[${h.industry}]` : ""}`);
                 lines.push(`    → ${h.advice}`);
             }
-            return lines.join("\n");
+            return lines.map((t) => ({ type: "text", text: t }));
         },
     },
     async execute() {

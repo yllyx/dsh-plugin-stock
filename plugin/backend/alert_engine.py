@@ -56,6 +56,13 @@ class AlertEngine:
                 with open(f, encoding="utf-8") as fh:
                     data = json.load(fh)
                 self.holdings = data.get("holdings", {})
+                # 旧数据兼容：补全 alerts_enabled 字段（默认全部开启）
+                for code, h in self.holdings.items():
+                    if "alerts_enabled" not in h:
+                        h["alerts_enabled"] = {
+                            "stop_loss": True, "take_profit": True, "trailing_stop": True,
+                            "breakeven_stop": True, "ladder_tp": True, "time_stop": True,
+                        }
                 self.alerts = data.get("alerts", [])
                 self.history = data.get("history", [])
                 logger.info(f"加载 {len(self.holdings)} 持仓，{len(self.alerts)} 预警规则，{len(self.history)} 条历史")
@@ -93,6 +100,12 @@ class AlertEngine:
             "trail_drawdown_pct": trail_drawdown_pct,
             "high_water_mark": buy_price,
             "buy_date": time.strftime("%Y-%m-%d"),
+            # 每个预警类型可独立启用/暂停（默认全部开启）：
+            # stop_loss(止损) take_profit(止盈) trailing_stop(移动止损) ladder_tp(阶梯) time_stop(时间)
+            "alerts_enabled": {
+                "stop_loss": True, "take_profit": True, "trailing_stop": True,
+                "breakeven_stop": True, "ladder_tp": True, "time_stop": True,
+            },
         }
         self.save()
         logger.info(f"已添加持仓: {code} {name} 模式={stop_mode}")
@@ -184,6 +197,8 @@ class AlertEngine:
             profit_pct = (price - buy_price) / buy_price * 100
             mode = h.get("stop_mode", "fixed")
             trail_pct = h.get("trail_drawdown_pct", 10)
+            enabled = h.get("alerts_enabled") or {}  # None/缺失 →所有开启
+            disabled = {t for t, on in enabled.items() if not on}
 
             # 更新最高水位
             hwm = max(h.get("high_water_mark") or buy_price, price)
@@ -200,7 +215,7 @@ class AlertEngine:
             name = h["name"]
 
             # 1. 基础固定止损（所有模式都保留）
-            if profit_pct <= h.get("stop_loss_pct", -7):
+            if profit_pct <= h.get("stop_loss_pct", -7) and "stop_loss" not in disabled:
                 self._fire(triggered, {
                     "type": "stop_loss", "code": code, "name": name, "price": price,
                     "profit_pct": round(profit_pct, 2),
@@ -210,14 +225,15 @@ class AlertEngine:
 
             # 2. 模式化止盈止损
             if mode == "trailing":
-                if h.get("_breakeven") and price < buy_price and profit_pct > h.get("stop_loss_pct", -7):
+                if (h.get("_breakeven") and price < buy_price and profit_pct > h.get("stop_loss_pct", -7)
+                        and "breakeven_stop" not in disabled):
                     self._fire(triggered, {
                         "type": "breakeven_stop", "code": code, "name": name, "price": price,
                         "profit_pct": round(profit_pct, 2),
                         "message": f"{name}({code}) 曾盈利后跌回成本，保本止损触发（{profit_pct:.2f}%）",
                         "severity": "high", "timestamp": time.time(),
                     }, f"{code}:breakeven")
-                if drawdown_from_hwm <= -trail_pct and profit_pct > 0:
+                if drawdown_from_hwm <= -trail_pct and profit_pct > 0 and "trailing_stop" not in disabled:
                     self._fire(triggered, {
                         "type": "trailing_stop", "code": code, "name": name, "price": price,
                         "profit_pct": round(profit_pct, 2),
@@ -226,7 +242,7 @@ class AlertEngine:
                     }, f"{code}:trailing")
 
             elif mode == "ladder":
-                if profit_pct >= 20 and not h.get("_l20"):
+                if profit_pct >= 20 and not h.get("_l20") and "ladder_tp" not in disabled:
                     h["_l20"] = True
                     dirty = True
                     self._fire(triggered, {
@@ -235,7 +251,7 @@ class AlertEngine:
                         "message": f"{name}({code}) 盈利{profit_pct:.1f}% 达阶梯第一档(+20%)，建议卖出1/3锁定利润",
                         "severity": "medium", "timestamp": time.time(),
                     }, f"{code}:l20")
-                if profit_pct >= 50 and not h.get("_l50"):
+                if profit_pct >= 50 and not h.get("_l50") and "ladder_tp" not in disabled:
                     h["_l50"] = True
                     dirty = True
                     self._fire(triggered, {
@@ -244,7 +260,7 @@ class AlertEngine:
                         "message": f"{name}({code}) 盈利{profit_pct:.1f}% 达阶梯第二档(+50%)，建议再卖1/3，剩余移动止盈持有",
                         "severity": "medium", "timestamp": time.time(),
                     }, f"{code}:l50")
-                if h.get("_l50") and drawdown_from_hwm <= -10:
+                if h.get("_l50") and drawdown_from_hwm <= -10 and "trailing_stop" not in disabled:
                     self._fire(triggered, {
                         "type": "trailing_stop", "code": code, "name": name, "price": price,
                         "profit_pct": round(profit_pct, 2),
@@ -253,7 +269,7 @@ class AlertEngine:
                     }, f"{code}:trailing")
 
             else:  # fixed
-                if profit_pct >= h.get("take_profit_pct", 15):
+                if profit_pct >= h.get("take_profit_pct", 15) and "take_profit" not in disabled:
                     self._fire(triggered, {
                         "type": "take_profit", "code": code, "name": name, "price": price,
                         "profit_pct": round(profit_pct, 2),
@@ -266,7 +282,7 @@ class AlertEngine:
             if buy_date:
                 try:
                     days = (datetime.now() - datetime.strptime(buy_date, "%Y-%m-%d")).days
-                    if days >= 7 and profit_pct < 2 and h.get("_time_alert_date") != today:
+                    if days >= 7 and profit_pct < 2 and h.get("_time_alert_date") != today and "time_stop" not in disabled:
                         h["_time_alert_date"] = today
                         dirty = True
                         self._fire(triggered, {

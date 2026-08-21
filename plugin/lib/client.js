@@ -488,6 +488,11 @@ window.__ModuleLoader__.load({
 
         // ============= Tab 4: 持仓/仓位 =============
         const STOP_MODE_LABEL = { fixed: "固定比例", trailing: "移动止损", ladder: "阶梯止盈" };
+        const STOP_MODE_TIPS = {
+            fixed: "固定比例：触及止损线（默认 -7%）或止盈线（默认 +15%）立即预警。适合明确看好目标价、对波动不敏感的场景。",
+            trailing: "移动止损：股价曾盈利超 5% 后止损线自动上移到成本（保本）；之后从最高点回撤超过阈值（默认 10%）预警。适合上涨趋势中保护浮盈。",
+            ladder: "阶梯止盈：盈利 +20% 提示卖 1/3、+50% 再卖 1/3；尾仓按移动止损保护。适合部分锁利 + 保留向上空间。",
+        };
 
         function PositionTab({ openStock, refreshTick }) {
             const [overview, setOverview] = useState(null);
@@ -599,6 +604,7 @@ window.__ModuleLoader__.load({
                         Object.entries(STOP_MODE_LABEL).map(([v, label]) =>
                             React.createElement("button", {
                                 key: v, className: `dsh-stock-seg-btn ${form.stop_mode === v ? "active" : ""}`,
+                                title: STOP_MODE_TIPS[v],
                                 onClick: () => setForm({ ...form, stop_mode: v }),
                             }, label)),
                         form.stop_mode === "trailing" && React.createElement("label", { className: "dsh-stock-field inline" },
@@ -614,7 +620,7 @@ window.__ModuleLoader__.load({
                         React.createElement("button", { className: "dsh-stock-btn", disabled: saving, onClick: addHolding },
                             saving ? "保存中…" : "保存持仓"),
                         React.createElement("span", { className: "dsh-stock-form-hint" },
-                            "trailing：盈利>5%后保本+高点回撤触发；ladder：+20%卖1/3、+50%再卖1/3"))),
+                            "鼠标悬停在模式按钮上查看各模式详细说明"))),
                 overview && React.createElement(React.Fragment, null,
                     React.createElement("div", { className: "dsh-stock-card" },
                         React.createElement("div", { className: "dsh-stock-card-title" }, "📊 仓位体检"),
@@ -636,7 +642,7 @@ window.__ModuleLoader__.load({
                                     React.createElement("span", { className: "num" },
                                         `${formatNum(h.current_price)} · ${formatPct(h.profit_pct)}${h.weight_pct != null ? ` · 仓位${h.weight_pct}%` : ""}`)),
                                 React.createElement("div", { className: "dsh-stock-holding-info" },
-                                    React.createElement("span", null, `${STOP_MODE_LABEL[h.stop_mode] || h.stop_mode}${h.industry ? ` · ${h.industry}` : ""}`),
+                                    React.createElement("span", { title: STOP_MODE_TIPS[h.stop_mode] || "" }, `${STOP_MODE_LABEL[h.stop_mode] || h.stop_mode}${h.industry ? ` · ${h.industry}` : ""}`),
                                     React.createElement("span", { className: "dsh-stock-holding-advice" }, h.advice)),
                                 React.createElement("div", { className: "dsh-stock-holding-ops" },
                                     React.createElement("select", {
@@ -644,7 +650,7 @@ window.__ModuleLoader__.load({
                                         value: h.stop_mode || "fixed",
                                         onChange: (e) => changeMode(h.code, e.target.value),
                                     }, Object.entries(STOP_MODE_LABEL).map(([v, l]) =>
-                                        React.createElement("option", { key: v, value: v }, l))),
+                                        React.createElement("option", { key: v, value: v, title: STOP_MODE_TIPS[v] }, l))),
                                     React.createElement("button", {
                                         className: "dsh-stock-btn sm danger",
                                         onClick: () => removeHolding(h.code),

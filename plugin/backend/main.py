@@ -59,6 +59,11 @@ class HoldingUpdate(BaseModel):
     buy_price: Optional[float] = None
 
 
+class HoldingAlertToggle(BaseModel):
+    alert_type: str  # stop_loss / take_profit / trailing_stop / breakeven_stop / ladder_tp / time_stop
+    enabled: bool
+
+
 class AlertRule(BaseModel):
     code: str
     type: str
@@ -382,6 +387,24 @@ async def update_holding(code: str, updates: HoldingUpdate):
 async def delete_holding(code: str):
     alert_engine.remove_holding(code)
     return {"status": "ok"}
+
+
+@app.put("/api/holdings/{code}/alerts")
+async def toggle_holding_alert(code: str, req: HoldingAlertToggle):
+    """启用/暂停某持仓的某类预警"""
+    h = alert_engine.holdings.get(code)
+    if not h:
+        raise HTTPException(status_code=404, detail=f"持仓 {code} 不存在")
+    enabled = h.setdefault("alerts_enabled", {
+        "stop_loss": True, "take_profit": True, "trailing_stop": True,
+        "breakeven_stop": True, "ladder_tp": True, "time_stop": True,
+    })
+    valid = {"stop_loss", "take_profit", "trailing_stop", "breakeven_stop", "ladder_tp", "time_stop"}
+    if req.alert_type not in valid:
+        raise HTTPException(status_code=400, detail=f"未知预警类型 {req.alert_type}")
+    enabled[req.alert_type] = req.enabled
+    alert_engine.save()
+    return {"status": "ok", "code": code, "alert_type": req.alert_type, "enabled": req.enabled, "alerts_enabled": enabled}
 
 
 @app.post("/api/holdings/refresh")

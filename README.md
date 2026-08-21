@@ -83,76 +83,53 @@ dsh-stock-plugin/
 
 | 项 | 状态 |
 |----|------|
-| Python 后端 | ✅ 20+ API 端点（择时/情绪/板块/仓位/持仓/预警/选股） |
+| Python 后端 | ✅ 30+ API 端点（择时/情绪/板块/仓位/持仓/预警/选股/系统管理） |
 | 自动启动 | ✅ 检测 Python / 安装依赖 / spawn uvicorn |
-| 进程生命周期 | ✅ 启动健康检查 / 优雅停止 / 失败重启 |
-| 插件 npm 包 | ✅ 含全部后端代码 |
+| 进程生命周期 | ✅ 启动健康检查 / 优雅停止 / 失败重启 / 自重启（页面一键） |
+| 插件 npm 包 | ✅ `dsh-plugin-stock@0.3.2`（K线库随包） |
 | AI 工具 | ✅ 8 个（行情/K线/择时/情绪/板块/选股/持仓/仓位） |
-| 页面 | ✅ 6 Tab 仪表盘（择时/情绪风格/板块/持仓仓位/预警/选股） |
-| 数据源 | ✅ pytdx（行情+指数K线）+ 东财免费接口（涨跌停池/板块/两融/K线） |
+| 页面 | ✅ 7 Tab 仪表盘（择时/情绪风格/板块/持仓仓位/预警/选股/系统） |
+| 数据源 | ✅ 本地通达信（vipdoc 全市场日线）+ pytdx（实时行情） + 东财 + 腾讯 |
+| 已被收录 | ✅ [deepseek1024.com](https://deepseek1024.com) 社区插件市场 |
 
-## 🚀 安装（标准 DSH 插件模式）
+## 🚀 安装
 
-> 插件就是 npm 包，被 DSH 启动时自动发现并加载。**不需要修改 DSH 源码。**
+> 插件已发布到 npm（`dsh-plugin-stock@0.3.2`），并被 DSH 社区插件市场收录——详情见 [deepseek1024.com/plugins/yllyx/dsh-plugin-stock/plugin](https://deepseek1024.com/plugins/yllyx/dsh-plugin-stock/plugin)。**直接在插件市场搜索 `dsh-plugin-stock` 安装**即可。
 
-### 步骤 1：前置要求
+### 方式 A：从插件市场安装（推荐）
 
-**必须**：系统已安装 **Python 3.10+** 并加入 PATH
+DSH Desktop → 设置 → 插件（Plugin Inventory）→ 搜索 `dsh-plugin-stock` → 安装。版本升级也在这里点 "Update"。
+
+### 方式 B：CLI 安装
+
 ```bash
-python --version    # 应输出 Python 3.10 或更高
+dsh plugin --profile web add dsh-plugin-stock
 ```
 
-如未安装：https://www.python.org/downloads/（安装时勾选 "Add to PATH"）
-
-### 步骤 2：把插件接入 DSH
-
-#### 方式 A：本地依赖（推荐）
+### 方式 C：本地源码安装（开发者）
 
 如果你有 DSH 源码仓库：
 
 ```bash
 cd ~/deepseek-harness-desktop
-
-# 把 plugin/ 复制到 packages/ 目录下
 cp -r ../dsh-stock-plugin/plugin packages/dsh-plugin-stock
-
-# 编辑根 package.json 加依赖
-# "@deepseek-ai/dsh-plugin-stock": "workspace:*"
-
-pnpm install
-pnpm run build
+# 编辑根 package.json 加依赖："@deepseek-ai/dsh-plugin-stock": "workspace:*"
+pnpm install && pnpm run build
 ```
 
-#### 方式 B：发布到 npm（推荐用发布脚本）
+### 前置要求
+
+- Python 3.10+ 并加入 PATH（首次启动后端时自动安装依赖）
+- Windows / mac / Linux 均可，插件自动识别通达信客户端目录
+
+### 升级
 
 ```bash
-cd dsh-stock-plugin/plugin
-
-# 干运行（推荐先跑）
-node publish.js
-
-# 实际发布 + 自动升级补丁版本
-npm run publish:patch
+# 在已激活此插件的 web profile 下
+pnpm install dsh-plugin-stock@latest
 ```
 
-发布脚本会自动：
-- ✅ 运行测试（test_apply.js）
-- ✅ 验证 package.json 必填字段
-- ✅ 检查敏感文件
-- ✅ 预览打包内容
-- ✅ 版本号管理（`--bump patch|minor|major`）
-- ✅ npm login 检查
-- ✅ 发布后可选 git tag
-
-详见 `plugin/PUBLISHING.md`。
-
-#### 方式 C：软链接
-
-```bash
-ln -s /path/to/dsh-stock-plugin/plugin \
-   /path/to/dsh/node_modules/@deepseek-ai/dsh-plugin-stock
-# 重启 DSH
-```
+发布脚本（`plugin/publish.js`）会自动跑测试、版本管理、打包预览、发布到 npm。详见 `plugin/PUBLISHING.md`。
 
 > ⚠️ 当前 DSH 是已编译的桌面版，最干净方式是：
 > 1. 克隆 DSH 源码
