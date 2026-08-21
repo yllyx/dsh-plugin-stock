@@ -15,7 +15,8 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_PORT = 8765;
-const HEALTH_TIMEOUT_MS = 15000;
+// 首次运行含 pip install 依赖 + K线库冷载入，给足余量；/health 已非阻塞（status() 无锁）
+const HEALTH_TIMEOUT_MS = 30000;
 const HEALTH_POLL_MS = 500;
 
 class BackendManager {

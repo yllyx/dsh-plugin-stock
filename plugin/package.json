@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-stock",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "DSH 股票交易体系助手 - 大盘择时(跌无可跌+企稳信号)、情绪与风格判定(抱团vs妖股)、板块监控与龙头候选、仓位体检、移动/阶梯止盈止损预警、全市场选股、K线（自动管理 Python 后端，仅监控建议，不做交易）",
   "license": "MIT",
   "type": "module",

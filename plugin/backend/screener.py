@@ -222,15 +222,18 @@ class MarketPool:
             cols["open"].append(o); cols["high"].append(h); cols["low"].append(l)
             cols["close"].append(c); cols["volume"].append(v); cols["amount"].append(a)
             cols["dates"].append(date)
-        with self._lock:
-            for code, cols in by_code.items():
-                # 只保留最近250根，与在线预热口径一致
-                n = max(0, len(cols["close"]) - 250)
-                self._dfs[code] = pd.DataFrame({
-                    "open": cols["open"][n:], "high": cols["high"][n:],
-                    "low": cols["low"][n:], "close": cols["close"][n:],
-                    "volume": cols["volume"][n:], "amount": cols["amount"][n:],
-                })
+        # DataFrame 在锁外构建（耗时主体），仅赋值瞬间短暂加锁（微秒级/只），
+        # 避免 /health 在整个载入期被 status() 的锁请求阻塞
+        for code, cols in by_code.items():
+            # 只保留最近250根，与在线预热口径一致
+            n = max(0, len(cols["close"]) - 250)
+            df = pd.DataFrame({
+                "open": cols["open"][n:], "high": cols["high"][n:],
+                "low": cols["low"][n:], "close": cols["close"][n:],
+                "volume": cols["volume"][n:], "amount": cols["amount"][n:],
+            })
+            with self._lock:
+                self._dfs[code] = df
                 self._fetch_date[code] = cols["dates"][-1]
         logger.info(f"K线库载入 {len(by_code)} 只（{time.time()-t0:.1f}s，{self._db_rows} 行）")
 
@@ -296,17 +299,17 @@ class MarketPool:
         self.db_close()
 
     def status(self) -> Dict[str, Any]:
-        with self._lock:
-            return {
-                "total": len(self._codes),
-                "warmed": len(self._dfs),
-                "progress_pct": round(len(self._dfs) / len(self._codes) * 100, 1) if self._codes else 0,
-                "warming": self.warming,
-                "codes_date": self._codes_date,
-                "db_rows": self._db_rows,
-                "db_file": str(storage.path("market.db")),
-                "alt_source": "tencent" if self._alt_source else "eastmoney",
-            }
+        # 全部为普通属性原子读（不加锁）：/health 与系统状态在K线库载入期间也必须立即可响应
+        return {
+            "total": len(self._codes),
+            "warmed": len(self._dfs),
+            "progress_pct": round(len(self._dfs) / len(self._codes) * 100, 1) if self._codes else 0,
+            "warming": self.warming,
+            "codes_date": self._codes_date,
+            "db_rows": self._db_rows,
+            "db_file": str(storage.path("market.db")),
+            "alt_source": "tencent" if self._alt_source else "eastmoney",
+        }
 
     def get_df(self, code: str) -> Optional[pd.DataFrame]:
         with self._lock:

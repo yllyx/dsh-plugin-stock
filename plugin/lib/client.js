@@ -189,32 +189,6 @@ window.__ModuleLoader__.load({
             );
         }
 
-        // ============= 后端状态卡片 =============
-        function BackendStatus({ status, onRetry }) {
-            const { state, error, retrying } = status;
-            if (state === "running") return null;
-
-            const config = {
-                starting: { icon: "⏳", title: "正在启动后端", tone: "info", showRetry: false },
-                failed: { icon: "❌", title: "后端启动失败", tone: "error", showRetry: true },
-                stopped: { icon: "⹂", title: "后端未运行", tone: "warn", showRetry: true },
-            }[state] || { icon: "❓", title: state, tone: "warn", showRetry: true };
-
-            return React.createElement("div", { className: `dsh-stock-backend ${config.tone}` },
-                React.createElement("div", { className: "dsh-stock-backend-title" },
-                    React.createElement("span", null, config.icon + " " + config.title)
-                ),
-                error && React.createElement("div", { className: "dsh-stock-backend-error" }, error),
-                config.showRetry && React.createElement("button", {
-                    className: "dsh-stock-btn",
-                    disabled: retrying,
-                    onClick: onRetry,
-                }, retrying ? "启动中..." : "🔄 重启后端"),
-                React.createElement("div", { className: "dsh-stock-backend-hint" },
-                    "首次启动可能需要 1-2 分钟（下载并安装 Python 依赖）。")
-            );
-        }
-
         // ============= 通用小组件 =============
         function Checklist({ title, data }) {
             if (!data) return null;
@@ -1147,18 +1121,6 @@ window.__ModuleLoader__.load({
                 }
             }
 
-            async function handleRetry() {
-                setBackendStatus((s) => ({ ...s, retrying: true }));
-                if (window.__DSH_STOCK_RESTART__) {
-                    try { await window.__DSH_STOCK_RESTART__(); }
-                    catch (e) {
-                        setBackendStatus({ state: "failed", error: e.message, retrying: false });
-                        return;
-                    }
-                }
-                setTimeout(() => setBackendStatus((s) => ({ ...s, retrying: false })), 5000);
-            }
-
             const backendOk = backendStatus.state === "running";
             const openStock = (s) => setSelectedStock(s);
 
@@ -1177,16 +1139,16 @@ window.__ModuleLoader__.load({
                     React.createElement("span", null, "📈 股票监控"),
                     React.createElement("span", { className: `dsh-stock-status ${connected ? "ok" : "off"}` },
                         backendOk ? (connected ? "● 实时" : "○ 连接中") : "○ 后端未启动")),
-                !backendOk && React.createElement(BackendStatus, { status: backendStatus, onRetry: handleRetry }),
-                backendOk && React.createElement(React.Fragment, null,
-                    React.createElement("div", { className: "dsh-stock-tabs" },
-                        TABS.map((t) =>
-                            React.createElement("button", {
-                                key: t.id,
-                                className: `dsh-stock-tab ${tab === t.id ? "active" : ""}`,
-                                onClick: () => setTab(t.id),
-                            }, t.label))),
-                    React.createElement("div", { className: "dsh-stock-tab-content" }, tabContent)),
+                !backendOk && React.createElement("div", { className: "dsh-stock-backend-banner" },
+                    "⚠️ 后端服务连接中，数据就绪后自动恢复（进程状态与重启见 ⚙️ 系统 Tab）"),
+                React.createElement("div", { className: "dsh-stock-tabs" },
+                    TABS.map((t) =>
+                        React.createElement("button", {
+                            key: t.id,
+                            className: `dsh-stock-tab ${tab === t.id ? "active" : ""}`,
+                            onClick: () => setTab(t.id),
+                        }, t.label))),
+                React.createElement("div", { className: "dsh-stock-tab-content" }, tabContent),
                 React.createElement("div", { className: "dsh-stock-footer" },
                     `更新于 ${new Date().toLocaleTimeString("zh-CN", { hour12: false })} · 仅监控不交易 · 红涨绿跌`),
                 selectedStock && React.createElement(KLineModal, {
@@ -1413,12 +1375,7 @@ window.__ModuleLoader__.load({
                 .dsh-stock-modal-overlay { position: absolute; top: 100px; left: 0; right: 0; padding: 20px; text-align: center; color: #9aa3b5; pointer-events: none; }
                 .dsh-stock-modal-overlay.error { color: #ef4444; }
                 /* 后端状态卡 */
-                .dsh-stock-backend { padding: 16px; border-radius: 8px; margin-bottom: 12px; background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); }
-                .dsh-stock-backend.error { border-color: #ef4444; }
-                .dsh-stock-backend.warn { border-color: #f59e0b; }
-                .dsh-stock-backend-title { font-weight: 600; margin-bottom: 8px; }
-                .dsh-stock-backend-error { font-size: 11px; color: var(--dsw-alias-label-secondary); margin-bottom: 8px; word-break: break-all; }
-                .dsh-stock-backend-hint { font-size: 10px; color: var(--dsw-alias-label-secondary); margin-top: 8px; }
+                .dsh-stock-backend-banner { padding: 6px 10px; border-radius: 6px; margin-bottom: 8px; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); color: #f59e0b; font-size: 11px; }
                 /* 导航行入口（样式语言对齐 任务看板/SSH/记忆系统 的注入行） */
                 .dsh-stock-entry { width: 100%; height: 32px; color: var(--dsw-alias-label-secondary); cursor: pointer; white-space: nowrap; background: 0 0; border: none; border-radius: 8px; align-items: center; gap: 8px; padding: 0 12px; font-size: 13px; display: flex; }
                 .dsh-stock-entry:hover { background: var(--dsw-specific-sidebar-nav-item-hover); color: var(--dsw-alias-label-primary); }
