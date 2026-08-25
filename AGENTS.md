@@ -17,16 +17,24 @@ dsh-stock-plugin/                  # 开发仓库（git, main 分支）
     ├── cordis.patch.yml
     ├── lib/
     │   ├── index.js               # 宿主端：注册 8 个 stock_* AI 工具 + 拉起 Python 后端
-    │   ├── client.js              # 前端：7 Tab 仪表盘（择时/情绪风格/板块/持仓仓位/预警/选股/系统）
+    │   ├── client.js              # 前端：8 Tab 仪表盘（择时/情绪风格/板块/持仓仓位/预警/选股/舆情联动/系统）
     │   └── backend-manager.js     # Python 后端进程管理（健康检查 30s）
     ├── backend/                   # Python FastAPI 后端（随 npm 包发布）
-    │   ├── main.py                # 入口，30+ REST 端点
+    │   ├── main.py                # 入口，70+ REST 端点
     │   ├── data_source.py         # pytdx 行情 + K线路由（指数 index_bars / 个股东财→腾讯回退）
     │   ├── eastmoney.py / tencent.py   # 双网络源（互为灾备）
     │   ├── tdx_local.py           # 本地通达信 vipdoc .day 读取（全市场日线）
     │   ├── market_timing.py / market_sentiment.py / sector_monitor.py
     │   ├── position_manager.py / alert_engine.py / screener.py
     │   ├── storage.py / config.py / system_api.py
+    │   ├── sentiment_monitor.py   # 🌐舆情三源抓取（东财7×24快讯/新浪滚动/美联储RSS，5分钟循环）
+    │   ├── sentiment_db.py / news_filter.py / sentiment_keywords.py / user_keywords.py
+    │   ├── keyword_learner.py     # AI推荐关键词（高频新词分析）
+    │   ├── event_rules.py / event_calendar.py / event_impact_analyzer.py  # 事件日历（含时区换算）
+    │   ├── sector_mapper.py / stock_matcher.py / investment_advisor.py    # 板块/个股关联+投资建议
+    │   ├── impact_analyzer.py / impact_history.py / impact_predictor.py   # 历史影响预测
+    │   ├── position_priority.py / user_preference.py    # 持仓优先+偏好学习（个性化推送）
+    │   ├── system_validator.py    # 系统自检
     │   └── static/klinecharts.min.js  # K线库 9.8.12 本地打包（勿删，勿依赖 CDN）
     └── test_apply.js / test_backend.js / publish.js / publish-and-submit.js
 ```
@@ -59,7 +67,7 @@ dsh-stock-plugin/                  # 开发仓库（git, main 分支）
 3. 若报 supply-chain 错误：把报错的包加进 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 再重试
 4. 重新打开 DSH → 系统 Tab 确认版本号
 
-**临时热改（开发调试用，DSH 重装插件会被覆盖）**：直接 `cp` 文件到插件安装位置对应路径；改 `lib/client.js`（前端）需重启 DSH；改 `backend/*.py` 需重启后端进程（系统 Tab「⚡重启后端」或杀掉 8765 的 python 进程后重启 DSH）。
+**临时热改（开发调试用，DSH 重装插件会被覆盖）**：直接 `cp` 文件到插件安装位置对应路径；改 `lib/client.js`（前端）需刷新 DSH 页面（Ctrl+R）；改 `backend/*.py` 调 `POST http://127.0.0.1:8765/api/system/restart`（即系统 Tab「⚡重启后端」）即可生效，**无需重启 DSH**（杀进程手动重启会脱离 DSH 进程管理，不推荐）。
 
 ## 发布流程（npm publish）
 
@@ -100,6 +108,7 @@ git push origin main --tags
 | 0.3.2 | 通达信本地数据源、腾讯备选源、SQLite K线持久化、可配置数据目录、系统管理 Tab、K线库本地打包 |
 | 0.3.3 | AI 工具 render 返回 content block 数组（修 content.some 报错）、持仓 6 类预警独立开关、止盈止损模式 tooltip、K线红涨绿跌 |
 | 0.3.4 | **健康检查误杀修复**（status() 去锁 + DataFrame 构建移出锁 + 窗口 15s→30s）、前端删除 backendOk 门禁（后端启动不阻塞页面） |
+| 0.4.0 | **🌐 舆情联动监控系统**：三源抓取（东财7×24快讯/新浪滚动/美联储RSS）、智能过滤+用户/AI关键词、舆情-板块-个股关联+投资建议弹窗、事件日历（规则库+时区换算）、历史影响预测、个性化推送；新增第 8 Tab、19 个后端模块、40+ API |
 
 ## 关键经验（踩过的坑，勿再犯）
 
@@ -114,4 +123,9 @@ git push origin main --tags
 9. **pnpm supply-chain 策略**：新装包若发布时间过近会被拒，按报错提示加 `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 白名单
 10. **用户数据必须存数据目录**（`storage.py` 解析：`STOCK_DATA_DIR` 环境变量 > `~/.dsh/dsh-plugin-stock.dir` 指针 > 默认 `~/.dsh/stock-data/`），绝不写插件包内（重装即丢）
 11. DSH 内置"插件市场"组件（dsh-community-market@0.1.0-dev.0）在 DSH 2.0.1 是坏的（前端模块表缺依赖），与本插件无关，勿修
-12. 舆情联动功能**已由用户在其他会话实现**，本仓库不含该模块，勿在此重复开发
+12. **前端新组件 CSS 类名必须用唯一前缀**（如 `dsh-stock-adv-*`）——曾与 K 线加载态旧类 `dsh-stock-modal-overlay` 撞名，旧规则的 `pointer-events:none` 未被覆盖导致整个弹窗点击失效（React 逻辑无任何问题，纯 CSS 坑）
+13. **改代码后必须让运行中的进程重新加载**：Python 模块在进程启动时载入内存，改 `.py` 后旧进程永远跑旧代码（症状：修复"不生效"、旧报错持续）；用 `/api/system/restart` 自重启；同理前端 `client.js` 改完要刷新页面
+14. **pytz.localize 只接受 naive datetime**——传入带 tzinfo 的必抛 `Not naive datetime`；先用 `dt.replace(tzinfo=None)` 剥离再 localize
+15. **SQLite 长生命周期连接必须 `check_same_thread=False`**——FastAPI 端点用 `asyncio.to_thread` 在工作线程调 DB 时，主线程创建的连接会抛 `SQLite objects created in a thread...`（影响过 keyword_learner/impact_analyzer/event_impact_analyzer）
+16. **东财公告接口 `np-anotice-stock` 已失效**（返回 200+0 字节空 body）；舆情用 `np-listapi.eastmoney.com/comm/web/getFastNewsList`（7×24 快讯，实测稳定）；新浪滚动用 `feed.mix.sina.com.cn/api/roll/get`；美联储 RSS 用标准库 `xml.etree` 解析即可
+17. **规则型事件日历防重复**：`day_range` 是发布窗口不是"每天都发生"，须优先取 `day_of_month`（每月一次）；`with sqlite3.connect` 短连接线程安全，`self.conn` 长连接才需要跨线程配置

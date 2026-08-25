@@ -40,6 +40,21 @@ window.__ModuleLoader__.load({
         const formatYi = (n) => (n == null ? "-" : n >= 10000 ? `${(n / 10000).toFixed(1)}万亿` : `${Math.round(n)}亿`);
         const formatTime = (ts) => new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour12: false });
         const cls = (n) => (n == null ? "" : n >= 0 ? "up" : "down");
+        const formatDate = (dateStr) => {
+            const date = new Date(dateStr);
+            const today = new Date();
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            const dateOnly = new Date(dateStr);
+            if (dateOnly.toDateString() === today.toDateString()) {
+                return "今天";
+            } else if (dateOnly.toDateString() === tomorrow.toDateString()) {
+                return "明天";
+            } else {
+                return `${dateOnly.getMonth() + 1}月${dateOnly.getDate()}日`;
+            }
+        };
 
         async function api(path, options) {
             const resp = await fetch(`${PLUGIN_API_BASE}${path}`, options);
@@ -804,9 +819,393 @@ window.__ModuleLoader__.load({
             );
         }
 
-        // ============= Tab 7: 系统 =============
-        const PROBE_STATUS = { ok: "✓ 可用", no_data: "⊘ 无数据", timeout: "✗ 超时" };
+        // ============= Tab 7: 舆情联动 =============
+        // --- 舆情辅助函数 ---
+        function newsImportanceStars(score) {
+            if (score >= 90) return "⭐⭐⭐⭐⭐";
+            if (score >= 75) return "⭐⭐⭐⭐";
+            if (score >= 60) return "⭐⭐⭐";
+            if (score >= 45) return "⭐⭐";
+            return "⭐";
+        }
+        function newsSentimentIcon(tag) {
+            if (tag === "positive") return "📈";
+            if (tag === "negative") return "📉";
+            return "📊";
+        }
+        function newsSourceName(src) {
+            const map = { eastmoney: "东财", sina: "新浪", fed: "美联储", wallstreetcn: "华尔街" };
+            return map[src] || src || "资讯";
+        }
+        function parseMaybeJson(v) {
+            if (v == null) return null;
+            if (Array.isArray(v)) return v;
+            if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } }
+            return null;
+        }
+        function formatNewsTime(ts) {
+            if (!ts) return "";
+            const t = new Date(ts);
+            if (isNaN(t.getTime())) return String(ts);
+            const now = new Date();
+            const diff = Math.floor((now - t) / 1000);
+            if (diff < 60) return "刚刚";
+            if (diff < 3600) return `${Math.floor(diff / 60)}分钟前`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}小时前`;
+            return `${t.getMonth() + 1}月${t.getDate()}日`;
+        }
+        function formatEventDate(dateStr) {
+            const d = new Date(dateStr + "T00:00:00");
+            if (isNaN(d.getTime())) return dateStr;
+            const today = new Date(); today.setHours(0, 0, 0, 0);
+            const diffDays = Math.round((d - today) / 86400000);
+            if (diffDays === 0) return "今天";
+            if (diffDays === 1) return "明天";
+            if (diffDays === 2) return "后天";
+            return `${d.getMonth() + 1}月${d.getDate()}日`;
+        }
 
+        // --- 关键词管理面板（独立组件） ---
+        function KeywordManagerPanel({ onDone }) {
+            const [keywords, setKeywords] = useState([]);
+            const [suggestions, setSuggestions] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [sugLoading, setSugLoading] = useState(false);
+            const [activeTab, setActiveTab] = useState("list");
+            const [newKeyword, setNewKeyword] = useState("");
+            const [newCategory, setNewCategory] = useState("自定义");
+            const [newImportance, setNewImportance] = useState(70);
+
+            const loadKeywords = useCallback(async () => {
+                setLoading(true);
+                try { setKeywords(await api("/api/sentiment/keywords")); } catch (e) { console.error(e); }
+                setLoading(false);
+            }, []);
+            const loadSuggestions = useCallback(async () => {
+                setSugLoading(true);
+                try { setSuggestions(await api("/api/sentiment/keywords/suggestions?days=30")); } catch (e) { console.error(e); }
+                setSugLoading(false);
+            }, []);
+            useEffect(() => { loadKeywords(); }, [loadKeywords]);
+
+            const handleAdd = async () => {
+                if (!newKeyword.trim()) return;
+                try {
+                    await post("/api/sentiment/keywords", {
+                        keyword: newKeyword.trim(), category: newCategory, importance: Number(newImportance), notes: "",
+                    });
+                    setNewKeyword("");
+                    loadKeywords();
+                    if (onDone) onDone();
+                } catch (e) { alert("添加失败: " + e.message); }
+            };
+            const handleDelete = async (id) => {
+                try { await api(`/api/sentiment/keywords/${id}`, { method: "DELETE" }); loadKeywords(); }
+                catch (e) { alert("删除失败: " + e.message); }
+            };
+            const handleAccept = async (s) => {
+                try {
+                    await post("/api/sentiment/keywords/suggestions/accept", {
+                        keyword: s.keyword, suggested_importance: s.suggested_importance, category: "AI推荐",
+                    });
+                    setSuggestions(prev => prev.filter(x => x.keyword !== s.keyword));
+                    loadKeywords();
+                } catch (e) { alert("接受推荐失败: " + e.message); }
+            };
+            const handleReject = async (kw) => {
+                try {
+                    await api(`/api/sentiment/keywords/suggestions/reject?keyword=${encodeURIComponent(kw)}`, { method: "POST" });
+                    setSuggestions(prev => prev.filter(x => x.keyword !== kw));
+                } catch (e) { alert("拒绝失败: " + e.message); }
+            };
+
+            const confidenceBadge = (c) => c === "high" ? "🟢 高" : c === "medium" ? "🟡 中" : "⚪ 低";
+
+            return React.createElement("div", { className: "dsh-stock-kw-panel" },
+                React.createElement("div", { className: "dsh-stock-kw-tabs" },
+                    React.createElement("button", { className: activeTab === "list" ? "active" : "", onClick: () => setActiveTab("list") }, `我的关键词 (${keywords.length})`),
+                    React.createElement("button", { className: activeTab === "sug" ? "active" : "", onClick: () => { setActiveTab("sug"); loadSuggestions(); } }, "🤖 AI推荐")),
+
+                activeTab === "list" && React.createElement("div", { className: "dsh-stock-kw-add" },
+                    React.createElement("input", { value: newKeyword, onChange: e => setNewKeyword(e.target.value), placeholder: "输入关键词，如：降息、宁德时代、集采" }),
+                    React.createElement("input", { className: "dsh-stock-kw-cat", value: newCategory, onChange: e => setNewCategory(e.target.value), placeholder: "分类" }),
+                    React.createElement("input", { className: "dsh-stock-kw-imp", type: "number", min: 0, max: 100, value: newImportance, onChange: e => setNewImportance(e.target.value) }),
+                    React.createElement("button", { className: "dsh-stock-kw-add-btn", onClick: handleAdd }, "＋ 添加")),
+
+                activeTab === "list" && (loading
+                    ? React.createElement("div", { className: "dsh-stock-loading" }, "加载中...")
+                    : keywords.length === 0
+                        ? React.createElement("div", { className: "dsh-stock-empty-inline" }, "暂无自定义关键词，添加后舆情监控会优先匹配推送")
+                        : React.createElement("div", { className: "dsh-stock-kw-list" },
+                            keywords.map(kw => React.createElement("div", { key: kw.id, className: "dsh-stock-kw-item" },
+                                React.createElement("span", { className: "dsh-stock-kw-word" }, kw.keyword),
+                                React.createElement("span", { className: "dsh-stock-kw-meta" }, `${kw.category || "自定义"} · 重要度${kw.importance}`),
+                                React.createElement("button", { className: "dsh-stock-kw-del", onClick: () => handleDelete(kw.id) }, "✕"))))),
+
+                activeTab === "sug" && (sugLoading
+                    ? React.createElement("div", { className: "dsh-stock-loading" }, "分析历史舆情中...")
+                    : suggestions.length === 0
+                        ? React.createElement("div", { className: "dsh-stock-empty-inline" },
+                            "暂无推荐。系统会分析高影响力新闻中的高频新词，积累数据后自动推荐")
+                        : React.createElement("div", { className: "dsh-stock-kw-list" },
+                            suggestions.map(s => React.createElement("div", { key: s.keyword, className: "dsh-stock-kw-item" },
+                                React.createElement("div", { className: "dsh-stock-kw-sug-main" },
+                                    React.createElement("span", { className: "dsh-stock-kw-word" }, s.keyword),
+                                    React.createElement("span", { className: "dsh-stock-kw-meta" }, `建议重要度 ${s.suggested_importance} · 置信度 ${confidenceBadge(s.confidence)}`),
+                                    s.reasoning && React.createElement("div", { className: "dsh-stock-kw-reason" }, s.reasoning)),
+                                React.createElement("div", { className: "dsh-stock-kw-sug-btns" },
+                                    React.createElement("button", { className: "dsh-stock-kw-accept", onClick: () => handleAccept(s) }, "✓ 接受"),
+                                    React.createElement("button", { className: "dsh-stock-kw-del", onClick: () => handleReject(s.keyword) }, "✗"))))))
+            );
+        }
+
+        // --- 投资建议弹窗（独立组件） ---
+        function AdviceModal({ newsId, onClose }) {
+            const [loading, setLoading] = useState(true);
+            const [advice, setAdvice] = useState(null);
+            const [err, setErr] = useState(null);
+
+            useEffect(() => {
+                const run = async () => {
+                    try {
+                        const data = await api(`/api/sentiment/investment-advice?news_id=${encodeURIComponent(newsId)}&include_stocks=true`, { method: "POST" });
+                        setAdvice(data);
+                    } catch (e) { setErr(e.message); }
+                    setLoading(false);
+                };
+                run();
+            }, [newsId]);
+
+            const dirText = (d) => d === "positive" ? "📈 利好" : d === "negative" ? "📉 利空" : "📊 中性";
+            const stockName = (s) => s.stock_name || s.name || "";
+            const stockCode = (s) => s.stock_code || s.code || "";
+
+            return React.createElement("div", { className: "dsh-stock-adv-overlay", onClick: onClose },
+                React.createElement("div", { className: "dsh-stock-adv-content", onClick: e => e.stopPropagation() },
+                    React.createElement("div", { className: "dsh-stock-adv-head" },
+                        React.createElement("span", null, "💡 投资建议分析"),
+                        React.createElement("button", { className: "dsh-stock-adv-close", onClick: onClose }, "✕")),
+                    loading && React.createElement("div", { className: "dsh-stock-loading" }, "分析舆情关联中..."),
+                    err && React.createElement("div", { className: "dsh-stock-error" }, `分析失败: ${err}`),
+                    !loading && advice && React.createElement("div", { className: "dsh-stock-adv-body" },
+
+                        advice.sentiment && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "📰 舆情"),
+                            React.createElement("div", { className: "dsh-stock-advice-news-title" }, advice.sentiment.title),
+                            React.createElement("div", { className: "dsh-stock-advice-news-meta" },
+                                `${newsImportanceStars(advice.sentiment.importance_score)} ${Math.round(advice.sentiment.importance_score || 0)}分 · ${newsSentimentIcon(advice.sentiment.sentiment_tag)} ${dirText(advice.sentiment.sentiment_tag)}`)),
+
+                        (advice.related_sectors || []).length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "🧩 相关板块"),
+                            advice.related_sectors.map((sec, i) => React.createElement("div", { key: i, className: `dsh-stock-advice-sector ${sec.impact || ""}` },
+                                React.createElement("span", { className: "dsh-stock-advice-sector-name" }, sec.sector_name),
+                                React.createElement("span", { className: "dsh-stock-advice-sector-dir" }, dirText(sec.impact)),
+                                React.createElement("span", { className: "dsh-stock-advice-sector-rel" }, `相关度 ${Math.round((sec.relevance || 0) * 100)}%`),
+                                sec.reasoning && React.createElement("div", { className: "dsh-stock-advice-sector-reason" }, sec.reasoning)))),
+
+                        (advice.related_stocks || []).length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "📈 相关个股"),
+                            advice.related_stocks.slice(0, 8).map((s, i) => React.createElement("span", { key: i, className: "dsh-stock-stock-tag" },
+                                `${stockName(s)} (${stockCode(s)})`))),
+
+                        advice.investment_advice && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "💡 影响分析与操作建议"),
+                            (() => {
+                                const adv = advice.investment_advice;
+                                const impact = adv.impact_analysis || {};
+                                const dirText2 = (d) => d === "positive" ? "📈 整体利好" : d === "negative" ? "📉 整体利空" : "📊 影响中性";
+                                const nodes = [];
+                                nodes.push(React.createElement("div", { key: "impact", className: "dsh-stock-advice-tip" },
+                                    React.createElement("div", { className: "dsh-stock-advice-tip-text" },
+                                        `${dirText2(impact.overall_impact)}（置信度: ${impact.confidence === "high" ? "高" : impact.confidence === "low" ? "低" : "中"}）`,
+                                        impact.description ? ` — ${impact.description}` : "")));
+                                if (adv.operation_advice) {
+                                    nodes.push(React.createElement("div", { key: "op", className: "dsh-stock-advice-tip" },
+                                        React.createElement("div", { className: "dsh-stock-advice-tip-stock" }, "📝 操作建议"),
+                                        React.createElement("div", { className: "dsh-stock-advice-tip-text" }, adv.operation_advice)));
+                                }
+                                if ((adv.recommended_stocks || []).length > 0) {
+                                    nodes.push(React.createElement("div", { key: "rec", className: "dsh-stock-advice-tip" },
+                                        React.createElement("div", { className: "dsh-stock-advice-tip-stock" }, "🎯 推荐关注"),
+                                        React.createElement("div", { className: "dsh-stock-advice-tip-text" },
+                                            adv.recommended_stocks.map((s, i) => `${stockName(s)} (${stockCode(s)})`).join("、"))));
+                                }
+                                (adv.risk_warnings || []).forEach((w, i) => {
+                                    nodes.push(React.createElement("div", { key: "risk" + i, className: "dsh-stock-advice-tip-text" }, `⚠️ ${w}`));
+                                });
+                                return nodes;
+                            })()))));
+        }
+
+        // --- 舆情主Tab ---
+        function NewsTab({ openStock }) {
+            const [cnNews, setCnNews] = useState([]);
+            const [usNews, setUsNews] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [filter, setFilter] = useState("all");
+            const [liveNews, setLiveNews] = useState([]);
+            const [showKw, setShowKw] = useState(false);
+            const [calView, setCalView] = useState(false);
+            const [calEvents, setCalEvents] = useState([]);
+            const [calLoading, setCalLoading] = useState(false);
+            const [adviceNewsId, setAdviceNewsId] = useState(null);
+
+            const load = useCallback(async () => {
+                setLoading(true); setError(null);
+                try {
+                    const [cn, us] = await Promise.all([
+                        api("/api/sentiment/cn?limit=20").catch(() => []),
+                        api("/api/sentiment/us?limit=20").catch(() => []),
+                    ]);
+                    setCnNews(Array.isArray(cn) ? cn : []);
+                    setUsNews(Array.isArray(us) ? us : []);
+                } catch (e) { setError(e.message); }
+                setLoading(false);
+            }, []);
+            useEffect(() => { load(); }, [load]);
+
+            // 事件日历
+            const loadCalendar = useCallback(async () => {
+                setCalLoading(true);
+                try {
+                    const data = await api("/api/calendar/upcoming?days=30");
+                    const groups = Object.entries(data || {})
+                        .map(([date, events]) => ({ date, events }))
+                        .sort((a, b) => a.date.localeCompare(b.date));
+                    setCalEvents(groups);
+                } catch (e) { console.error("日历加载失败:", e); setCalEvents([]); }
+                setCalLoading(false);
+            }, []);
+            useEffect(() => { if (calView) loadCalendar(); }, [calView, loadCalendar]);
+
+            const generateCalendar = async () => {
+                setCalLoading(true);
+                try { await api("/api/calendar/generate?months=3", { method: "POST" }); await loadCalendar(); }
+                catch (e) { alert("生成日历失败: " + e.message); setCalLoading(false); }
+            };
+
+            // WebSocket 实时舆情推送
+            useEffect(() => {
+                let ws = null;
+                try {
+                    ws = new WebSocket(PLUGIN_API_BASE.replace("http", "ws") + "/ws");
+                    ws.onmessage = (evt) => {
+                        try {
+                            const msg = JSON.parse(evt.data);
+                            if (msg.type === "sentiment_news" && Array.isArray(msg.data)) {
+                                setLiveNews(prev => [...msg.data, ...prev].slice(0, 10));
+                                load();
+                            }
+                        } catch { /* ignore */ }
+                    };
+                } catch { /* ignore */ }
+                return () => { if (ws && ws.readyState === WebSocket.OPEN) ws.close(); };
+            }, [load]);
+
+            const displayNews = filter === "all" ? [...cnNews, ...usNews] : (filter === "cn" ? cnNews : usNews);
+            const sortedNews = [...displayNews].sort((a, b) => (b.importance_score || 0) - (a.importance_score || 0));
+
+            const todayStr = new Date().toISOString().slice(0, 10);
+
+            const renderNewsItem = (news, idx) => {
+                const sectors = parseMaybeJson(news.related_sectors) || [];
+                const stocks = parseMaybeJson(news.related_stocks) || [];
+                return React.createElement("div", { key: news.id || idx, className: `dsh-stock-news-item ${news.sentiment_tag || ""}` },
+                    React.createElement("div", { className: "dsh-stock-news-item-head" },
+                        React.createElement("span", { className: "dsh-stock-news-item-src" },
+                            `${newsSentimentIcon(news.sentiment_tag)} ${newsSourceName(news.source)}${news.country === "us" ? " 🇺🇸" : " 🇨🇳"}`),
+                        React.createElement("span", { className: "dsh-stock-news-item-time" }, formatNewsTime(news.published_at)),
+                        React.createElement("span", { className: "dsh-stock-news-item-imp" },
+                            `${newsImportanceStars(news.importance_score)} ${Math.round(news.importance_score || 0)}`)),
+                    React.createElement("div", { className: "dsh-stock-news-item-title" }, news.title),
+                    news.content && React.createElement("div", { className: "dsh-stock-news-item-content" }, news.content),
+                    news.url && React.createElement("a", { href: news.url, target: "_blank", rel: "noopener noreferrer", className: "dsh-stock-news-item-link" }, "查看原文 →"),
+                    sectors.length > 0 && React.createElement("div", { className: "dsh-stock-news-tags" },
+                        React.createElement("span", { className: "dsh-stock-news-tags-label" }, "🧩 板块:"),
+                        sectors.slice(0, 5).map((sec, i) => React.createElement("span", {
+                            key: i,
+                            className: `dsh-stock-sector-tag ${sec.impact || ""}`,
+                            title: sec.reasoning || "",
+                        }, sec.sector_name))),
+                    stocks.length > 0 && React.createElement("div", { className: "dsh-stock-news-tags" },
+                        React.createElement("span", { className: "dsh-stock-news-tags-label" }, "📈 个股:"),
+                        stocks.slice(0, 5).map((s, i) => React.createElement("span", {
+                            key: i,
+                            className: "dsh-stock-stock-tag",
+                            onClick: () => openStock && openStock({ code: s.stock_code || s.code, name: s.stock_name || s.name }),
+                            style: { cursor: "pointer" },
+                        }, s.stock_name || s.name))),
+                    (news.importance_score || 0) >= 75 && React.createElement("button", {
+                        className: "dsh-stock-advice-btn",
+                        onClick: () => setAdviceNewsId(String(news.id)),
+                    }, "💡 投资建议"));
+            };
+
+            const renderCalendarDay = (group) => {
+                const isToday = group.date === todayStr;
+                const diffDays = Math.round((new Date(group.date + "T00:00:00") - new Date(todayStr + "T00:00:00")) / 86400000);
+                return React.createElement("div", { key: group.date, className: `dsh-stock-cal-day ${isToday ? "today" : ""}` },
+                    React.createElement("div", { className: "dsh-stock-cal-date" },
+                        `${formatEventDate(group.date)}`,
+                        diffDays >= 0 && diffDays <= 3 && diffDays > 0 && React.createElement("span", { className: "dsh-stock-cal-urgent" }, ` ⚡${diffDays}天后`)),
+                    React.createElement("div", { className: "dsh-stock-cal-events" },
+                        group.events.map((ev, i) => React.createElement("div", { key: i, className: "dsh-stock-cal-event" },
+                            React.createElement("span", { className: "dsh-stock-cal-event-imp" }, newsImportanceStars(ev.importance_score || ev.importance || 60)),
+                            React.createElement("span", { className: "dsh-stock-cal-event-name" },
+                                `${ev.event_time && ev.event_time !== "00:00" ? ev.event_time + " " : ""}${ev.event_name || ev.name}`),
+                            React.createElement("span", { className: "dsh-stock-cal-event-country" }, ev.country === "us" ? "🇺🇸" : "🇨🇳")))));
+            };
+
+            return React.createElement("div", { className: "dsh-stock-tab-body" },
+
+                React.createElement("div", { className: "dsh-stock-news-toolbar" },
+                    React.createElement("div", { className: "dsh-stock-news-filter" },
+                        React.createElement("button", { className: filter === "all" ? "active" : "", onClick: () => setFilter("all") }, "全部"),
+                        React.createElement("button", { className: filter === "cn" ? "active" : "", onClick: () => setFilter("cn") }, "🇨🇳 国内"),
+                        React.createElement("button", { className: filter === "us" ? "active" : "", onClick: () => setFilter("us") }, "🇺🇸 美国")),
+                    React.createElement("button", { className: calView ? "active" : "", onClick: () => setCalView(!calView) }, "📅 事件日历"),
+                    React.createElement("button", { className: showKw ? "active" : "", onClick: () => setShowKw(!showKw) }, "🔑 关键词"),
+                    React.createElement("button", { onClick: load }, "🔄 刷新")),
+
+                showKw && React.createElement(KeywordManagerPanel, { onDone: load }),
+
+                liveNews.length > 0 && React.createElement("div", { className: "dsh-stock-live-box" },
+                    React.createElement("div", { className: "dsh-stock-live-title" }, `⚡ 实时推送 (${liveNews.length})`),
+                    liveNews.slice(0, 3).map((n, i) => React.createElement("div", { key: i, className: "dsh-stock-live-item" },
+                        React.createElement("span", { className: "dsh-stock-live-imp" }, newsImportanceStars(n.importance_score)),
+                        React.createElement("span", { className: "dsh-stock-live-item-title" }, n.title),
+                        React.createElement("span", { className: "dsh-stock-live-time" }, formatNewsTime(n.published_at))))),
+
+                calView && React.createElement("div", { className: "dsh-stock-cal-panel" },
+                    React.createElement("div", { className: "dsh-stock-cal-head" },
+                        React.createElement("span", null, "📅 未来30天重要事件"),
+                        React.createElement("button", { className: "dsh-stock-cal-gen", onClick: generateCalendar, disabled: calLoading }, "⚡ 生成未来事件")),
+                    calLoading
+                        ? React.createElement("div", { className: "dsh-stock-loading" }, "加载日历...")
+                        : calEvents.length === 0
+                            ? React.createElement("div", { className: "dsh-stock-empty-inline" }, "暂无日历数据，点击「生成未来事件」按规则库生成（非农/CPI/FOMC等）")
+                            : React.createElement("div", { className: "dsh-stock-cal-list" }, calEvents.map(renderCalendarDay))),
+
+                loading && React.createElement("div", { className: "dsh-stock-loading" }, "加载舆情数据中..."),
+                error && React.createElement("div", { className: "dsh-stock-error" }, `错误: ${error}`),
+
+                !loading && !error && React.createElement("div", { className: "dsh-stock-news-list" },
+                    sortedNews.length === 0
+                        ? React.createElement("div", { className: "dsh-stock-empty" },
+                            "暂无舆情数据。后端每 5 分钟自动抓取一次中美重要新闻，",
+                            React.createElement("br"),
+                            "可通过「🔑 关键词」添加关注词提高命中率")
+                        : sortedNews.map(renderNewsItem)),
+
+                !loading && !error && React.createElement("div", { className: "dsh-stock-news-footer" },
+                    `🇨🇳 ${cnNews.length} 条 · 🇺🇸 ${usNews.length} 条 · ⭐高分 ${[...cnNews, ...usNews].filter(n => (n.importance_score || 0) >= 80).length} 条`),
+
+                adviceNewsId && React.createElement(AdviceModal, { newsId: adviceNewsId, onClose: () => setAdviceNewsId(null) })
+            );
+        }
+
+        // ============= Tab 8: 系统 =============
         function SystemTab() {
             const [status, setStatus] = useState(null);
             const [probe, setProbe] = useState(null);
@@ -1053,6 +1452,7 @@ window.__ModuleLoader__.load({
             { id: "position", label: "💼 持仓仓位" },
             { id: "alert", label: "⚠️ 预警" },
             { id: "screen", label: "🔍 选股" },
+            { id: "news", label: "🌐 舆情联动" },
             { id: "system", label: "⚙️ 系统" },
         ];
 
@@ -1131,6 +1531,7 @@ window.__ModuleLoader__.load({
                 position: React.createElement(PositionTab, { openStock, refreshTick }),
                 alert: React.createElement(AlertTab, { openStock, liveAlerts }),
                 screen: React.createElement(ScreenTab, { openStock }),
+                news: React.createElement(NewsTab, { openStock }),
                 system: React.createElement(SystemTab),
             }[tab];
 
@@ -1390,6 +1791,92 @@ window.__ModuleLoader__.load({
                 html[data-dsh-stock-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]):not([data-dsh-mnemon-active]) [data-pane="conversation"] > :not([data-dsh-stock-view]),
                 html[data-dsh-stock-active]:not([data-dsh-taskboard-active]):not([data-dsh-ssh-active]):not([data-dsh-mnemon-active]) [class*="centerCol"] > :not([data-dsh-stock-view]) { display: none !important; }
                 [data-dsh-stock-view] .dsh-stock-panel { height: 100%; overflow-y: auto; box-sizing: border-box; padding: 14px 16px; max-width: 960px; margin: 0 auto; }
+                /* ===== 舆情联动 Tab ===== */
+                .dsh-stock-news-toolbar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+                .dsh-stock-news-filter { display: flex; gap: 2px; margin-right: auto; }
+                .dsh-stock-news-toolbar button { background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+                .dsh-stock-news-toolbar button:hover { color: var(--dsw-alias-label-primary); }
+                .dsh-stock-news-toolbar button.active { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-button-primary, #3b82f6); font-weight: 600; }
+                /* 舆情列表项 */
+                .dsh-stock-news-list { display: flex; flex-direction: column; gap: 8px; }
+                .dsh-stock-news-item { background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 8px 10px; }
+                .dsh-stock-news-item.positive { border-left: 3px solid #ef4444; }
+                .dsh-stock-news-item.negative { border-left: 3px solid #22c55e; }
+                .dsh-stock-news-item-head { display: flex; gap: 8px; align-items: baseline; margin-bottom: 4px; }
+                .dsh-stock-news-item-src { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-news-item-time { font-size: 10px; color: var(--dsw-alias-label-secondary); margin-left: auto; }
+                .dsh-stock-news-item-imp { font-size: 10px; white-space: nowrap; }
+                .dsh-stock-news-item-title { font-size: 12px; font-weight: 600; line-height: 1.4; }
+                .dsh-stock-news-item-content { font-size: 11px; color: var(--dsw-alias-label-secondary); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                .dsh-stock-news-item-link { font-size: 10px; color: var(--dsw-alias-button-primary, #3b82f6); text-decoration: none; display: inline-block; margin-top: 3px; }
+                .dsh-stock-news-tags { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-top: 5px; }
+                .dsh-stock-news-tags-label { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-sector-tag { font-size: 10px; padding: 1px 7px; border-radius: 8px; background: var(--dsw-alias-interactive-bg-hover); }
+                .dsh-stock-sector-tag.positive { background: rgba(239,68,68,.15); color: #ef4444; }
+                .dsh-stock-sector-tag.negative { background: rgba(34,197,94,.15); color: #22c55e; }
+                .dsh-stock-stock-tag { font-size: 10px; padding: 1px 7px; border-radius: 8px; background: rgba(59,130,246,.12); color: var(--dsw-alias-button-primary, #3b82f6); }
+                .dsh-stock-advice-btn { background: rgba(245,158,11,.12); color: #f59e0b; border: 1px solid rgba(245,158,11,.4); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-top: 6px; }
+                .dsh-stock-advice-btn:hover { background: rgba(245,158,11,.22); }
+                .dsh-stock-news-footer { text-align: center; font-size: 10px; color: var(--dsw-alias-label-secondary); margin-top: 8px; }
+                /* 实时推送 */
+                .dsh-stock-live-box { background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3); border-radius: 6px; padding: 6px 10px; margin-bottom: 10px; }
+                .dsh-stock-live-title { font-size: 11px; font-weight: 600; color: #f59e0b; margin-bottom: 3px; }
+                .dsh-stock-live-item { display: flex; gap: 6px; align-items: baseline; font-size: 11px; padding: 1px 0; }
+                .dsh-stock-live-imp { font-size: 9px; }
+                .dsh-stock-live-item-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .dsh-stock-live-time { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                /* 事件日历 */
+                .dsh-stock-cal-panel { background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+                .dsh-stock-cal-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 12px; margin-bottom: 6px; }
+                .dsh-stock-cal-gen { background: rgba(59,130,246,.12); color: var(--dsw-alias-button-primary, #3b82f6); border: 1px solid rgba(59,130,246,.4); padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 10px; }
+                .dsh-stock-cal-list { display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow-y: auto; }
+                .dsh-stock-cal-day.today { background: rgba(59,130,246,.07); border-radius: 6px; margin: -2px -4px; padding: 2px 4px; }
+                .dsh-stock-cal-date { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+                .dsh-stock-cal-urgent { color: #f59e0b; font-size: 10px; font-weight: 600; }
+                .dsh-stock-cal-event { display: flex; gap: 6px; align-items: baseline; font-size: 11px; padding: 1px 0 1px 8px; }
+                .dsh-stock-cal-event-imp { font-size: 9px; }
+                .dsh-stock-cal-event-name { flex: 1; }
+                .dsh-stock-cal-event-country { font-size: 10px; }
+                /* 关键词管理 */
+                .dsh-stock-kw-panel { background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; }
+                .dsh-stock-kw-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+                .dsh-stock-kw-tabs button { background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--dsw-alias-label-secondary); padding: 4px 10px; cursor: pointer; font-size: 11px; }
+                .dsh-stock-kw-tabs button.active { color: var(--dsw-alias-label-primary); border-bottom-color: var(--dsw-alias-button-primary, #3b82f6); font-weight: 600; }
+                .dsh-stock-kw-add { display: flex; gap: 4px; margin-bottom: 8px; }
+                .dsh-stock-kw-add input { background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); border-radius: 4px; padding: 4px 8px; font-size: 11px; }
+                .dsh-stock-kw-add input:first-child { flex: 1; }
+                .dsh-stock-kw-cat { width: 80px !important; }
+                .dsh-stock-kw-imp { width: 52px !important; }
+                .dsh-stock-kw-add-btn { background: var(--dsw-alias-button-primary, #3b82f6); color: white; border: none; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 11px; white-space: nowrap; }
+                .dsh-stock-kw-list { display: flex; flex-direction: column; gap: 4px; }
+                .dsh-stock-kw-item { display: flex; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 4px; background: var(--dsw-alias-interactive-bg-hover); font-size: 11px; }
+                .dsh-stock-kw-word { font-weight: 600; }
+                .dsh-stock-kw-meta { color: var(--dsw-alias-label-secondary); font-size: 10px; margin-left: auto; }
+                .dsh-stock-kw-reason { font-size: 10px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
+                .dsh-stock-kw-del { background: transparent; border: none; color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 11px; padding: 0 4px; }
+                .dsh-stock-kw-del:hover { color: #ef4444; }
+                .dsh-stock-kw-sug-main { flex: 1; min-width: 0; }
+                .dsh-stock-kw-sug-btns { display: flex; gap: 4px; }
+                .dsh-stock-kw-accept { background: rgba(34,197,94,.15); color: #22c55e; border: 1px solid rgba(34,197,94,.4); padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 10px; white-space: nowrap; }
+                /* 投资建议弹窗 */
+                .dsh-stock-adv-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; display: flex; align-items: center; justify-content: center; }
+                .dsh-stock-adv-content { background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; padding: 14px 16px; width: 90%; max-width: 560px; max-height: 80vh; overflow-y: auto; }
+                .dsh-stock-adv-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; margin-bottom: 10px; }
+                .dsh-stock-adv-close { background: transparent; border: none; color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 16px; padding: 4px 10px; margin: -4px -6px 0 0; }
+                .dsh-stock-adv-close:hover { color: var(--dsw-alias-label-primary); }
+                .dsh-stock-advice-sec { margin-bottom: 10px; }
+                .dsh-stock-advice-sec-title { font-size: 11px; font-weight: 600; color: var(--dsw-alias-label-secondary); margin-bottom: 4px; }
+                .dsh-stock-advice-news-title { font-size: 12px; font-weight: 600; line-height: 1.4; }
+                .dsh-stock-advice-news-meta { font-size: 10px; color: var(--dsw-alias-label-secondary); margin-top: 2px; }
+                .dsh-stock-advice-sector { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 4px 6px; border-radius: 4px; background: var(--dsw-alias-interactive-bg-hover); margin-bottom: 3px; font-size: 11px; }
+                .dsh-stock-advice-sector-name { font-weight: 600; }
+                .dsh-stock-advice-sector.positive .dsh-stock-advice-sector-dir { color: #ef4444; }
+                .dsh-stock-advice-sector.negative .dsh-stock-advice-sector-dir { color: #22c55e; }
+                .dsh-stock-advice-sector-rel { color: var(--dsw-alias-label-secondary); font-size: 10px; }
+                .dsh-stock-advice-sector-reason { width: 100%; font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-advice-tip { padding: 6px 8px; border-radius: 6px; background: var(--dsh-alias-interactive-bg-hover, var(--dsw-alias-interactive-bg-hover)); margin-bottom: 6px; }
+                .dsh-stock-advice-tip-stock { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
+                .dsh-stock-advice-tip-text { font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
             `;
             document.head.appendChild(style);
         }

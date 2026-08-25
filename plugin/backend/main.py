@@ -31,6 +31,19 @@ from position_manager import position_manager
 from storage import storage
 from config import config
 import system_api
+from sentiment_monitor import get_sentiment_monitor
+from sentiment_db import get_sentiment_db
+from user_keywords import get_user_keywords
+from keyword_learner import get_keyword_learner
+from event_calendar import get_event_calendar
+from event_rules import get_event_rules
+from event_impact_analyzer import get_event_impact_analyzer
+from sector_mapper import get_sector_mapper, get_stock_matcher, get_investment_advisor
+from impact_history import get_impact_history_db
+from impact_predictor import get_impact_predictor
+from position_priority import get_position_priority
+from user_preference import get_user_preference
+from system_validator import get_system_validator
 
 
 # 配置日志
@@ -141,12 +154,17 @@ async def lifespan(app: FastAPI):
     alert_task = asyncio.create_task(alert_engine.run_loop(interval=config.alert_interval))
     sentiment_task = asyncio.create_task(sentiment_refresh_loop())
     market_pool.start()
+    
+    # 启动舆情监控
+    sentiment_monitor = get_sentiment_monitor()
+    sentiment_monitor.start(interval=300)  # 5分钟监控一次
 
     yield
 
     logger.info("DSH 股票后端关闭...")
     broadcaster.running = False
     market_pool.stop()
+    sentiment_monitor.stop()  # 停止舆情监控
     for task in (keepalive_task, alert_task, sentiment_task):
         task.cancel()
     alert_engine.save()
@@ -538,6 +556,787 @@ async def api_system_logs(level: str = Query("INFO"), limit: int = Query(200, le
 async def api_system_restart(request: Request):
     """后端自重启（分离进程2秒后拉起，前端靠health轮询恢复）"""
     return await system_api.restart_backend(request)
+
+
+# ============= 舆情监控 API =============
+@app.get("/api/sentiment/latest")
+async def get_latest_sentiment(limit: int = Query(50, ge=10, le=200), min_score: int = Query(60, ge=0, le=100)):
+    """获取最新舆情"""
+    sentiment_monitor = get_sentiment_monitor()
+    return await sentiment_monitor.get_latest_sentiment(limit, min_score)
+
+
+@app.get("/api/sentiment/cn")
+async def get_cn_sentiment(limit: int = Query(30, ge=10, le=100)):
+    """获取国内重要舆情"""
+    sentiment_monitor = get_sentiment_monitor()
+    return await sentiment_monitor.get_cn_sentiment(limit)
+
+
+@app.get("/api/sentiment/us")
+async def get_us_sentiment(limit: int = Query(30, ge=10, le=100)):
+    """获取美国重要舆情"""
+    sentiment_monitor = get_sentiment_monitor()
+    return await sentiment_monitor.get_us_sentiment(limit)
+
+
+@app.get("/api/sentiment/event-type/{event_type}")
+async def get_sentiment_by_type(event_type: str, limit: int = Query(30, ge=10, le=100)):
+    """根据事件类型获取舆情"""
+    from sentiment_db import get_sentiment_db
+    db = get_sentiment_db()
+    return await asyncio.to_thread(db.get_by_event_type, event_type, limit)
+
+
+class EventImpactRequest(BaseModel):
+    event_name: str
+    event_type: str
+    description: str
+    sectors: List[str]
+    market_context: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/sentiment/analyze-impact")
+async def analyze_event_impact(req: EventImpactRequest):
+    """分析事件对板块的影响"""
+    sentiment_monitor = get_sentiment_monitor()
+    event = {
+        'event_name': req.event_name,
+        'event_type': req.event_type,
+        'description': req.description,
+        'market_context': req.market_context,
+    }
+    return await sentiment_monitor.analyze_event_impact(event, req.sectors)
+
+
+# ============= 用户自定义关键词管理 API =============
+class UserKeywordInput(BaseModel):
+    keyword: str
+    category: str = "自定义"
+    importance: int = 70
+    notes: str = ""
+
+
+class UserKeywordUpdate(BaseModel):
+    keyword: Optional[str] = None
+    category: Optional[str] = None
+    importance: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class StockKeywordInput(BaseModel):
+    stock_code: str
+    stock_name: str
+    keywords: List[str]
+
+
+@app.get("/api/sentiment/keywords")
+async def get_keywords_list():
+    """获取所有用户自定义关键词"""
+    user_keywords = get_user_keywords()
+    return user_keywords.get_all_keywords()
+
+
+@app.post("/api/sentiment/keywords")
+async def add_user_keyword(req: UserKeywordInput):
+    """添加用户自定义关键词"""
+    user_keywords = get_user_keywords()
+    return await asyncio.to_thread(
+        user_keywords.add_keyword,
+        req.keyword,
+        req.category,
+        req.importance,
+        req.notes
+    )
+
+
+@app.put("/api/sentiment/keywords/{keyword_id}")
+async def update_user_keyword(keyword_id: str, req: UserKeywordUpdate):
+    """更新用户自定义关键词"""
+    user_keywords = get_user_keywords()
+    result = await asyncio.to_thread(
+        user_keywords.update_keyword,
+        keyword_id,
+        req.keyword,
+        req.category,
+        req.importance,
+        req.notes
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="关键词不存在")
+    return result
+
+
+@app.delete("/api/sentiment/keywords/{keyword_id}")
+async def delete_user_keyword(keyword_id: str):
+    """删除用户自定义关键词"""
+    user_keywords = get_user_keywords()
+    success = await asyncio.to_thread(user_keywords.delete_keyword, keyword_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="关键词不存在")
+    return {"status": "ok"}
+
+
+@app.get("/api/sentiment/keywords/statistics")
+async def get_keyword_statistics():
+    """获取用户关键词统计信息"""
+    user_keywords = get_user_keywords()
+    return await asyncio.to_thread(user_keywords.get_statistics)
+
+
+@app.post("/api/sentiment/keywords/stock")
+async def add_stock_keywords(req: StockKeywordInput):
+    """为股票添加关键词监控"""
+    user_keywords = get_user_keywords()
+    return await asyncio.to_thread(
+        user_keywords.add_stock_watch,
+        req.stock_code,
+        req.stock_name,
+        req.keywords
+    )
+
+
+@app.get("/api/sentiment/keywords/stock/{stock_code}")
+async def get_stock_keywords(stock_code: str):
+    """获取股票的监控关键词"""
+    user_keywords = get_user_keywords()
+    result = await asyncio.to_thread(user_keywords.get_stock_keywords, stock_code)
+    if result is None:
+        raise HTTPException(status_code=404, detail="股票监控不存在")
+    return result
+
+
+@app.delete("/api/sentiment/keywords/stock/{stock_code}")
+async def delete_stock_keywords(stock_code: str):
+    """删除股票关键词监控"""
+    user_keywords = get_user_keywords()
+    success = await asyncio.to_thread(user_keywords.remove_stock_watch, stock_code)
+    if not success:
+        raise HTTPException(status_code=404, detail="股票监控不存在")
+    return {"status": "ok"}
+
+
+@app.post("/api/sentiment/keywords/blacklist")
+async def add_blacklist_keyword(keyword: str):
+    """添加黑名单关键词"""
+    user_keywords = get_user_keywords()
+    success = await asyncio.to_thread(user_keywords.add_blacklist, keyword)
+    if not success:
+        raise HTTPException(status_code=400, detail="关键词已在黑名单中")
+    return {"status": "ok"}
+
+
+@app.delete("/api/sentiment/keywords/blacklist/{keyword}")
+async def remove_blacklist_keyword(keyword: str):
+    """移除黑名单关键词"""
+    user_keywords = get_user_keywords()
+    success = await asyncio.to_thread(user_keywords.remove_blacklist, keyword)
+    if not success:
+        raise HTTPException(status_code=404, detail="关键词不在黑名单中")
+    return {"status": "ok"}
+
+
+@app.get("/api/sentiment/keywords/blacklist")
+async def get_blacklist():
+    """获取黑名单"""
+    user_keywords = get_user_keywords()
+    return await asyncio.to_thread(user_keywords.get_blacklist)
+
+
+@app.post("/api/sentiment/keywords/optimize")
+async def optimize_keywords():
+    """优化关键词数据（清理重复、更新统计）"""
+    user_keywords = get_user_keywords()
+    return await asyncio.to_thread(user_keywords.optimize_data)
+
+
+# ============= AI智能推荐关键词 API =============
+class SuggestionRequest(BaseModel):
+    keyword: str
+    suggested_importance: int
+    category: str = "AI推荐"
+
+
+@app.get("/api/sentiment/keywords/suggestions")
+async def get_keyword_suggestions(days: int = Query(30, ge=7, le=90)):
+    """获取AI推荐的关键词"""
+    learner = get_keyword_learner()
+    return await asyncio.to_thread(learner.generate_suggestions, days)
+
+
+@app.post("/api/sentiment/keywords/suggestions/accept")
+async def accept_suggestion(req: SuggestionRequest):
+    """接受AI推荐的关键词，添加到用户词库"""
+    learner = get_keyword_learner()
+    success = await asyncio.to_thread(
+        learner.accept_suggestion,
+        req.keyword,
+        req.suggested_importance,
+        req.category
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail="接受推荐失败")
+    return {"status": "ok", "message": f"已添加关键词: {req.keyword}"}
+
+
+@app.post("/api/sentiment/keywords/suggestions/reject")
+async def reject_suggestion(keyword: str):
+    """拒绝AI推荐的关键词，加入黑名单"""
+    learner = get_keyword_learner()
+    success = await asyncio.to_thread(learner.reject_suggestion, keyword)
+    if not success:
+        raise HTTPException(status_code=400, detail="拒绝推荐失败")
+    return {"status": "ok", "message": f"已将关键词加入黑名单: {keyword}"}
+
+
+@app.get("/api/sentiment/keywords/learning-stats")
+async def get_learning_statistics(days: int = Query(30, ge=7, le=90)):
+    """获取关键词学习统计信息"""
+    learner = get_keyword_learner()
+    return await asyncio.to_thread(learner.get_learning_statistics, days)
+
+
+# ============= 事件日历 API =============
+@app.get("/api/calendar/events")
+async def get_calendar_events(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    country: Optional[str] = Query(None),
+    min_importance: int = Query(60, ge=0, le=100)
+):
+    """获取事件日历"""
+    calendar = get_event_calendar()
+    return await asyncio.to_thread(
+        calendar.get_events_by_date_range,
+        start_date, end_date, country, min_importance
+    )
+
+
+@app.get("/api/calendar/upcoming")
+async def get_upcoming_events(days: int = Query(7, ge=1, le=30)):
+    """获取近期事件（按日期分组）"""
+    calendar = get_event_calendar()
+    return await asyncio.to_thread(calendar.get_upcoming_events, days)
+
+
+@app.post("/api/calendar/generate")
+async def generate_calendar(months: int = Query(12, ge=1, le=24)):
+    """生成未来N个月的事件日历"""
+    calendar = get_event_calendar()
+    result = await asyncio.to_thread(calendar.generate_calendar, months)
+    return {"status": "ok", "count": len(result), "events": result}
+
+
+@app.post("/api/calendar/fetch")
+async def fetch_calendar_data(days: int = Query(30, ge=7, le=90)):
+    """从财经网站抓取最新的日历数据"""
+    calendar = get_event_calendar()
+    result = await asyncio.to_thread(calendar.fetch_all_calendars, days)
+    return {"status": "ok", "count": len(result), "events": result}
+
+
+@app.get("/api/calendar/statistics")
+async def get_calendar_statistics(days: int = Query(30, ge=7, le=90)):
+    """获取事件日历统计信息"""
+    calendar = get_event_calendar()
+    return await asyncio.to_thread(calendar.get_event_statistics, days)
+
+
+@app.post("/api/calendar/cleanup")
+async def cleanup_old_events(days: int = Query(90, ge=30, le=180)):
+    """清理旧事件数据"""
+    calendar = get_event_calendar()
+    deleted_count = await asyncio.to_thread(calendar.cleanup_old_events, days)
+    return {"status": "ok", "deleted_count": deleted_count}
+
+
+# ============= 事件影响分析 API =============
+class EventImpactRequest(BaseModel):
+    event_name: str
+    event_type: str
+    importance_score: int = 70
+    keywords: List[str] = []
+    country: str = "cn"
+    market_context: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/calendar/analyze-impact")
+async def analyze_event_impact(req: EventImpactRequest):
+    """分析事件对板块的影响"""
+    analyzer = get_event_impact_analyzer()
+    
+    # 构建事件对象
+    event = {
+        'name': req.event_name,
+        'event_type': req.event_type,
+        'importance_score': req.importance_score,
+        'keywords': req.keywords,
+        'country': req.country,
+    }
+    
+    # 推断相关板块
+    sectors = []
+    sector_keywords = {
+        '黄金': ['黄金', '贵金属'],
+        '地产': ['房地产', '住房'],
+        '银行': ['银行', '利率'],
+        '半导体': ['芯片', '半导体'],
+    }
+    
+    for keyword in req.keywords:
+        for sector, keywords in sector_keywords.items():
+            if keyword in keywords and sector not in sectors:
+                sectors.append(sector)
+    
+    # 如果没有推断出板块，使用默认板块
+    if not sectors:
+        sectors = ['黄金', '银行', '消费']
+    
+    predictions = await asyncio.to_thread(
+        analyzer.predict_sector_impact,
+        event,
+        sectors,
+        req.market_context
+    )
+    
+    return {
+        'event': event,
+        'analyzed_sectors': sectors,
+        'predictions': predictions
+    }
+
+
+# ============= 板块关联和个股投资建议 API =============
+@app.get("/api/sentiment/sectors/{news_id}")
+async def get_sentiment_sectors(news_id: str):
+    """获取舆情相关的板块分析"""
+    # 从数据库获取舆情
+    db = get_sentiment_db()
+    sentiment = await asyncio.to_thread(db.get_news_by_id, news_id)
+    
+    if not sentiment:
+        raise HTTPException(status_code=404, detail="舆情不存在")
+    
+    # 如果舆情已经有板块关联数据，直接返回
+    if 'related_sectors' in sentiment and sentiment['related_sectors']:
+        return {
+            'news_id': news_id,
+            'related_sectors': sentiment['related_sectors']
+        }
+    
+    # 实时计算板块关联
+    sector_mapper = get_sector_mapper()
+    related_sectors = sector_mapper.identify_sectors_from_sentiment(sentiment)
+    
+    return {
+        'news_id': news_id,
+        'related_sectors': related_sectors
+    }
+
+
+@app.post("/api/sentiment/investment-advice")
+async def generate_investment_advice(
+    news_id: str,
+    include_stocks: bool = True
+):
+    """基于舆情生成投资建议"""
+    # 从数据库获取舆情
+    db = get_sentiment_db()
+    sentiment = await asyncio.to_thread(db.get_news_by_id, news_id)
+    
+    if not sentiment:
+        raise HTTPException(status_code=404, detail="舆情不存在")
+    
+    news = sentiment
+    
+    # 获取板块映射
+    sector_mapper = get_sector_mapper()
+    related_sectors = news.get('related_sectors', [])
+    
+    if not related_sectors:
+        related_sectors = sector_mapper.identify_sectors_from_sentiment(news)
+    
+    # 获取相关个股
+    related_stocks = []
+    if include_stocks:
+        stock_matcher = get_stock_matcher()
+        
+        # 从舆情中已关联的股票（如果有）
+        if 'related_stocks' in news and news['related_stocks']:
+            related_stocks = news['related_stocks']
+        else:
+            # 从标题和内容匹配股票
+            title_stocks = stock_matcher.match_stocks_in_text(news.get('title', ''))
+            content_stocks = stock_matcher.match_stocks_in_text(news.get('content', ''))
+            
+            # 合并去重
+            all_stocks = {}
+            for stock in title_stocks + content_stocks:
+                stock_code = stock.get('stock_code')
+                if stock_code and stock_code not in all_stocks:
+                    all_stocks[stock_code] = stock
+            related_stocks = list(all_stocks.values())
+            
+            # 如果直接匹配的股票较少，从板块提取龙头股
+            if len(related_stocks) < 3 and related_sectors:
+                for sector_info in related_sectors[:2]:  # 最多从2个板块提取
+                    sector_stocks = sector_mapper.extract_related_stocks(
+                        sector_info['sector_name'], max_count=3, leaders_only=True
+                    )
+                    # 避免重复
+                    for stock in sector_stocks:
+                        if not any(s.get('code') == stock.get('code') for s in related_stocks):
+                            related_stocks.append(stock)
+    
+    # 获取投资建议
+    investment_advisor = get_investment_advisor()
+    advice = await asyncio.to_thread(
+        investment_advisor.generate_investment_tip,
+        news,
+        related_stocks,
+        []  # 暂时不包含影响预测
+    )
+    
+    return {
+        'sentiment': news,
+        'related_sectors': related_sectors,
+        'related_stocks': related_stocks,
+        'investment_advice': advice
+    }
+
+
+# ============= 历史影响预测 API =============
+@app.get("/api/impact/history/statistics")
+async def get_impact_history_statistics(
+    event_type: str = Query(..., description="事件类型"),
+    sector_name: str = Query(..., description="板块名称")
+):
+    """获取历史影响统计数据"""
+    impact_db = get_impact_history_db()
+    stats = await asyncio.to_thread(
+        impact_db.calculate_historical_stats,
+        "",  # event_name暂不使用
+        event_type,
+        sector_name
+    )
+    return stats
+
+
+@app.post("/api/impact/predict")
+async def predict_impact(
+    event_name: str,
+    event_type: str,
+    sector_name: str,
+    market_context: Optional[Dict[str, Any]] = None
+):
+    """预测事件对板块的影响"""
+    predictor = get_impact_predictor()
+    
+    event = {
+        'name': event_name,
+        'event_type': event_type
+    }
+    
+    prediction = await asyncio.to_thread(
+        predictor.predict_sector_impact,
+        event,
+        sector_name,
+        market_context
+    )
+    
+    return prediction
+
+
+@app.post("/api/impact/risk-analysis")
+async def analyze_risk_scenarios(
+    event_name: str,
+    event_type: str,
+    sector_name: str
+):
+    """分析风险情景"""
+    predictor = get_impact_predictor()
+    
+    event = {
+        'name': event_name,
+        'event_type': event_type
+    }
+    
+    risk_analysis = await asyncio.to_thread(
+        predictor.analyze_risk_scenarios,
+        event,
+        sector_name
+    )
+    
+    return risk_analysis
+
+
+@app.get("/api/impact/similar-events")
+async def get_similar_events(
+    event_name: str,
+    event_type: str,
+    sector_name: str,
+    limit: int = 10
+):
+    """获取相似的历史事件"""
+    impact_db = get_impact_history_db()
+    similar_events = await asyncio.to_thread(
+        impact_db.find_similar_events,
+        event_name,
+        event_type,
+        sector_name,
+        limit
+    )
+    return {
+        'event_name': event_name,
+        'event_type': event_type,
+        'sector_name': sector_name,
+        'similar_events': similar_events
+    }
+
+
+@app.post("/api/impact/add-record")
+async def add_impact_record(
+    event_name: str,
+    event_type: str,
+    event_date: str,
+    country: str,
+    sector_name: str,
+    impact_direction: str,
+    impact_magnitude: float,
+    market_context: Optional[Dict[str, Any]] = None,
+    sample_quality: int = 1
+):
+    """添加新的影响记录"""
+    impact_db = get_impact_history_db()
+    success = await asyncio.to_thread(
+        impact_db.add_impact_record,
+        event_name,
+        event_type,
+        event_date,
+        country,
+        sector_name,
+        impact_direction,
+        impact_magnitude,
+        market_context,
+        sample_quality
+    )
+    
+    if success:
+        return {"status": "ok", "message": "影响记录添加成功"}
+    else:
+        raise HTTPException(status_code=500, detail="添加影响记录失败")
+
+
+# ============= 个性化和用户偏好 API =============
+@app.post("/api/user/positions/update")
+async def update_user_positions(positions: List[Dict[str, Any]]):
+    """更新用户持仓数据"""
+    position_priority = get_position_priority()
+    await asyncio.to_thread(position_priority.update_positions, positions)
+    return {"status": "ok", "message": "持仓数据更新成功"}
+
+
+@app.get("/api/user/positions/relevance/{news_id}")
+async def get_position_relevance(news_id: str):
+    """获取舆情与持仓的关联性"""
+    # 从数据库获取舆情
+    db = get_sentiment_db()
+    sentiment = await asyncio.to_thread(db.get_news_by_id, news_id)
+    
+    if not sentiment:
+        raise HTTPException(status_code=404, detail="舆情不存在")
+    
+    position_priority = get_position_priority()
+    relevance = await asyncio.to_thread(
+        position_priority.identify_position_relevance,
+        sentiment
+    )
+    
+    return relevance
+
+
+@app.get("/api/user/positions/risk/{news_id}")
+async def get_position_risk(news_id: str):
+    """计算持仓风险"""
+    # 从数据库获取舆情
+    db = get_sentiment_db()
+    sentiment = await asyncio.to_thread(db.get_news_by_id, news_id)
+    
+    if not sentiment:
+        raise HTTPException(status_code=404, detail="舆情不存在")
+    
+    position_priority = get_position_priority()
+    position_relevance = await asyncio.to_thread(
+        position_priority.identify_position_relevance,
+        sentiment
+    )
+    
+    risk_analysis = await asyncio.to_thread(
+        position_priority.calculate_portfolio_risk,
+        sentiment,
+        position_relevance
+    )
+    
+    return risk_analysis
+
+
+@app.post("/api/user/click/record")
+async def record_user_click(
+    sentiment_id: str,
+    click_type: str = "view"
+):
+    """记录用户点击行为"""
+    # 从数据库获取舆情详情
+    db = get_sentiment_db()
+    sentiment = await asyncio.to_thread(db.get_news_by_id, sentiment_id)
+    
+    if sentiment:
+        user_preference = get_user_preference()
+        await asyncio.to_thread(
+            user_preference.record_click,
+            sentiment,
+            click_type
+        )
+    
+    return {"status": "ok"}
+
+
+@app.get("/api/user/preferences")
+async def get_user_preferences():
+    """获取用户偏好数据"""
+    user_preference = get_user_preference()
+    return await asyncio.to_thread(user_preference.get_user_statistics)
+
+
+@app.post("/api/user/preferences/reset")
+async def reset_user_preferences():
+    """重置用户偏好"""
+    user_preference = get_user_preference()
+    await asyncio.to_thread(user_preference.reset_preferences)
+    return {"status": "ok", "message": "用户偏好已重置"}
+
+
+@app.get("/api/user/sentiments/personalized")
+async def get_personalized_sentiments():
+    """获取个性化排序的舆情列表"""
+    user_preference = get_user_preference()
+    position_priority = get_position_priority()
+    
+    # 获取所有舆情
+    db = get_sentiment_db()
+    all_sentiments = await asyncio.to_thread(db.get_all_news, limit=50)
+    
+    if not all_sentiments:
+        return []
+    
+    # 应用持仓优先排序
+    prioritized_sentiments = await asyncio.to_thread(
+        position_priority.prioritize_sentiments,
+        all_sentiments
+    )
+    
+    # 计算个性化评分
+    for sentiment in prioritized_sentiments:
+        personalized_score = await asyncio.to_thread(
+            user_preference.calculate_personalized_score,
+            sentiment
+        )
+        sentiment['personalized_score'] = personalized_score
+    
+    # 按个性化分数再次排序
+    prioritized_sentiments.sort(
+        key=lambda x: x.get('personalized_score', 0),
+        reverse=True
+    )
+    
+    return prioritized_sentiments
+
+
+# ============= 系统测试和验证 API =============
+@app.get("/api/system/validate")
+async def run_system_validation():
+    """运行系统验证测试"""
+    validator = get_system_validator()
+    results = await validator.run_all_tests()
+    return results
+
+
+@app.get("/api/system/health")
+async def system_health_check():
+    """系统健康检查"""
+    
+    health_status = {
+        'status': 'healthy',
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'components': {}
+    }
+    
+    # 检查数据库连接
+    try:
+        from sentiment_db import get_sentiment_db
+        db = get_sentiment_db()
+        db.get_all_news(limit=1)
+        health_status['components']['sentiment_db'] = 'healthy'
+    except Exception as e:
+        health_status['components']['sentiment_db'] = f'unhealthy: {str(e)}'
+        health_status['status'] = 'degraded'
+    
+    # 检查舆情监控
+    try:
+        from sentiment_monitor import get_sentiment_monitor
+        monitor = get_sentiment_monitor()
+        health_status['components']['sentiment_monitor'] = 'healthy'
+    except Exception as e:
+        health_status['components']['sentiment_monitor'] = f'unhealthy: {str(e)}'
+        health_status['status'] = 'degraded'
+    
+    # 检查事件日历
+    try:
+        from event_calendar import get_event_calendar
+        calendar = get_event_calendar()
+        health_status['components']['event_calendar'] = 'healthy'
+    except Exception as e:
+        health_status['components']['event_calendar'] = f'unhealthy: {str(e)}'
+        health_status['status'] = 'degraded'
+    
+    # 如果有任何组件不健康，返回503状态
+    if health_status['status'] == 'degraded':
+        raise HTTPException(status_code=503, detail=health_status)
+    
+    return health_status
+
+
+@app.get("/api/system/statistics")
+async def get_system_statistics():
+    """获取系统统计信息"""
+    
+    try:
+        # 舆情统计
+        from sentiment_db import get_sentiment_db
+        sentiment_db = get_sentiment_db()
+        all_news = sentiment_db.get_all_news(limit=1000)
+        
+        # 事件统计
+        from event_calendar import get_event_calendar_db
+        calendar_db = get_event_calendar_db()
+        all_events = calendar_db.get_all_events(limit=1000)
+        
+        # 关键词统计
+        from user_keywords import get_user_keywords
+        user_keywords = get_user_keywords()
+        keywords = user_keywords.get_all_keywords()
+        
+        return {
+            'sentiment_count': len(all_news),
+            'event_count': len(all_events),
+            'keyword_count': len(keywords),
+            'system_uptime': '统计中...',
+            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+    except Exception as e:
+        logger.error(f"获取系统统计失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取系统统计失败: {str(e)}")
 
 
 # ============= WebSocket =============
