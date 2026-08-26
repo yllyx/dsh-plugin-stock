@@ -94,10 +94,24 @@ class SentimentDB:
                 actual_result TEXT,                       -- 实际结果（事件发生后填充）
                 country TEXT,                            -- 国家 (cn/us)
                 source_url TEXT,                         -- 数据源URL
+                source TEXT DEFAULT 'rule',              -- 来源 (rule规则推算/baidu百度日历真实数据)
+                is_estimated INTEGER DEFAULT 0,          -- 日期是否为推测（规则库不定期事件=1）
+                related_sectors TEXT,                    -- 受影响板块 (JSON: [{sector_name, bk_code, direction}])
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # 兼容迁移：旧库补新列（SQLite 无 IF NOT EXISTS 列语法，忽略已存在异常）
+        for ddl in (
+            "ALTER TABLE event_calendar ADD COLUMN source TEXT DEFAULT 'rule'",
+            "ALTER TABLE event_calendar ADD COLUMN is_estimated INTEGER DEFAULT 0",
+            "ALTER TABLE event_calendar ADD COLUMN related_sectors TEXT",
+        ):
+            try:
+                self.conn.execute(ddl)
+            except Exception:
+                pass  # 列已存在
         
         # 创建事件日历索引
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_event_date ON event_calendar(event_date)")
@@ -205,7 +219,37 @@ class SentimentDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_relation_sentiment_id ON sentiment_sector_relations(sentiment_id)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_relation_sector_code ON sentiment_sector_relations(sector_code)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_relation_relevance ON sentiment_sector_relations(relevance_score)")
-        
+
+        # 预测记录表（进化闭环：预测落库 → 事件后验证）
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                news_id INTEGER,                          -- 关联舆情ID（舆情建议类预测）
+                event_name TEXT,                          -- 事件/舆情标题
+                sector_name TEXT NOT NULL,                -- 板块名（东财真实名）
+                bk_code TEXT,                             -- 东财板块代码
+                direction TEXT NOT NULL,                  -- 预测方向 positive/negative/neutral
+                positive_pct REAL,                       -- 预测正面概率 (0-100)
+                actual_direction TEXT,                    -- 实际方向（回填后）
+                actual_change REAL,                       -- 实际涨跌幅%
+                correct INTEGER,                          -- 方向是否预测正确 (0/1)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                verified_at TIMESTAMP
+            )
+        """)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_news ON predictions(news_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_sector ON predictions(sector_name)")
+
+        # 进化任务运行记录（防重复调度）
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS evolution_state (
+                task TEXT PRIMARY KEY,                    -- backfill/learn/verify/calendar
+                last_run TEXT,                            -- 最近运行日期 YYYY-MM-DD
+                detail TEXT,                              -- 运行结果摘要 (JSON)
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         self.conn.commit()
         logger.info("舆情数据库表结构初始化完成")
     
@@ -388,7 +432,7 @@ class SentimentDB:
         return [dict(row) for row in cursor.fetchall()]
     
     def save_events(self, events: List[Dict[str, Any]]) -> int:
-        """批量保存事件日历（兼容规则源的 name/category 与爬虫源的 event_name/event_type）"""
+        """批量保存事件日历（兼容规则源的 name/category 与百度日历源的 event_name/event_type）"""
         saved_count = 0
         for event in events:
             try:
@@ -396,18 +440,27 @@ class SentimentDB:
                 event_type = event.get('event_type') or event.get('category') or 'general'
                 if not event_name:
                     continue
-                # 去重：同名同日同时已存在则跳过（表无唯一约束，重复生成不重复入库）
+                related = event.get('related_sectors')
+                related_json = json.dumps(related, ensure_ascii=False) if related else None
+                # 去重：同名同日同时已存在则跳过；真实源(source)事件可覆盖同日的推测(is_estimated)事件
                 exists = self.conn.execute(
-                    "SELECT 1 FROM event_calendar WHERE event_name=? AND event_date=? AND IFNULL(event_time,'')=IFNULL(?,'') LIMIT 1",
+                    "SELECT id, is_estimated, source FROM event_calendar WHERE event_name=? AND event_date=? AND IFNULL(event_time,'')=IFNULL(?,'') LIMIT 1",
                     (event_name, event.get('event_date'), event.get('event_time'))
                 ).fetchone()
+                source = event.get('source', 'rule')
                 if exists:
+                    if source != 'rule' and (exists['is_estimated'] or exists['source'] == 'rule'):
+                        self.conn.execute(
+                            "UPDATE event_calendar SET is_estimated=0, source=?, related_sectors=COALESCE(?, related_sectors), importance_score=MAX(importance_score,?) WHERE id=?",
+                            (source, related_json, event.get('importance_score', 0), exists['id'])
+                        )
                     continue
                 self.conn.execute("""
-                    INSERT OR REPLACE INTO event_calendar
+                    INSERT INTO event_calendar
                     (event_name, event_type, event_date, event_time, timezone,
-                     importance_score, description, expected_impact, country, source_url)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     importance_score, description, expected_impact, country, source_url,
+                     source, is_estimated, related_sectors)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     event_name,
                     event_type,
@@ -418,7 +471,10 @@ class SentimentDB:
                     event.get('description'),
                     event.get('expected_impact'),
                     event.get('country', 'cn'),
-                    event.get('source_url')
+                    event.get('source_url'),
+                    source,
+                    1 if event.get('is_estimated') else 0,
+                    related_json,
                 ))
                 saved_count += 1
             except Exception as e:
@@ -536,6 +592,103 @@ class SentimentDB:
         if self.conn:
             self.conn.close()
             logger.info("舆情数据库连接已关闭")
+
+    # ============= 预测落库与回填（进化闭环） =============
+
+    def record_predictions(self, news_id, event_name: str, sector_predictions: List[Dict[str, Any]]) -> int:
+        """
+        批量记录板块方向预测（投资建议/predict 生成时调用）
+
+        sector_predictions: [{sector_name, bk_code, direction, positive_pct}]
+        """
+        count = 0
+        for p in sector_predictions:
+            try:
+                self.conn.execute("""
+                    INSERT INTO predictions (news_id, event_name, sector_name, bk_code, direction, positive_pct)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (news_id, (event_name or '')[:120], p.get('sector_name'), p.get('bk_code'),
+                      p.get('direction', 'neutral'), p.get('positive_pct')))
+                count += 1
+            except Exception as e:
+                logger.debug(f"预测落库失败: {e}")
+        self.conn.commit()
+        return count
+
+    def get_unverified_predictions(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """取未验证的预测（用于回填后验证）"""
+        cursor = self.conn.execute("""
+            SELECT * FROM predictions
+            WHERE correct IS NULL AND actual_direction IS NULL
+            ORDER BY id DESC LIMIT ?
+        """, (limit,))
+        return [dict(r) for r in cursor.fetchall()]
+
+    def verify_prediction(self, prediction_id: int, actual_direction: str, actual_change: float):
+        """回填预测的实际结果并判定正误"""
+        row = self.conn.execute("SELECT direction FROM predictions WHERE id=?", (prediction_id,)).fetchone()
+        if not row:
+            return
+        correct = 1 if actual_direction == row['direction'] else 0
+        self.conn.execute("""
+            UPDATE predictions SET actual_direction=?, actual_change=?, correct=?, verified_at=CURRENT_TIMESTAMP
+            WHERE id=?
+        """, (actual_direction, actual_change, correct, prediction_id))
+        self.conn.commit()
+
+    def get_prediction_stats(self) -> Dict[str, Any]:
+        """预测准确率统计"""
+        row = self.conn.execute("""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN correct=1 THEN 1 ELSE 0 END) as hit,
+                   COUNT(CASE WHEN correct IS NOT NULL THEN 1 END) as verified
+            FROM predictions
+        """).fetchone()
+        total = row['total'] or 0
+        verified = row['verified'] or 0
+        hit = row['hit'] or 0
+        return {
+            'total': total,
+            'verified': verified,
+            'hit': hit,
+            'accuracy': round(hit / verified * 100, 1) if verified else None,
+        }
+
+    def get_events_for_backfill(self, today: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """取已发生但未回填实际结果的事件（回填任务用）"""
+        cursor = self.conn.execute("""
+            SELECT id, event_name, event_type, event_date, event_time, importance_score,
+                   country, related_sectors
+            FROM event_calendar
+            WHERE event_date < ? AND (actual_result IS NULL OR actual_result = '')
+              AND related_sectors IS NOT NULL AND related_sectors != '' AND related_sectors != '[]'
+            ORDER BY event_date DESC, importance_score DESC
+            LIMIT ?
+        """, (today, limit))
+        return [dict(r) for r in cursor.fetchall()]
+
+    def update_event_actual_result(self, event_id: int, actual_result: str):
+        """回填事件实际结果"""
+        self.conn.execute(
+            "UPDATE event_calendar SET actual_result=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (actual_result, event_id)
+        )
+        self.conn.commit()
+
+    # ============= 进化任务状态 =============
+
+    def get_evolution_state(self, task: str) -> Optional[Dict[str, Any]]:
+        row = self.conn.execute("SELECT * FROM evolution_state WHERE task=?", (task,)).fetchone()
+        return dict(row) if row else None
+
+    def set_evolution_state(self, task: str, run_date: str, detail: Optional[Dict[str, Any]] = None):
+        self.conn.execute("""
+            INSERT INTO evolution_state (task, last_run, detail, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(task) DO UPDATE SET last_run=excluded.last_run,
+                detail=excluded.detail, updated_at=CURRENT_TIMESTAMP
+        """, (task, run_date, json.dumps(detail or {}, ensure_ascii=False)))
+        self.conn.commit()
 
 
 # 全局实例

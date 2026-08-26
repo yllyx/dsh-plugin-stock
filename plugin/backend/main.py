@@ -159,13 +159,17 @@ async def lifespan(app: FastAPI):
     sentiment_monitor = get_sentiment_monitor()
     sentiment_monitor.start(interval=300)  # 5分钟监控一次
 
+    # 启动自动进化循环（每日盘后：事件回填/关键词学习/预测验证/日历刷新）
+    from evolution_loop import evolution_loop
+    evolution_task = asyncio.create_task(evolution_loop())
+
     yield
 
     logger.info("DSH 股票后端关闭...")
     broadcaster.running = False
     market_pool.stop()
     sentiment_monitor.stop()  # 停止舆情监控
-    for task in (keepalive_task, alert_task, sentiment_task):
+    for task in (keepalive_task, alert_task, sentiment_task, evolution_task):
         task.cancel()
     alert_engine.save()
     position_manager.save()
@@ -939,70 +943,92 @@ async def generate_investment_advice(
     news_id: str,
     include_stocks: bool = True
 ):
-    """基于舆情生成投资建议"""
-    # 从数据库获取舆情
+    """基于舆情生成投资建议（真实板块实时数据 + 龙头 + 动态文案 + 预测落库）"""
     db = get_sentiment_db()
-    sentiment = await asyncio.to_thread(db.get_news_by_id, news_id)
-    
-    if not sentiment:
+    news = await asyncio.to_thread(db.get_news_by_id, news_id)
+
+    if not news:
         raise HTTPException(status_code=404, detail="舆情不存在")
-    
-    news = sentiment
-    
-    # 获取板块映射
+
     sector_mapper = get_sector_mapper()
-    related_sectors = news.get('related_sectors', [])
-    
+
+    # 1. 板块识别（DB已有则复用，否则实时识别）
+    related_sectors = news.get('related_sectors') or []
     if not related_sectors:
         related_sectors = sector_mapper.identify_sectors_from_sentiment(news)
-    
-    # 获取相关个股
+
+    # 2. 板块→东财实时数据enrich（涨跌/动量/阶段/龙头），最多前3个板块控制耗时
+    enriched_sectors = await asyncio.to_thread(
+        lambda: [sector_mapper.enrich_sector_with_realtime(s) for s in related_sectors[:3]]
+    )
+
+    # 3. 个股：直接匹配（标题+内容，兼容code/stock_code键名）
     related_stocks = []
     if include_stocks:
         stock_matcher = get_stock_matcher()
-        
-        # 从舆情中已关联的股票（如果有）
-        if 'related_stocks' in news and news['related_stocks']:
+        if news.get('related_stocks'):
             related_stocks = news['related_stocks']
         else:
-            # 从标题和内容匹配股票
-            title_stocks = stock_matcher.match_stocks_in_text(news.get('title', ''))
-            content_stocks = stock_matcher.match_stocks_in_text(news.get('content', ''))
-            
-            # 合并去重
-            all_stocks = {}
-            for stock in title_stocks + content_stocks:
-                stock_code = stock.get('stock_code')
-                if stock_code and stock_code not in all_stocks:
-                    all_stocks[stock_code] = stock
-            related_stocks = list(all_stocks.values())
-            
-            # 如果直接匹配的股票较少，从板块提取龙头股
-            if len(related_stocks) < 3 and related_sectors:
-                for sector_info in related_sectors[:2]:  # 最多从2个板块提取
-                    sector_stocks = sector_mapper.extract_related_stocks(
-                        sector_info['sector_name'], max_count=3, leaders_only=True
-                    )
-                    # 避免重复
-                    for stock in sector_stocks:
-                        if not any(s.get('code') == stock.get('code') for s in related_stocks):
-                            related_stocks.append(stock)
-    
-    # 获取投资建议
+            seen = set()
+            for text in (news.get('title', ''), (news.get('content') or '')[:500]):
+                for stock in stock_matcher.match_stocks_in_text(text):
+                    code = stock.get('code') or stock.get('stock_code')
+                    if code and code not in seen:
+                        seen.add(code)
+                        related_stocks.append(stock)
+
+    # 4. 生成投资建议（动态文案）
     investment_advisor = get_investment_advisor()
     advice = await asyncio.to_thread(
         investment_advisor.generate_investment_tip,
         news,
         related_stocks,
-        []  # 暂时不包含影响预测
+        enriched_sectors,
     )
-    
+
+    # 5. 预测落库（进化闭环：2天后自动验证方向正误）
+    sector_predictions = []
+    for sec in enriched_sectors:
+        for rb in sec.get('real_boards', []):
+            sector_predictions.append({
+                'sector_name': rb['name'],
+                'bk_code': rb['bk_code'],
+                'direction': sec.get('impact', 'neutral'),
+                'positive_pct': None,
+            })
+    if sector_predictions:
+        await asyncio.to_thread(
+            db.record_predictions, news.get('id'), news.get('title', ''), sector_predictions
+        )
+
+    # 响应：板块用enriched（含实时数据），个股含直接匹配+龙头
     return {
         'sentiment': news,
-        'related_sectors': related_sectors,
-        'related_stocks': related_stocks,
+        'related_sectors': enriched_sectors,
+        'related_stocks': related_stocks + [
+            {'code': s['code'], 'name': s['name']} for s in advice.get('recommended_stocks', [])
+            if s.get('is_leader') and not any(x.get('code') == s['code'] for x in related_stocks)
+        ],
         'investment_advice': advice
     }
+
+
+# ============= 自动进化 API =============
+@app.post("/api/evolution/run")
+async def run_evolution_task(task: str = Query(..., description="backfill/learn/verify/calendar"), force: bool = False):
+    """手动触发进化任务（测试或立即进化用）"""
+    from evolution_loop import run_task
+    result = await asyncio.to_thread(run_task, task, force)
+    if 'error' in result:
+        raise HTTPException(status_code=400, detail=result['error'])
+    return result
+
+
+@app.get("/api/evolution/status")
+async def get_evolution_status_api():
+    """进化系统状态（最近回填/学习时间、样本数、预测准确率）"""
+    from evolution_loop import get_evolution_status
+    return await asyncio.to_thread(get_evolution_status)
 
 
 # ============= 历史影响预测 API =============

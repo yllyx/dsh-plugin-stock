@@ -142,6 +142,44 @@ class SectorMonitor:
         self._leaders_cache[bk_code] = {"data": result, "time": time.time()}
         return result
 
+    # ---------- 板块实时概览（供舆情投资建议复用） ----------
+
+    def get_board_realtime(self, bk_code: str, name: str = "", top_n: int = 3) -> Dict[str, Any]:
+        """
+        单个板块的实时概览：当日涨跌 / 5日动量 / 阶段 / 龙头前三。
+        复用排行与K线缓存，未命中时才请求东财。
+        """
+        board = {"bk_code": bk_code, "name": name, "change_pct": None, "price": None, "amount": 0}
+        cached = self._rank_cache.get("industry")
+        if cached:
+            for b in cached["data"]:
+                if b.get("bk_code") == bk_code:
+                    board = {**board, **{k: b.get(k) for k in ("change_pct", "price", "amount")}}
+                    break
+        if board["change_pct"] is None:
+            boards = eastmoney.get_board_rank("industry") or []
+            for b in boards:
+                if b.get("bk_code") == bk_code:
+                    board = {**board, **{k: b.get(k) for k in ("change_pct", "price", "amount")}}
+                    break
+
+        today = time.strftime("%Y-%m-%d")
+        try:
+            momentum, stage, stage_detail = self._classify(board, today)
+        except Exception:
+            momentum, stage, stage_detail = None, "未知", ""
+
+        leaders = self.get_leaders(bk_code, name, top_n=top_n).get("leaders", [])
+        return {
+            "bk_code": bk_code,
+            "name": name,
+            "change_pct": board["change_pct"],
+            "momentum_5d": momentum,
+            "stage": stage,
+            "stage_detail": stage_detail,
+            "leaders": leaders,
+        }
+
     # ---------- 内部：板块K线与阶段 ----------
 
     def _board_kline(self, bk_code: str) -> Optional[List[Dict[str, Any]]]:

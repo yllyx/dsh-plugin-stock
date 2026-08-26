@@ -16,6 +16,74 @@ import pytz
 from loguru import logger
 
 
+# ==================== 事件 → 受影响板块映射 ====================
+# 板块名经 sector_mapper.SECTOR_BRIDGE 桥接到东财真实BK代码；
+# 方向一律 neutral（事前不可知），进化闭环回填历史实际涨跌后自动学习方向。
+EVENT_SECTOR_MAP: Dict[str, List[str]] = {
+    # 美国事件
+    'us_fomc': ['黄金', '券商', '银行', '地产'],
+    'us_nonfarm': ['周期', '消费', '机械'],
+    'us_cpi': ['黄金', '消费', '银行'],
+    'us_pce': ['黄金', '消费'],
+    'us_gdp': ['消费', '周期', '交运'],
+    'us_adp': ['周期', '消费'],
+    'us_initial_jobless': ['周期', '消费'],
+    'us_retail_sales': ['消费', '交运'],
+    'us_earnings_season': ['科技', '消费'],
+    # 中国事件
+    'cn_cpi': ['消费', '银行'],
+    'cn_pmi': ['机械', '周期'],
+    'cn_mlf': ['银行', '地产', '券商'],
+    'cn_social_financing': ['银行', '地产', '基建'],
+    'cn_industrial_profit': ['机械', '周期'],
+    'cn_fixed_asset': ['基建', '机械', '地产'],
+    'cn_politburo': ['券商', '地产', '基建'],
+    'cn_state_council': ['券商', '地产'],
+    'cn_two_sessions': ['基建', '军工', '科技'],
+    'cn_earnings_season': ['券商'],
+    # 大宗/指数
+    'oil_output': ['周期', '交运'],
+    'blacklist_friday': ['金融'],
+}
+
+# 标题关键词 → 事件ID（供百度日历等真实源事件映射板块）
+TITLE_KEYWORD_PATTERNS: List[Tuple[str, str]] = [
+    ('FOMC', 'us_fomc'), ('利率决议', 'us_fomc'), ('议息', 'us_fomc'),
+    ('非农', 'us_nonfarm'), ('Non-Farm', 'us_nonfarm'),
+    ('CPI', 'us_cpi'), ('消费者物价', 'us_cpi'),
+    ('PCE', 'us_pce'), ('个人消费支出', 'us_pce'),
+    ('GDP', 'us_gdp'), ('国内生产总值', 'us_gdp'),
+    ('初请', 'us_initial_jobless'), ('失业金', 'us_initial_jobless'),
+    ('ADP', 'us_adp'), ('零售销售', 'us_retail_sales'),
+    ('PMI', 'cn_pmi'), ('采购经理', 'cn_pmi'),
+    ('社融', 'cn_social_financing'), ('社会融资', 'cn_social_financing'),
+    ('MLF', 'cn_mlf'), ('LPR', 'cn_mlf'), ('降准', 'cn_mlf'),
+    ('工业企业利润', 'cn_industrial_profit'),
+    ('固定资产投资', 'cn_fixed_asset'),
+    ('政治局', 'cn_politburo'), ('国常会', 'cn_state_council'), ('国务院常务', 'cn_state_council'),
+    ('两会', 'cn_two_sessions'), ('OPEC', 'oil_output'), ('原油', 'oil_output'),
+    ('财报', 'cn_earnings_season'), ('业绩', 'cn_earnings_season'),
+]
+
+# 日期为推测的不定期事件（官方不提前公布固定日期；真实日期以百度日历等源为准）
+ESTIMATED_EVENTS = {
+    'cn_politburo', 'cn_state_council', 'cn_two_sessions',
+    'blacklist_friday', 'oil_output',
+    'us_earnings_season', 'cn_earnings_season',
+}
+
+
+def map_title_to_sectors(title: str) -> List[str]:
+    """根据事件标题关键词推断受影响板块名（供百度日历等真实源事件用）"""
+    matched = []
+    for pattern, event_id in TITLE_KEYWORD_PATTERNS:
+        if pattern.lower() in (title or '').lower():
+            for sec in EVENT_SECTOR_MAP.get(event_id, []):
+                if sec not in matched:
+                    matched.append(sec)
+    return matched[:5]
+
+
 class EventRules:
     """事件发布时间规则库"""
     
@@ -349,12 +417,16 @@ class EventRules:
         }
     
     def _get_fomc_dates(self, year: int) -> List[str]:
-        """获取FOMC会议日期"""
-        # 2026年预计会议日期（基于历史规律）
+        """获取FOMC会议日期（利率决议=会议第二天14:00 ET公布）
+
+        官方日历: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+        美联储提前一年以上公布，2026年8次会议日期为官方确认数据（2024-08-09公告）。
+        未公布的年份返回空列表（不编造），由百度日历等真实源覆盖。
+        """
         fomc_dates = {
             2026: ["2026-01-28", "2026-03-18", "2026-04-29",
-                   "2026-06-16", "2026-07-27", "2026-09-21",
-                   "2026-11-03", "2026-12-14"]
+                   "2026-06-17", "2026-07-29", "2026-09-16",
+                   "2026-10-28", "2026-12-09"],
         }
         return fomc_dates.get(year, [])
     
@@ -558,6 +630,11 @@ class EventRules:
                 'original_time': time_str,
                 'keywords': rule.get('keywords', []),
                 'source': 'rule',  # 标记来源
+                'is_estimated': event_id in ESTIMATED_EVENTS,  # 不定期事件的日期是推测
+                'related_sectors': [
+                    {'sector_name': s, 'direction': 'neutral'}
+                    for s in EVENT_SECTOR_MAP.get(event_id, [])
+                ],
                 'country': rule.get('country', 'cn'),
                 'cn_time': cn_datetime.isoformat(),
                 'days_until': (cn_datetime.date() - datetime.now(self.cn_tz).date()).days,

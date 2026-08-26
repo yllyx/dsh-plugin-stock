@@ -109,6 +109,7 @@ git push origin main --tags
 | 0.3.3 | AI 工具 render 返回 content block 数组（修 content.some 报错）、持仓 6 类预警独立开关、止盈止损模式 tooltip、K线红涨绿跌 |
 | 0.3.4 | **健康检查误杀修复**（status() 去锁 + DataFrame 构建移出锁 + 窗口 15s→30s）、前端删除 backendOk 门禁（后端启动不阻塞页面） |
 | 0.4.0 | **🌐 舆情联动监控系统**：三源抓取（东财7×24快讯/新浪滚动/美联储RSS）、智能过滤+用户/AI关键词、舆情-板块-个股关联+投资建议弹窗、事件日历（规则库+时区换算）、历史影响预测、个性化推送；新增第 8 Tab、19 个后端模块、40+ API |
+| 0.4.1 | **投资建议具体化+自动进化闭环+真实日历**：建议接入东财实时板块/龙头（SECTOR_BRIDGE桥接+148词库）、百度股市通真实日历（前值/预期/公布值，替换mock）、FOMC官方日期修正（原编造8错5）、事件→板块映射、进化循环（回填/学习/验证/日历，每日盘后自动） |
 
 ## 关键经验（踩过的坑，勿再犯）
 
@@ -129,3 +130,7 @@ git push origin main --tags
 15. **SQLite 长生命周期连接必须 `check_same_thread=False`**——FastAPI 端点用 `asyncio.to_thread` 在工作线程调 DB 时，主线程创建的连接会抛 `SQLite objects created in a thread...`（影响过 keyword_learner/impact_analyzer/event_impact_analyzer）
 16. **东财公告接口 `np-anotice-stock` 已失效**（返回 200+0 字节空 body）；舆情用 `np-listapi.eastmoney.com/comm/web/getFastNewsList`（7×24 快讯，实测稳定）；新浪滚动用 `feed.mix.sina.com.cn/api/roll/get`；美联储 RSS 用标准库 `xml.etree` 解析即可
 17. **规则型事件日历防重复**：`day_range` 是发布窗口不是"每天都发生"，须优先取 `day_of_month`（每月一次）；`with sqlite3.connect` 短连接线程安全，`self.conn` 长连接才需要跨线程配置
+18. **东财 clist 按当日涨幅降序返回**：取全量板块列表时 max_count 必须≥总数（桥接用500），否则当日跌幅靠后的板块被截掉（科技板块曾因此匹配失败）
+19. **百度股市通日历** `finance.pae.baidu.com/sapi/v1/financecalendar` 免费可用（无需Cookie，AKShare同款）：支持任意日期范围含历史（进化回填冷启动拉过去14天）；星级区分度差（非农仅2星）需标题关键词加权校准
+20. **数据真实性原则**：规则库的FOMC日期曾是编造的（8错5）；不定期会议（政治局/国常会/OPEC）日期官方不提前公布——一律标 `is_estimated`"预计"，真实源（百度）优先覆盖；宁可空数据不编数据
+21. **AI给的接口字段要先实测**：正则/字段名要以真实响应为准（百度日历结构、KeywordSuggestion是dataclass非dict，都踩过）

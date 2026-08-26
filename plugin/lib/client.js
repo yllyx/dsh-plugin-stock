@@ -875,18 +875,22 @@ window.__ModuleLoader__.load({
             const [newKeyword, setNewKeyword] = useState("");
             const [newCategory, setNewCategory] = useState("自定义");
             const [newImportance, setNewImportance] = useState(70);
+            const [evoStats, setEvoStats] = useState(null);
 
             const loadKeywords = useCallback(async () => {
                 setLoading(true);
                 try { setKeywords(await api("/api/sentiment/keywords")); } catch (e) { console.error(e); }
                 setLoading(false);
             }, []);
+            const loadEvoStats = useCallback(async () => {
+                try { setEvoStats(await api("/api/evolution/status")); } catch (e) { /* 静默 */ }
+            }, []);
             const loadSuggestions = useCallback(async () => {
                 setSugLoading(true);
                 try { setSuggestions(await api("/api/sentiment/keywords/suggestions?days=30")); } catch (e) { console.error(e); }
                 setSugLoading(false);
             }, []);
-            useEffect(() => { loadKeywords(); }, [loadKeywords]);
+            useEffect(() => { loadKeywords(); loadEvoStats(); }, [loadKeywords, loadEvoStats]);
 
             const handleAdd = async () => {
                 if (!newKeyword.trim()) return;
@@ -922,6 +926,26 @@ window.__ModuleLoader__.load({
             const confidenceBadge = (c) => c === "high" ? "🟢 高" : c === "medium" ? "🟡 中" : "⚪ 低";
 
             return React.createElement("div", { className: "dsh-stock-kw-panel" },
+                evoStats && React.createElement("div", { className: "dsh-stock-evo-bar" },
+                    React.createElement("span", { className: "dsh-stock-evo-item" }, "🧬 自动进化"),
+                    React.createElement("span", { className: "dsh-stock-evo-item" }, `历史样本 ${evoStats.impact_samples ?? 0}`),
+                    React.createElement("span", { className: "dsh-stock-evo-item" },
+                        `预测准确率 ${evoStats.prediction_stats && evoStats.prediction_stats.accuracy != null ? evoStats.prediction_stats.accuracy + "%" : "待积累"}`),
+                    evoStats.learn && evoStats.learn.auto_accepted && evoStats.learn.auto_accepted.length > 0 &&
+                        React.createElement("span", { className: "dsh-stock-evo-item" },
+                            `已学词 ${evoStats.learn.auto_accepted.length}: ${evoStats.learn.auto_accepted.slice(0, 3).join("、")}`),
+                    React.createElement("button", {
+                        className: "dsh-stock-evo-run",
+                        title: "立即执行：拉取百度真实日历 + 事件回填 + 关键词学习",
+                        onClick: async () => {
+                            try {
+                                await api("/api/evolution/run?task=calendar", { method: "POST" });
+                                await api("/api/evolution/run?task=learn", { method: "POST" });
+                                loadEvoStats(); loadKeywords();
+                                if (onDone) onDone();
+                            } catch (e) { alert("执行失败: " + e.message); }
+                        },
+                    }, "⚡ 立即进化")),
                 React.createElement("div", { className: "dsh-stock-kw-tabs" },
                     React.createElement("button", { className: activeTab === "list" ? "active" : "", onClick: () => setActiveTab("list") }, `我的关键词 (${keywords.length})`),
                     React.createElement("button", { className: activeTab === "sug" ? "active" : "", onClick: () => { setActiveTab("sug"); loadSuggestions(); } }, "🤖 AI推荐")),
@@ -960,7 +984,7 @@ window.__ModuleLoader__.load({
         }
 
         // --- 投资建议弹窗（独立组件） ---
-        function AdviceModal({ newsId, onClose }) {
+        function AdviceModal({ newsId, onClose, openStock }) {
             const [loading, setLoading] = useState(true);
             const [advice, setAdvice] = useState(null);
             const [err, setErr] = useState(null);
@@ -968,7 +992,7 @@ window.__ModuleLoader__.load({
             useEffect(() => {
                 const run = async () => {
                     try {
-                        const data = await api(`/api/sentiment/investment-advice?news_id=${encodeURIComponent(newsId)}&include_stocks=true`, { method: "POST" });
+                        const data = await api("/api/sentiment/investment-advice?news_id=" + encodeURIComponent(newsId) + "&include_stocks=true", { method: "POST" });
                         setAdvice(data);
                     } catch (e) { setErr(e.message); }
                     setLoading(false);
@@ -979,62 +1003,119 @@ window.__ModuleLoader__.load({
             const dirText = (d) => d === "positive" ? "📈 利好" : d === "negative" ? "📉 利空" : "📊 中性";
             const stockName = (s) => s.stock_name || s.name || "";
             const stockCode = (s) => s.stock_code || s.code || "";
+            const pctText = (p) => p == null ? "" : (p >= 0 ? "+" : "") + Number(p).toFixed(1) + "%";
+            const pctCls = (p) => p >= 0 ? "up" : "down";
+
+            const head = React.createElement("div", { className: "dsh-stock-adv-head" },
+                React.createElement("span", null, "💡 投资建议分析"),
+                React.createElement("button", { className: "dsh-stock-adv-close", onClick: onClose }, "✕"));
+
+            if (loading || err) {
+                return React.createElement("div", { className: "dsh-stock-adv-overlay", onClick: onClose },
+                    React.createElement("div", { className: "dsh-stock-adv-content", onClick: (e) => e.stopPropagation() },
+                        head,
+                        loading && React.createElement("div", { className: "dsh-stock-loading" }, "分析舆情关联中..."),
+                        err && React.createElement("div", { className: "dsh-stock-error" }, "分析失败: " + err)));
+            }
+            if (!advice) return null;
+
+            const s = advice.sentiment || {};
+            const adv = advice.investment_advice || {};
+            const impact = adv.impact_analysis || {};
+            const confText = impact.confidence === "high" ? "高" : impact.confidence === "low" ? "低" : "中";
+            const dirText2 = (d) => d === "positive" ? "📈 整体利好" : d === "negative" ? "📉 整体利空" : "📊 影响中性";
+
+            // 板块（含实时数据）
+            const sectorNodes = [];
+            (advice.related_sectors || []).forEach((sec, si) => {
+                const boards = sec.real_boards && sec.real_boards.length > 0 ? sec.real_boards : [{ name: sec.sector_name }];
+                boards.forEach((rb, bi) => {
+                    const kids = [];
+                    kids.push(React.createElement("span", { key: "n", className: "dsh-stock-advice-sector-name" }, rb.name || sec.sector_name));
+                    kids.push(React.createElement("span", { key: "d", className: "dsh-stock-advice-sector-dir" }, dirText(sec.impact)));
+                    if (rb.change_pct != null) {
+                        kids.push(React.createElement("span", { key: "c", className: "dsh-stock-adv-pct " + pctCls(rb.change_pct) }, "今日" + pctText(rb.change_pct)));
+                    }
+                    if (rb.momentum_5d != null) {
+                        kids.push(React.createElement("span", { key: "m", className: "dsh-stock-adv-mom" }, "5日" + pctText(rb.momentum_5d)));
+                    }
+                    if (rb.stage && rb.stage !== "未知") {
+                        kids.push(React.createElement("span", { key: "s", className: "dsh-stock-adv-stage" }, rb.stage));
+                    }
+                    if (sec.reasoning) {
+                        kids.push(React.createElement("div", { key: "r", className: "dsh-stock-advice-sector-reason" }, sec.reasoning));
+                    }
+                    sectorNodes.push(React.createElement("div", { key: si + "-" + bi, className: "dsh-stock-advice-sector " + (sec.impact || "") }, kids));
+                });
+            });
+
+            // 推荐龙头
+            const leaderNodes = (adv.recommended_stocks || []).map((ls, i) => {
+                const kids = [];
+                kids.push(React.createElement("span", { key: "n", className: "dsh-stock-adv-leader-name" }, ls.name));
+                kids.push(React.createElement("span", { key: "c", className: "dsh-stock-adv-leader-code" }, ls.code));
+                if (ls.change_pct != null) {
+                    kids.push(React.createElement("span", { key: "p", className: "dsh-stock-adv-leader-pct " + pctCls(ls.change_pct) }, pctText(ls.change_pct)));
+                }
+                if (ls.is_leader) {
+                    kids.push(React.createElement("span", { key: "t", className: "dsh-stock-adv-leader-tag" }, "龙头"));
+                }
+                (ls.reasons || []).filter((r) => r.indexOf("今日") !== 0).slice(0, 2).forEach((r, ri) => {
+                    kids.push(React.createElement("span", { key: "r" + ri, className: "dsh-stock-adv-leader-reason" }, r));
+                });
+                return React.createElement("div", {
+                    key: i,
+                    className: "dsh-stock-adv-leader",
+                    onClick: () => openStock && openStock({ code: ls.code, name: ls.name }),
+                }, kids);
+            });
+
+            // 舆情提及个股
+            const mentionNodes = (advice.related_stocks || []).slice(0, 6).map((ms, i) =>
+                React.createElement("span", {
+                    key: i,
+                    className: "dsh-stock-stock-tag",
+                    onClick: () => openStock && openStock({ code: stockCode(ms), name: stockName(ms) }),
+                }, stockName(ms) + " (" + stockCode(ms) + ")"));
+
+            // 影响分析与操作建议
+            const tipNodes = [];
+            tipNodes.push(React.createElement("div", { key: "imp", className: "dsh-stock-advice-tip" },
+                React.createElement("div", { className: "dsh-stock-advice-tip-text" },
+                    dirText2(impact.overall_impact) + "（置信度: " + confText + "）" + (impact.description ? " — " + impact.description : ""))));
+            if (adv.operation_advice) {
+                tipNodes.push(React.createElement("div", { key: "op", className: "dsh-stock-advice-tip" },
+                    React.createElement("div", { className: "dsh-stock-advice-tip-stock" }, "📝 操作建议"),
+                    React.createElement("div", { className: "dsh-stock-advice-tip-text" }, adv.operation_advice)));
+            }
+            (adv.risk_warnings || []).forEach((w, i) => {
+                tipNodes.push(React.createElement("div", { key: "rk" + i, className: "dsh-stock-advice-tip-text" }, "⚠️ " + w));
+            });
+
+            const body = React.createElement("div", { className: "dsh-stock-adv-body" },
+                React.createElement("div", { className: "dsh-stock-advice-sec" },
+                    React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "📰 舆情"),
+                    React.createElement("div", { className: "dsh-stock-advice-news-title" }, s.title || ""),
+                    React.createElement("div", { className: "dsh-stock-advice-news-meta" },
+                        newsImportanceStars(s.importance_score) + " " + Math.round(s.importance_score || 0) + "分 · " +
+                        newsSentimentIcon(s.sentiment_tag) + " " + dirText(s.sentiment_tag))),
+                sectorNodes.length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                    React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "🧩 相关板块（实时）"),
+                    sectorNodes),
+                leaderNodes.length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                    React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "🎯 推荐龙头（点击看K线）"),
+                    leaderNodes),
+                mentionNodes.length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
+                    React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "📈 舆情提及个股"),
+                    mentionNodes),
+                React.createElement("div", { className: "dsh-stock-advice-sec" },
+                    React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "💡 影响分析与操作建议"),
+                    tipNodes));
 
             return React.createElement("div", { className: "dsh-stock-adv-overlay", onClick: onClose },
-                React.createElement("div", { className: "dsh-stock-adv-content", onClick: e => e.stopPropagation() },
-                    React.createElement("div", { className: "dsh-stock-adv-head" },
-                        React.createElement("span", null, "💡 投资建议分析"),
-                        React.createElement("button", { className: "dsh-stock-adv-close", onClick: onClose }, "✕")),
-                    loading && React.createElement("div", { className: "dsh-stock-loading" }, "分析舆情关联中..."),
-                    err && React.createElement("div", { className: "dsh-stock-error" }, `分析失败: ${err}`),
-                    !loading && advice && React.createElement("div", { className: "dsh-stock-adv-body" },
-
-                        advice.sentiment && React.createElement("div", { className: "dsh-stock-advice-sec" },
-                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "📰 舆情"),
-                            React.createElement("div", { className: "dsh-stock-advice-news-title" }, advice.sentiment.title),
-                            React.createElement("div", { className: "dsh-stock-advice-news-meta" },
-                                `${newsImportanceStars(advice.sentiment.importance_score)} ${Math.round(advice.sentiment.importance_score || 0)}分 · ${newsSentimentIcon(advice.sentiment.sentiment_tag)} ${dirText(advice.sentiment.sentiment_tag)}`)),
-
-                        (advice.related_sectors || []).length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
-                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "🧩 相关板块"),
-                            advice.related_sectors.map((sec, i) => React.createElement("div", { key: i, className: `dsh-stock-advice-sector ${sec.impact || ""}` },
-                                React.createElement("span", { className: "dsh-stock-advice-sector-name" }, sec.sector_name),
-                                React.createElement("span", { className: "dsh-stock-advice-sector-dir" }, dirText(sec.impact)),
-                                React.createElement("span", { className: "dsh-stock-advice-sector-rel" }, `相关度 ${Math.round((sec.relevance || 0) * 100)}%`),
-                                sec.reasoning && React.createElement("div", { className: "dsh-stock-advice-sector-reason" }, sec.reasoning)))),
-
-                        (advice.related_stocks || []).length > 0 && React.createElement("div", { className: "dsh-stock-advice-sec" },
-                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "📈 相关个股"),
-                            advice.related_stocks.slice(0, 8).map((s, i) => React.createElement("span", { key: i, className: "dsh-stock-stock-tag" },
-                                `${stockName(s)} (${stockCode(s)})`))),
-
-                        advice.investment_advice && React.createElement("div", { className: "dsh-stock-advice-sec" },
-                            React.createElement("div", { className: "dsh-stock-advice-sec-title" }, "💡 影响分析与操作建议"),
-                            (() => {
-                                const adv = advice.investment_advice;
-                                const impact = adv.impact_analysis || {};
-                                const dirText2 = (d) => d === "positive" ? "📈 整体利好" : d === "negative" ? "📉 整体利空" : "📊 影响中性";
-                                const nodes = [];
-                                nodes.push(React.createElement("div", { key: "impact", className: "dsh-stock-advice-tip" },
-                                    React.createElement("div", { className: "dsh-stock-advice-tip-text" },
-                                        `${dirText2(impact.overall_impact)}（置信度: ${impact.confidence === "high" ? "高" : impact.confidence === "low" ? "低" : "中"}）`,
-                                        impact.description ? ` — ${impact.description}` : "")));
-                                if (adv.operation_advice) {
-                                    nodes.push(React.createElement("div", { key: "op", className: "dsh-stock-advice-tip" },
-                                        React.createElement("div", { className: "dsh-stock-advice-tip-stock" }, "📝 操作建议"),
-                                        React.createElement("div", { className: "dsh-stock-advice-tip-text" }, adv.operation_advice)));
-                                }
-                                if ((adv.recommended_stocks || []).length > 0) {
-                                    nodes.push(React.createElement("div", { key: "rec", className: "dsh-stock-advice-tip" },
-                                        React.createElement("div", { className: "dsh-stock-advice-tip-stock" }, "🎯 推荐关注"),
-                                        React.createElement("div", { className: "dsh-stock-advice-tip-text" },
-                                            adv.recommended_stocks.map((s, i) => `${stockName(s)} (${stockCode(s)})`).join("、"))));
-                                }
-                                (adv.risk_warnings || []).forEach((w, i) => {
-                                    nodes.push(React.createElement("div", { key: "risk" + i, className: "dsh-stock-advice-tip-text" }, `⚠️ ${w}`));
-                                });
-                                return nodes;
-                            })()))));
+                React.createElement("div", { className: "dsh-stock-adv-content", onClick: (e) => e.stopPropagation() },
+                    head,
+                    body));
         }
 
         // --- 舆情主Tab ---
@@ -1081,8 +1162,13 @@ window.__ModuleLoader__.load({
 
             const generateCalendar = async () => {
                 setCalLoading(true);
-                try { await api("/api/calendar/generate?months=3", { method: "POST" }); await loadCalendar(); }
-                catch (e) { alert("生成日历失败: " + e.message); setCalLoading(false); }
+                try {
+                    // 优先拉取百度真实日历（含预期/前值），再补规则库长期事件
+                    await api("/api/calendar/fetch?days=30", { method: "POST" });
+                    await api("/api/calendar/generate?months=3", { method: "POST" });
+                    await loadCalendar();
+                }
+                catch (e) { alert("拉取日历失败: " + e.message); setCalLoading(false); }
             };
 
             // WebSocket 实时舆情推送
@@ -1111,7 +1197,15 @@ window.__ModuleLoader__.load({
             const renderNewsItem = (news, idx) => {
                 const sectors = parseMaybeJson(news.related_sectors) || [];
                 const stocks = parseMaybeJson(news.related_stocks) || [];
-                return React.createElement("div", { key: news.id || idx, className: `dsh-stock-news-item ${news.sentiment_tag || ""}` },
+                // 点击埋点：用户偏好学习（后台静默，不打扰）
+                const reportClick = () => {
+                    api(`/api/user/click/record?sentiment_id=${encodeURIComponent(String(news.id))}&click_type=view`, { method: "POST" }).catch(() => {});
+                };
+                return React.createElement("div", {
+                    key: news.id || idx,
+                    className: `dsh-stock-news-item ${news.sentiment_tag || ""}`,
+                    onClick: reportClick,
+                },
                     React.createElement("div", { className: "dsh-stock-news-item-head" },
                         React.createElement("span", { className: "dsh-stock-news-item-src" },
                             `${newsSentimentIcon(news.sentiment_tag)} ${newsSourceName(news.source)}${news.country === "us" ? " 🇺🇸" : " 🇨🇳"}`),
@@ -1145,16 +1239,25 @@ window.__ModuleLoader__.load({
             const renderCalendarDay = (group) => {
                 const isToday = group.date === todayStr;
                 const diffDays = Math.round((new Date(group.date + "T00:00:00") - new Date(todayStr + "T00:00:00")) / 86400000);
+                const flagOf = (c) => c === "us" ? "🇺🇸" : c === "cn" ? "🇨🇳" : c === "eu" ? "🇪🇺" : c === "jp" ? "🇯🇵" : "🌍";
                 return React.createElement("div", { key: group.date, className: `dsh-stock-cal-day ${isToday ? "today" : ""}` },
                     React.createElement("div", { className: "dsh-stock-cal-date" },
                         `${formatEventDate(group.date)}`,
                         diffDays >= 0 && diffDays <= 3 && diffDays > 0 && React.createElement("span", { className: "dsh-stock-cal-urgent" }, ` ⚡${diffDays}天后`)),
                     React.createElement("div", { className: "dsh-stock-cal-events" },
-                        group.events.map((ev, i) => React.createElement("div", { key: i, className: "dsh-stock-cal-event" },
-                            React.createElement("span", { className: "dsh-stock-cal-event-imp" }, newsImportanceStars(ev.importance_score || ev.importance || 60)),
-                            React.createElement("span", { className: "dsh-stock-cal-event-name" },
-                                `${ev.event_time && ev.event_time !== "00:00" ? ev.event_time + " " : ""}${ev.event_name || ev.name}`),
-                            React.createElement("span", { className: "dsh-stock-cal-event-country" }, ev.country === "us" ? "🇺🇸" : "🇨🇳")))));
+                        group.events.map((ev, i) => {
+                            const evSectors = parseMaybeJson(ev.related_sectors) || [];
+                            return React.createElement("div", { key: i, className: "dsh-stock-cal-event" },
+                                React.createElement("span", { className: "dsh-stock-cal-event-imp" }, newsImportanceStars(ev.importance_score || ev.importance || 60)),
+                                React.createElement("span", { className: "dsh-stock-cal-event-name" },
+                                    `${ev.event_time && ev.event_time !== "00:00" ? ev.event_time + " " : ""}${ev.event_name || ev.name}`,
+                                    ev.is_estimated == 1 && React.createElement("span", { className: "dsh-stock-cal-est", title: "规则推算日期，真实日期以官方/百度日历为准" }, "预计"),
+                                    ev.source === "baidu" && React.createElement("span", { className: "dsh-stock-cal-src" }, "实时")),
+                                ev.description && React.createElement("span", { className: "dsh-stock-cal-desc" }, ev.description),
+                                evSectors.length > 0 && React.createElement("span", { className: "dsh-stock-cal-secs" },
+                                    evSectors.slice(0, 3).map((s, si) => React.createElement("span", { key: si, className: "dsh-stock-cal-sec-tag" }, s.sector_name))),
+                                React.createElement("span", { className: "dsh-stock-cal-event-country" }, flagOf(ev.country)));
+                        })));
             };
 
             return React.createElement("div", { className: "dsh-stock-tab-body" },
@@ -1201,7 +1304,7 @@ window.__ModuleLoader__.load({
                 !loading && !error && React.createElement("div", { className: "dsh-stock-news-footer" },
                     `🇨🇳 ${cnNews.length} 条 · 🇺🇸 ${usNews.length} 条 · ⭐高分 ${[...cnNews, ...usNews].filter(n => (n.importance_score || 0) >= 80).length} 条`),
 
-                adviceNewsId && React.createElement(AdviceModal, { newsId: adviceNewsId, onClose: () => setAdviceNewsId(null) })
+                adviceNewsId && React.createElement(AdviceModal, { newsId: adviceNewsId, onClose: () => setAdviceNewsId(null), openStock })
             );
         }
 
@@ -1877,6 +1980,33 @@ window.__ModuleLoader__.load({
                 .dsh-stock-advice-tip { padding: 6px 8px; border-radius: 6px; background: var(--dsh-alias-interactive-bg-hover, var(--dsw-alias-interactive-bg-hover)); margin-bottom: 6px; }
                 .dsh-stock-advice-tip-stock { font-size: 11px; font-weight: 600; margin-bottom: 2px; }
                 .dsh-stock-advice-tip-text { font-size: 11px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+                /* 弹窗实时板块/龙头（0.4.1） */
+                .dsh-stock-adv-pct { font-size: 10px; font-weight: 600; }
+                .dsh-stock-adv-pct.up { color: #ef4444; }
+                .dsh-stock-adv-pct.down { color: #22c55e; }
+                .dsh-stock-adv-mom { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-adv-stage { font-size: 9px; padding: 1px 6px; border-radius: 8px; background: rgba(59,130,246,.14); color: var(--dsw-alias-button-primary, #3b82f6); font-weight: 600; }
+                .dsh-stock-adv-leader { display: flex; gap: 6px; align-items: baseline; padding: 5px 8px; border-radius: 6px; background: var(--dsw-alias-interactive-bg-hover); margin-bottom: 4px; cursor: pointer; font-size: 11px; }
+                .dsh-stock-adv-leader:hover { background: rgba(59,130,246,.12); }
+                .dsh-stock-adv-leader-name { font-weight: 600; }
+                .dsh-stock-adv-leader-code { color: var(--dsw-alias-label-secondary); font-size: 10px; }
+                .dsh-stock-adv-leader-pct { font-weight: 600; margin-left: auto; }
+                .dsh-stock-adv-leader-pct.up { color: #ef4444; }
+                .dsh-stock-adv-leader-pct.down { color: #22c55e; }
+                .dsh-stock-adv-leader-tag { font-size: 9px; padding: 1px 5px; border-radius: 6px; background: rgba(245,158,11,.15); color: #f59e0b; }
+                .dsh-stock-adv-leader-reason { font-size: 9px; color: var(--dsw-alias-label-secondary); }
+                /* 日历增强（0.4.1） */
+                .dsh-stock-cal-est { font-size: 9px; padding: 0 4px; margin-left: 4px; border-radius: 4px; background: rgba(148,163,184,.2); color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-cal-src { font-size: 9px; padding: 0 4px; margin-left: 4px; border-radius: 4px; background: rgba(34,197,94,.15); color: #22c55e; }
+                .dsh-stock-cal-desc { font-size: 9px; color: var(--dsw-alias-label-secondary); margin-left: 6px; }
+                .dsh-stock-cal-secs { margin-left: 4px; }
+                .dsh-stock-cal-sec-tag { font-size: 9px; padding: 0 4px; margin-left: 3px; border-radius: 6px; background: rgba(59,130,246,.12); color: var(--dsw-alias-button-primary, #3b82f6); }
+                /* 进化统计条（0.4.1） */
+                .dsh-stock-evo-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 5px 8px; margin-bottom: 8px; border-radius: 6px; background: rgba(168,85,247,.07); border: 1px solid rgba(168,85,247,.25); font-size: 10px; }
+                .dsh-stock-evo-item { color: var(--dsw-alias-label-secondary); }
+                .dsh-stock-evo-item:first-child { color: #a855f7; font-weight: 600; }
+                .dsh-stock-evo-run { margin-left: auto; background: rgba(168,85,247,.15); color: #a855f7; border: 1px solid rgba(168,85,247,.4); padding: 2px 10px; border-radius: 4px; cursor: pointer; font-size: 10px; }
+                .dsh-stock-evo-run:hover { background: rgba(168,85,247,.25); }
             `;
             document.head.appendChild(style);
         }
