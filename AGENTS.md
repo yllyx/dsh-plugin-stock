@@ -135,3 +135,4 @@ git push origin main --tags
 20. **数据真实性原则**：规则库的FOMC日期曾是编造的（8错5）；不定期会议（政治局/国常会/OPEC）日期官方不提前公布——一律标 `is_estimated`"预计"，真实源（百度）优先覆盖；宁可空数据不编数据
 21. **AI给的接口字段要先实测**：正则/字段名要以真实响应为准（百度日历结构、KeywordSuggestion是dataclass非dict，都踩过）
 22. **升级EPERM的另一个元凶：自重启拉起的分离后端**——`/api/system/restart` 用 DETACHED_PROCESS 起 uvicorn（cwd在插件目录），DSH退出后它仍存活并锁 node_modules；升级前先杀 8765 的 python 进程，再用 `mv 目录名 __probe && mv back` 探测是否解锁，解锁了就无需退出DSH可直接 pnpm install（DSH本体只经子进程占目录）
+23. **npmmirror 新版本同步延迟 → DSH 内置 pnpm 11.8 崩溃**：刚发布到 npmjs 的版本，npmmirror 元数据（time 字段）同步有几分钟延迟；DSH 插件更新走镜像时，其内置 pnpm 11.8 的 supply-chain 时间校验拿到 undefined 时间报 `Invalid time value` 崩溃（exclude 白名单不救；pnpm 11.8 容错缺陷，DSH 内置版无法单独升级）。**解法：等 5-10 分钟镜像同步完再点更新**；或临时把 web profile .npmrc 切回官方源；或手动 `"D:\Program Files\nodejs\pnpm.cmd" install dsh-plugin-stock@latest`（系统 pnpm 11.7 对缺失时间有容错，实测可过）
