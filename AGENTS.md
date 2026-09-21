@@ -137,3 +137,18 @@ git push origin main --tags
 22. **升级EPERM的另一个元凶：自重启拉起的分离后端**——`/api/system/restart` 用 DETACHED_PROCESS 起 uvicorn（cwd在插件目录），DSH退出后它仍存活并锁 node_modules；升级前先杀 8765 的 python 进程，再用 `mv 目录名 __probe && mv back` 探测是否解锁，解锁了就无需退出DSH可直接 pnpm install（DSH本体只经子进程占目录）
 23. **DSH 新版删除了 `@deepseek-ai/dsh-client-runtime` 包**——第三方皮肤 `dsh-client-ui-aqua@1.3.1` peer依赖它，新版启动必报 `missed the module table ... build-time externals drift`（连带 bundle 全部插件 "Failed to load plugins"，殃及股票插件但非其问题）。解法：web profile 的 package.json 移除 aqua 依赖+bundle条目、pnpm-workspace.yaml 删其 patchedDependencies 与 minimumReleaseAgeExclude 条目、删 patches/*.patch 后重装。新版自带官方皮肤。
 23. **DSH 更新器安装插件报 `Invalid time value` 崩溃**：崩溃发生在 `detectMinReleaseAgeViolation`（pnpm 11.8 supply-chain 时间校验，`new Date(undefined).toISOString()`）。**已实锤的机制链**：npmjs 的精简元数据（abbreviated，pnpm resolve 实际用的格式）**不含 time 字段**（npmmirror 的含），DSH 更新器上下文中 resolve 到无 time 元数据即崩；exclude 白名单救不了（time 读取在校验函数内）。**复现要点**：CLI 传 `--config.minimum-release-age` 无效（被静默忽略，导致复现实验全假），必须写进 `.npmrc` 或 `pnpm-workspace.yaml` 才生效。**解法（实测可靠）：退出 DSH 或直接在 web profile 手动 `"D:\Program Files\nodejs\pnpm.cmd" install 包名@版本`**（系统 pnpm 11.7 不崩），把更新器想装的目标版本手动装到位后，DSH 重启时无事可做即不再触发该路径。装新包（目录不存在）时甚至无需退 DSH。另：官方源解析 DSH 自家包（@deepseek-ai/*）常报 NO_MATCHING_VERSION，DSH 生态装包务必走 npmmirror
+
+## 开盘啦(KPL)集成状态（2026-09-22）
+
+### 一期完成（纯HTTP，0.4.1 dev）
+- kpl.py: KplClient单例（限速2.5s/Token/缓存/失效检测）
+- 全部已验证接口：自选CRUD(GetAllUserSelStock/AddStock/DelStock)、个股详情+十档(GetStockPanKou)、板块详情(GetPlate_Info_QJ/SonPlate_Info/GetGPCPHBTS_Tag/GetTrendIncremental/GetVolTurIncremental)、总览(HomeDingPan/ModuleVersatile/Index/GetInfo/IndexPlate/GetIndexList/HisHomeDingPan/ChangeStatistics/GlobalIndex/GetSearchList/Search/TodayTopList/HisLimitResumption/GetHotSearch)、本地搜索(market_pool._names)
+- 前端🚀开盘啦Tab: 总览(登录绑定卡/精选板块强度/热搜)/板块详情(强度指标/爆发原因/分时canvas/K线切换/细分chips/VIP筛选chips)/个股详情(大字报价/九宫格/涨停原因/十档梯/龙虎榜二期占位/加自选)/自选股(分组/实时/增删)/搜索(本地联想+热搜)
+- 凭据: config.json kpl_user_id/kpl_token(用户抓包App后填入，约2个月长效)
+
+### 二期未完成（需 frida + 模拟器 + 逆向）
+- Socket通道: 原协议(8080端口+kgT.p12+260挑战+610白盒签名)已失效（服务器更新了协议/端口/证书）。原端口(8080)从ipList移除、新端口(80/14000)TLS握手成功但服务器断开不发挑战。App实际连接 103.143.17.166:443。需要新一轮逆向。
+- 登录RSA分段格式: Phone=密文(256B=2块RSA)解密为乱码（非标准PKCS#1填充，App加密前有额外变换）。需frida hook加密函数
+- 板块详情股票池列表(龙一/龙二/人气值/排名变化): 走Socket通道
+- 板块强度总排行: 走Socket通道
+- kanpan_spec目录有完整分析资料：开盘啦Socket复刻报告.md(旧协议已复刻但服务端已更新)、kpl_pool_theme_client.py(旧版可运行参考)、frida_sign.js(签名桥)、protos/(protobuf定义)

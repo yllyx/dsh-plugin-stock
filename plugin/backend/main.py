@@ -31,6 +31,7 @@ from position_manager import position_manager
 from storage import storage
 from config import config
 import system_api
+import kpl as kpl_api
 from sentiment_monitor import get_sentiment_monitor
 from sentiment_db import get_sentiment_db
 from user_keywords import get_user_keywords
@@ -154,6 +155,7 @@ async def lifespan(app: FastAPI):
     alert_task = asyncio.create_task(alert_engine.run_loop(interval=config.alert_interval))
     sentiment_task = asyncio.create_task(sentiment_refresh_loop())
     market_pool.start()
+    kpl_api.start_snapshot_loop()
     
     # 启动舆情监控
     sentiment_monitor = get_sentiment_monitor()
@@ -168,6 +170,7 @@ async def lifespan(app: FastAPI):
     logger.info("DSH 股票后端关闭...")
     broadcaster.running = False
     market_pool.stop()
+    kpl_api.stop_snapshot_loop()
     sentiment_monitor.stop()  # 停止舆情监控
     for task in (keepalive_task, alert_task, sentiment_task, evolution_task):
         task.cancel()
@@ -1363,6 +1366,110 @@ async def get_system_statistics():
     except Exception as e:
         logger.error(f"获取系统统计失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取系统统计失败: {str(e)}")
+
+
+# ============= 开盘啦 API =============
+class KplBind(BaseModel):
+    user_id: str
+    token: str
+
+
+class KplWatchChange(BaseModel):
+    code: str
+    combine_id: str = "0"
+
+
+@app.get("/api/kpl/status")
+async def kpl_status():
+    """开盘啦登录态（绑定状态/用户信息）"""
+    return await asyncio.to_thread(kpl_api.status)
+
+
+@app.post("/api/kpl/bind")
+async def kpl_bind(req: KplBind):
+    """绑定开盘啦登录态（UserID+Token）"""
+    kpl_api.bind(req.user_id.strip(), req.token.strip())
+    return await asyncio.to_thread(kpl_api.status)
+
+
+@app.post("/api/kpl/unbind")
+async def kpl_unbind():
+    kpl_api.unbind()
+    return {"status": "ok"}
+
+
+@app.get("/api/kpl/watchlist")
+async def kpl_watchlist():
+    """自选分组+列表（后端快照循环维护实时行情）"""
+    wl = await asyncio.to_thread(kpl_api.get_watchlist)
+    return wl or {"groups": [], "stocks": {}, "init_mess": {}}
+
+
+@app.post("/api/kpl/watchlist/add")
+async def kpl_watchlist_add(req: KplWatchChange):
+    return await asyncio.to_thread(kpl_api.add_stock, req.code.strip(), req.combine_id.strip())
+
+
+@app.post("/api/kpl/watchlist/del")
+async def kpl_watchlist_del(req: KplWatchChange):
+    return await asyncio.to_thread(kpl_api.del_stock, req.code.strip(), req.combine_id.strip())
+
+
+@app.get("/api/kpl/quote/{code}")
+async def kpl_quote(code: str, force: bool = Query(False)):
+    """个股详情一次拿全（报价头+十档+涨停原因）"""
+    d = await asyncio.to_thread(kpl_api.get_pankou, code, force)
+    if not d:
+        raise HTTPException(status_code=404, detail="未获取到盘口数据")
+    return d
+
+
+@app.get("/api/kpl/plate/{plate_id}")
+async def kpl_plate(plate_id: str):
+    """板块详情：头部指标+细分强度+筛选标签+分时+事件"""
+    info, sons, tags, trend, events = await asyncio.gather(
+        asyncio.to_thread(kpl_api.get_plate_info, plate_id),
+        asyncio.to_thread(kpl_api.get_son_plates, plate_id),
+        asyncio.to_thread(kpl_api.get_filter_tags, plate_id),
+        asyncio.to_thread(kpl_api.get_plate_trend, plate_id),
+        asyncio.to_thread(kpl_api.get_plate_events, plate_id),
+    )
+    if not info and not sons:
+        raise HTTPException(status_code=404, detail="板块数据不可用")
+    return {"info": info, "son_plates": sons or [], "filter_tags": tags or [],
+            "trend": trend or {}, "events": events or []}
+
+
+@app.get("/api/kpl/overview")
+async def kpl_overview():
+    """行情总览：盯盘聚合+指数+情绪历史+全球+热搜"""
+    def _all():
+        return {
+            "dingpan": kpl_api.get_dingpan(),
+            "index": kpl_api.get_index_quotes(),
+            "sentiment_history": kpl_api.get_sentiment_history(),
+            "global": kpl_api.get_global(),
+            "hot_stocks": kpl_api.get_hot_stocks(),
+            "hot_words": kpl_api.get_hot_words(),
+        }
+    return await asyncio.to_thread(_all)
+
+
+@app.get("/api/kpl/search-local")
+async def kpl_search_local(q: str = Query(...)):
+    """本地代码表模糊搜索（名称/代码），开盘啦App同款本地联想方式"""
+    from screener import market_pool
+    q = q.strip().upper()
+    if not q:
+        return {"results": []}
+    results = []
+    with market_pool._lock:
+        for code, name in market_pool._names.items():
+            if q in code or q in (name or ""):
+                results.append({"code": code, "name": name})
+                if len(results) >= 20:
+                    break
+    return {"results": results}
 
 
 # ============= WebSocket =============

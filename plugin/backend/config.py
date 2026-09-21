@@ -25,6 +25,11 @@ DEFAULTS: Dict[str, Any] = {
     "tdx_install_dir": "",   # 通达信安装目录（本地 vipdoc 数据源）
     "tdx_username": "",      # 可选：客户端弹登录框时自动填入（明文保存，见界面提示）
     "tdx_password": "",
+    "kpl_user_id": "",       # 开盘啦登录态（UserID）
+    "kpl_token": "",         # 开盘啦Token（约2个月长效，App内登录获得）
+    "kpl_token_endtime": "", # Token到期时间（展示用）
+    "kpl_username": "",      # 开盘啦昵称（展示用）
+    "kpl_device_id": "",     # 设备ID（留空自动生成一次并固定）
 }
 
 
