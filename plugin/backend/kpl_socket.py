@@ -12,7 +12,9 @@
 
 依赖: frida（借签名必须模拟器运行开盘啦App；不可用时业务端点降级）
 """
+import json
 import os
+import subprocess
 import socket
 import ssl
 import struct
@@ -204,6 +206,7 @@ from cryptography.hazmat.primitives.serialization import NoEncryption  # noqa: E
 # 签名器部署物：backend/signer/{kplsigner.jar, lib/*.jar, kpl_min.apk, libauthSign_armv7_patched.so}
 # 需要系统 Java 8+（java 在 PATH 或 JAVA_HOME）。签名仅在 socket 建连时需要一次（约2秒）。
 SIGNER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signer")
+_warm_signer = None  # 常驻签名器子进程（_WarmSigner）
 
 
 def _find_java() -> Optional[str]:
@@ -235,9 +238,9 @@ def _find_java() -> Optional[str]:
 
 def sign_local(challenge: str, device_id: str, conn_type: str, server_time: str,
                timeout_s: float = 120) -> Optional[str]:
-    """调用内置 unidbg 签名器计算白盒签名（离线，无模拟器/frida/网络）。失败返回 None。"""
-    import json as _json
-    import subprocess
+    """白盒签名。优先常驻暖进程（JVM 只启一次, 后续签名 ~50ms）；
+    暖进程失败回退单次调用。"""
+    global _warm_signer
     java = _find_java()
     if not java:
         logger.warning("KPL 签名器: 未找到 java（需要 Java 8+）")
@@ -247,27 +250,78 @@ def sign_local(challenge: str, device_id: str, conn_type: str, server_time: str,
     if not os.path.isfile(signer_jar):
         logger.warning("KPL 签名器: 部署物缺失 (signer/kplsigner.jar)")
         return None
+    req = json.dumps({"challenge": challenge, "device_id": device_id,
+                      "conn_type": conn_type, "server_time": str(server_time)})
+    # 1) 常驻暖进程
+    warm = _warm_signer
+    if warm is not None and warm.alive():
+        try:
+            return warm.sign(req)
+        except Exception as e:
+            logger.debug(f"KPL 暖签名器异常, 重启: {str(e)[:80]}")
+            try:
+                warm.kill()
+            except Exception:
+                pass
+            _warm_signer = None
+    # 2) 启动暖进程并首签（首签含 JVM 启动 ~2s）
     cp = signer_jar + os.pathsep + os.pathsep.join(
         os.path.join(lib_dir, j) for j in sorted(os.listdir(lib_dir)) if j.endswith(".jar"))
-    req = _json.dumps({"challenge": challenge, "device_id": device_id,
-                       "conn_type": conn_type, "server_time": str(server_time)})
     try:
-        # 工作目录=SIGNER_DIR（签名器从 cwd 读 kpl_min.apk / patched so）
+        warm = _WarmSigner(java, cp, SIGNER_DIR)
+        sig = warm.sign(req, timeout_s=timeout_s)
+        if sig:
+            _warm_signer = warm
+            return sig
+        warm.kill()
+    except Exception as e:
+        logger.debug(f"KPL 暖签名器启动失败: {str(e)[:100]}")
+    # 3) 回退单次调用（无 cwd 依赖）
+    try:
         r = subprocess.run([java, "-Xmx512m", "-cp", cp, "kplsigner.KplSigner"],
                            input=req.encode(), capture_output=True,
                            timeout=timeout_s, cwd=SIGNER_DIR)
         for line in r.stdout.decode("utf-8", "replace").splitlines():
             line = line.strip()
             if line.startswith('{"sig"'):
-                d = _json.loads(line)
-                sig = d.get("sig")
-                if sig and len(sig) > 20:
-                    return str(sig)
+                d = json.loads(line)
+                if d.get("sig") and len(d["sig"]) > 20:
+                    return str(d["sig"])
         logger.debug(f"KPL 签名器输出异常: {r.stdout.decode('utf-8', 'replace')[-200:]}")
         return None
     except Exception as e:
         logger.debug(f"KPL 签名器调用失败: {str(e)[:100]}")
         return None
+
+
+class _WarmSigner:
+    """常驻签名器子进程（stdin/stdout 行协议）"""
+
+    def __init__(self, java: str, cp: str, cwd: str):
+        self.proc = subprocess.Popen(
+            [java, "-Xmx512m", "-cp", cp, "kplsigner.KplSigner"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, cwd=cwd)
+
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def kill(self):
+        try:
+            self.proc.kill()
+        except Exception:
+            pass
+
+    def sign(self, req_line: str, timeout_s: float = 60) -> Optional[str]:
+        self.proc.stdin.write((req_line + "\n").encode())
+        self.proc.stdin.flush()
+        line = self.proc.stdout.readline().decode("utf-8", "replace").strip()
+        if line.startswith('{"sig"'):
+            d = json.loads(line)
+            sig = d.get("sig")
+            if sig and len(sig) > 20:
+                return str(sig)
+        raise RuntimeError(f"bad signer output: {line[:120]}")
 
 
 def socket_signer_available() -> bool:
