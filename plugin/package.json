@@ -32,7 +32,8 @@
     "dsh.plugin.json",
     "README.md",
     "PUBLISHING.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "backend/certs/*"
   ],
   "scripts": {
     "release": "node publish.js",

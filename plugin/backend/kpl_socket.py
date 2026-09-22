@@ -200,6 +200,48 @@ from cryptography.hazmat.primitives.serialization import NoEncryption  # noqa: E
 
 # ============= frida 白盒签名桥 =============
 
+# 签名服务（通用通道的签名环节，环境解耦）：kpl_sign_server.py 常驻本机 9877
+# （内部=模拟器+开盘啦App+frida；签名只在 socket 建连时需要一次）
+SIGN_SERVER = "http://127.0.0.1:9877"
+
+
+def sign_via_http(challenge: str, device_id: str, conn_type: str, server_time: str,
+                  timeout_s: float = 180) -> Optional[str]:
+    """通过本机签名服务获取白盒签名。服务不可用返回 None（调用方回退本地 frida）。
+    用标准库 urllib（零第三方依赖，任何运行环境可用）"""
+    import json as _json
+    import urllib.request
+    try:
+        payload = _json.dumps({
+            "challenge": challenge, "device_id": device_id,
+            "conn_type": int(conn_type) if str(conn_type).isdigit() else 99,
+            "server_time": int(server_time),
+        }).encode()
+        req = urllib.request.Request(f"{SIGN_SERVER}/sign", payload,
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:
+            d = _json.loads(r.read().decode())
+        sig = d.get("sig")
+        if sig and len(str(sig)) > 20:
+            return str(sig)
+        logger.debug(f"KPL 签名服务返回异常: {str(d)[:80]}")
+        return None
+    except Exception as e:
+        logger.debug(f"KPL 签名服务不可达: {str(e)[:80]}")
+        return None
+
+
+def socket_signer_available() -> bool:
+    """签名服务/本地frida 是否可用（供上层预判降级）"""
+    import json as _json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"{SIGN_SERVER}/health", timeout=2) as r:
+            return r.status == 200 and bool(_json.loads(r.read().decode()).get("app_pid"))
+    except Exception:
+        return False
+
+
 SIGN_JS = r"""
 Java.perform(function () {
     var _baxInit = false;
@@ -377,7 +419,7 @@ class KplSocketSession:
         return ("124.71.166.244", 8080)  # 兜底
 
     def connect(self) -> bool:
-        """TLS 连接 + 挑战 + frida 签名 + 鉴权。成功返回 True"""
+        """TLS 连接 + 挑战 + 白盒签名 + 鉴权。成功返回 True"""
         from config import config
         cert_p, key_p = ensure_cert_pems(self.static_dir, self.data_dir)
         server = self._resolve_server()
@@ -400,12 +442,14 @@ class KplSocketSession:
             return False
         challenge, server_time = ch_data
 
-        # frida 白盒签名
-        bridge = get_frida_bridge()
-        sig = bridge.sign(challenge, self.device_id, "99", str(server_time))
+        # 白盒签名：首选本机签名服务(HTTP, 环境解耦)，回退插件内 frida 桥
+        sig = sign_via_http(challenge, self.device_id, "99", str(server_time))
+        if not sig:
+            bridge = get_frida_bridge()
+            sig = bridge.sign(challenge, self.device_id, "99", str(server_time))
         if not sig:
             self.close()
-            logger.warning("KPL Socket: 白盒签名失败（需要模拟器运行开盘啦App）")
+            logger.warning("KPL Socket: 白盒签名失败（需要签名服务或模拟器运行开盘啦App）")
             return False
 
         # 鉴权
