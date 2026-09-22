@@ -145,6 +145,8 @@ git push origin main --tags
 
 - **架构**：`kpl.py` → `kpl_socket.get_kpl_socket()`（KplSocketAPI：3009/3010/2501/3001/3006）→ `KplSocketSession.connect()`（TLS mTLS + 260挑战 + **`sign_local()`** + 610鉴权 + 心跳7s）
 - **内置签名器**：`backend/signer/`（kplsigner.jar + lib/*.jar + kpl_min.apk 裁剪版 1.2MB + libauthSign_armv7_patched.so，~30MB 随插件分发）。原理 = unidbg 模拟 armeabi-v7a 的 libauthSign.so：VM 传真 APK（包名/签名证书/assets 自动解析），mock `currentApplication`/`getAssets`/`Config.channelID("129")`/`versionName("6.3.20.0")`/`ApiConfig.apiVersion("w48")`，so 内 unidbg/frida 检测字符串已 patch（等长破坏 9 处）。**依赖系统 Java 8+**（`_find_java` 自动定位并执行校验，规避 Oracle java8path 存根——该存根 `java -version` 直接失败）
+- **签名性能（暖进程）**：`sign_local` 走 `_WarmSigner` 常驻子进程（stdin/stdout 行协议），首签 1.8s（含 JVM 启动）、续签 0.14s；进程死自动重启，失败回退单次调用
+- **纯 Python 签名器（雏形）**：`backend/kpl_signer_py.py`——unicorn 模拟 so（ELF32 加载/JNIEnv vtable 分发/libc 子集桩/数据重定位分配内存/NEON 启用 CPACR+FPEXC）。已跑进 initBaxPwd 但输出空：Ollvm 混淆深层对抗（执行偏离/anti-tamper）未完，**勿删**；完成后可彻底去 Java。关键经验：thumb 函数偏移不带 thumb 位（verbose 显示的 0x...431 实际偏移 0x...430）、CPACR=0xF00000+FPEXC=0x40000000 启用 NEON、数据符号（__stack_chk_guard）须分配真实内存而非函数跳板
 - **build_frame 的 total 字段 = len(inner)（不含 kind1B+total4B 头）**——App 同款；多算 5B 服务器会静默丢弃帧（鉴权"无响应"假象，曾误导为签名被毒化，实际是帧格式 bug）
 - **服务器端口特性**：getIPList 下发多台多端口，**只有部分端口（如 124.71.166.244:8080）主动推 260 挑战**，80/14000 端口 TLS 可连但无挑战 → connect 对每台完整走"挑战→签名→鉴权"，失败换下一台
 - **签名含时间成分**：同挑战不同时刻输出不同（勿做签名缓存对照），服务器均接受；挑战与连接绑定且时效数秒
