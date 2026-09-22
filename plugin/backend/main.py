@@ -1448,6 +1448,18 @@ async def kpl_home(force: bool = Query(False)):
     return d or {}
 
 
+class KplThemeList(BaseModel):
+    tab: str = "themes"     # themes=最新主题 | calendar=投资日历
+    index: int = 0
+    st: int = 30
+
+
+@app.get("/api/kpl/themes")
+async def kpl_themes(tab: str = "themes", index: int = Query(0), st: int = Query(30)):
+    """主题机会页两个Tab：最新主题/投资日历（滚动分页 Index）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_theme_list, tab, index, st)
+
+
 @app.get("/api/kpl/watchlist")
 async def kpl_watchlist():
     """自选分组+列表（后端快照循环维护实时行情）"""

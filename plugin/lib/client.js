@@ -1837,12 +1837,12 @@ window.__ModuleLoader__.load({
                     funcs.map(([label, fn]) =>
                         React.createElement("div", { key: label, className: "kpl-func-btn", onClick: fn }, label))),
 
-                // ===== 最新主题 =====
+                // ===== 最新主题（默认2条，更多进主题机会页） =====
                 ((home && home.themes) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "最新主题"),
-                        React.createElement("span", { className: "more" }, "更多 ›"))),
-                ((home && home.themes) || []).map(t =>
+                        React.createElement("span", { className: "more", onClick: () => go({ page: "themes" }) }, "更多 ›"))),
+                ((home && home.themes) || []).slice(0, 2).map(t =>
                     React.createElement("div", { key: t.id, className: "kpl-theme-row" },
                         React.createElement("div", { className: "kpl-theme-badge" }, t.theme || "主题"),
                         React.createElement("div", { className: "kpl-theme-main" },
@@ -1948,7 +1948,97 @@ window.__ModuleLoader__.load({
                         React.createElement("button", { className: "kpl-explain-more",
                             onClick: () => { setExplainOpen(false); } }, "知道了"))));
         }
-        /* ---- 行情页（子Tab: 板块/个股/...） ---- */        /* ---- 行情页（子Tab: 板块/个股/...） ---- */
+        /* ---- 主题机会页（最新主题 / 投资日历） ---- */
+
+        function KplThemesPage({ go }) {
+            const [tab, setTab] = useState("themes");
+            const [items, setItems] = useState([]);
+            const [index, setIndex] = useState(0);
+            const [hasMore, setHasMore] = useState(false);
+            const [loading, setLoading] = useState(false);
+            const load = useCallback(async (t, idx, append) => {
+                setLoading(true);
+                try {
+                    const d = await api(`/api/kpl/themes?tab=${t}&index=${idx}&st=30`);
+                    const rows = d.items || [];
+                    setItems(prev => append ? [...prev, ...rows] : rows);
+                    setIndex(idx);
+                    setHasMore(!!d.has_more);
+                } catch { /* */ }
+                setLoading(false);
+            }, []);
+            useEffect(() => { load(tab, 0, false); }, [tab, load]);
+
+            const WD = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+            const dayKey = t => {
+                const d = new Date(t * 1000);
+                return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+            };
+            const groups = [];
+            const byDay = {};
+            (items || []).forEach(it => {
+                const key = tab === "themes"
+                    ? dayKey(it.time || 0)
+                    : (it.date || "");
+                if (!key) return;
+                if (!byDay[key]) {
+                    byDay[key] = [];
+                    groups.push({ key, rows: byDay[key] });
+                }
+                byDay[key].push(it);
+            });
+            const dayLabel = key => {
+                const d = new Date(key + "T00:00:00");
+                if (isNaN(d)) return key;
+                const md = tab === "calendar"
+                    ? `${d.getMonth() + 1}月${d.getDate()}日`
+                    : key;
+                return `${md} ${WD[d.getDay()]}`;
+            };
+            const rateCls = r => (Number(r) >= 0 ? "up" : "down");
+            const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, {
+                    title: "主题机会", onBack: () => go({ page: "back" }),
+                    onSearch: () => go({ page: "search" }),
+                }),
+                React.createElement("div", { className: "kpl-subtabs" },
+                    [["themes", "最新主题"], ["calendar", "投资日历"]].map(([id, label]) =>
+                        React.createElement("span", {
+                            key: id,
+                            className: `kpl-subtab ${tab === id ? "on" : ""}`,
+                            onClick: () => setTab(id),
+                        }, label))),
+                groups.map(g => React.createElement("div", { key: g.key, className: "kpl-thm-day" },
+                    React.createElement("div", { className: "kpl-thm-dayhead" }, dayLabel(g.key)),
+                    g.rows.map(row => tab === "themes"
+                        ? React.createElement("div", { key: row.id, className: "kpl-thm-item" },
+                            React.createElement("div", { className: "kpl-thm-top" },
+                                React.createElement("span", { className: "kpl-thm-name" }, row.theme || "主题"),
+                                React.createElement("span", { className: "kpl-thm-time" },
+                                    row.time ? new Date(row.time * 1000).toTimeString().slice(0, 5) : "")),
+                            React.createElement("div", { className: "kpl-thm-title" }, row.title),
+                            React.createElement("div", { className: "kpl-thm-stocks" },
+                                (row.stocks || []).slice(0, 4).map(s =>
+                                    React.createElement("div", {
+                                        key: s.code, className: "kpl-thm-stock",
+                                        onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                                    },
+                                        React.createElement("span", { className: "n" }, s.name),
+                                        React.createElement("b", { className: rateCls(s.rate) }, fmtRate(s.rate))))))
+                        : React.createElement("div", { key: row.id, className: "kpl-thm-calrow" },
+                            React.createElement("span", { className: `kpl-thm-tag c${row.color}` }, row.tag || "事件"),
+                            React.createElement("div", { className: "kpl-thm-brief" }, row.brief))))),
+                !loading && items.length === 0 && React.createElement("div", { className: "kpl-empty" }, "暂无数据"),
+                hasMore && React.createElement("button", {
+                    className: "kpl-thm-more", disabled: loading,
+                    onClick: () => load(tab, index + 1, true),
+                }, loading ? "加载中…" : "加载更多"),
+                loading && items.length > 0 && React.createElement("div", { className: "kpl-empty" }, "加载中…"));
+        }
+
+        /* ---- 行情页（子Tab: 板块/个股/...） ---- */
 
         function KplMarketPage({ go, initialSub }) {
             const [sub, setSub] = useState(initialSub || "plate");
@@ -2298,6 +2388,7 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "stock") content = React.createElement(KplStockDetail, { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
                 else if (drill.page === "lhb") content = React.createElement(KplLhbPage);
+                else if (drill.page === "themes") content = React.createElement(KplThemesPage, { go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
                 content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
@@ -3042,6 +3133,25 @@ window.__ModuleLoader__.load({
                 .kpl-explain-head .x { position: absolute; right: 0; font-size: 16px; cursor: pointer; color: #6b7280; }
                 .kpl-explain-body { font-size: 14px; line-height: 1.9; text-indent: 2em; }
                 .kpl-explain-more { background: rgba(239,68,68,.12); color: #ef4444; border: none; border-radius: 999px; padding: 10px 0; font-size: 14px; font-weight: 700; cursor: pointer; }
+                /* ---- 主题机会页 ---- */
+                .kpl-thm-day { display: flex; flex-direction: column; }
+                .kpl-thm-dayhead { background: var(--dsw-alias-button-elevated-fill); color: #f59e0b; font-size: 15px; font-weight: 700; text-align: center; padding: 8px 0; }
+                .kpl-thm-item { background: var(--dsw-alias-button-elevated-fill); border-radius: 10px; margin: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+                .kpl-thm-top { display: flex; justify-content: space-between; align-items: baseline; }
+                .kpl-thm-name { color: #3b82f6; font-size: 16px; font-weight: 800; }
+                .kpl-thm-time { color: var(--dsw-alias-label-secondary); font-size: 12px; }
+                .kpl-thm-title { font-size: 15px; font-weight: 600; line-height: 1.5; }
+                .kpl-thm-stocks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+                .kpl-thm-stock { display: flex; justify-content: space-between; align-items: center; background: var(--dsw-alias-bg-base); border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+                .kpl-thm-stock .n { font-size: 13px; }
+                .kpl-thm-stock b { font-size: 13px; }
+                .kpl-thm-calrow { display: flex; gap: 12px; align-items: flex-start; background: var(--dsw-alias-button-elevated-fill); border-radius: 10px; margin: 8px; padding: 12px; }
+                .kpl-thm-tag { min-width: 52px; text-align: center; color: #fff; font-size: 13px; font-weight: 700; border-radius: 999px; padding: 5px 0; }
+                .kpl-thm-tag.c1 { background: #ef4444; }
+                .kpl-thm-tag.c2 { background: #f59e0b; }
+                .kpl-thm-brief { font-size: 15px; font-weight: 600; line-height: 1.6; }
+                .kpl-thm-more { margin: 4px 8px 12px; background: var(--dsw-alias-button-elevated-fill); border: 1px dashed var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); border-radius: 8px; padding: 10px 0; cursor: pointer; font-size: 13px; }
+                .kpl-thm-more:hover { color: #ef4444; border-color: #ef4444; }
             `;
             document.head.appendChild(style);
         }

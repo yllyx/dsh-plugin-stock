@@ -534,16 +534,16 @@ class KplClient:
             "stocks": [{"code": s[0], "name": s[1], "rate": s[2]}
                        for s in (x.get("Stocks") or []) if isinstance(s, list) and len(s) >= 3],
         } for x in fl]
-        # 3. 最新主题 —— apparticle ThemeNews/GetSearch（KeyWord 需非空，空串服务端报参数错）
-        themes = self.call(HOST_ART, "ThemeNews", "GetSearch",
-                           {"KeyWord": "AI", "st": "10", "Index": "0"}, authed=False)
+        # 3. 最新主题 —— apparticle ThemeNews/GetList（与主题机会页同源，首页只取前2条）
+        themes = self.call(HOST_ART, "ThemeNews", "GetList",
+                           {"st": "10", "Index": "0", "Type": "-1"}, authed=False)
         tl = (themes or {}).get("List") or []
         out["themes"] = [{
             "id": x.get("CID"), "title": x.get("Title"), "theme": x.get("ZSName"),
             "time": x.get("TimeStamp"), "source": x.get("Source"),
             "stocks": [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate")}
                        for s in (x.get("Stocks") or []) if isinstance(s, dict)][:2],
-        } for x in tl[:4]]
+        } for x in tl[:2]]
         # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
         qd = self.call(HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, authed=False)
         out["qiangdu"] = (qd or {}).get("List") or []
@@ -572,6 +572,35 @@ class KplClient:
         plates.sort(key=lambda p: p["rate"], reverse=True)
         out["active_plates"] = plates[:6]
         return out
+
+    # ---------- 主题机会页（复刻 App「更多→主题机会」，2026-09-22 mitmproxy 实测） ----------
+
+    def get_theme_list(self, tab: str = "themes", index: int = 0, st: int = 30) -> Dict[str, Any]:
+        """主题机会两个Tab的数据。tab: 'themes'=最新主题(Type=-1) | 'calendar'=投资日历(Type=3)
+        最新主题条目: CID/Title/ZSName(主题)/TimeStamp/Source/Stocks[{Code,Name,Rate,SetTop}]
+        投资日历条目: PID/Brief/Date/TagName(会议|事件)/ColorType(1红2橙)/Stocks"""
+        t = "-1" if tab == "themes" else "3"
+        d = self.call(HOST_ART, "ThemeNews", "GetList",
+                      {"st": str(st), "Index": str(index), "Type": t}, authed=False)
+        lst = (d or {}).get("List") or []
+        if tab == "themes":
+            items = [{
+                "id": x.get("CID"), "title": x.get("Title"), "theme": x.get("ZSName"),
+                "time": x.get("TimeStamp"), "source": x.get("Source"),
+                "stocks": sorted(
+                    [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate"),
+                      "top": s.get("SetTop") == 1}
+                     for s in (x.get("Stocks") or []) if isinstance(s, dict)],
+                    key=lambda s: (not s["top"],)),
+            } for x in lst]
+        else:
+            items = [{
+                "id": x.get("PID"), "brief": x.get("Brief"), "date": x.get("Date"),
+                "tag": x.get("TagName"), "color": x.get("ColorType"),
+                "stocks": [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate")}
+                           for s in (x.get("Stocks") or []) if isinstance(s, dict)],
+            } for x in lst]
+        return {"items": items, "index": index, "has_more": len(lst) >= st}
 
     @staticmethod
     def _norm_news(it: Dict[str, Any]) -> Dict[str, Any]:
