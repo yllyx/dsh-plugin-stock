@@ -36,9 +36,10 @@ def build_frame(cmd: int, body: bytes = b"", kind: int = 1, subtype: int = 0,
     buf += struct.pack(">B", flags)
     buf += struct.pack(">H", 0)
     buf += body
+    # total = inner 长度（seq/cmd/flags/ext/body，不含 kind1B+本字段4B）——App 同款，服务器实测接受
     out = bytearray()
     out += struct.pack(">B", (kind << 4) | (subtype & 0xF))
-    out += struct.pack(">I", 5 + len(buf))
+    out += struct.pack(">I", len(buf))
     out += buf
     return bytes(out)
 
@@ -198,175 +199,80 @@ def ensure_cert_pems(static_dir: str, data_dir) -> Tuple[str, str]:
 from cryptography.hazmat.primitives.serialization import NoEncryption  # noqa: E402
 
 
-# ============= frida 白盒签名桥 =============
+# ============= 内置白盒签名器（unidbg 离线模拟 libauthSign.so） =============
 
-# 签名服务（通用通道的签名环节，环境解耦）：kpl_sign_server.py 常驻本机 9877
-# （内部=模拟器+开盘啦App+frida；签名只在 socket 建连时需要一次）
-SIGN_SERVER = "http://127.0.0.1:9877"
+# 签名器部署物：backend/signer/{kplsigner.jar, lib/*.jar, kpl_min.apk, libauthSign_armv7_patched.so}
+# 需要系统 Java 8+（java 在 PATH 或 JAVA_HOME）。签名仅在 socket 建连时需要一次（约2秒）。
+SIGNER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signer")
 
 
-def sign_via_http(challenge: str, device_id: str, conn_type: str, server_time: str,
-                  timeout_s: float = 180) -> Optional[str]:
-    """通过本机签名服务获取白盒签名。服务不可用返回 None（调用方回退本地 frida）。
-    用标准库 urllib（零第三方依赖，任何运行环境可用）"""
+def _find_java() -> Optional[str]:
+    """定位可用的 java：PATH 里的存根可能不可执行（Oracle java8path 已知问题），
+    逐个候选执行 -version 校验，失败则尝试 JAVA_HOME 与常见安装目录的真实 JDK。"""
+    import shutil
+    cands = []
+    p = shutil.which("java")
+    if p and "Common Files\\Oracle" not in p:   # Oracle 存根优先级降低（排后仍校验）
+        cands.append(p)
+    cands.append(os.path.join(os.environ.get("JAVA_HOME", ""), "bin", "java.exe"))
+    cands.append(r"D:\Program Files\Java\jdk-1.8\bin\java.exe")
+    cands.append(r"C:\Program Files\Java\jdk-1.8\bin\java.exe")
+    seen = set()
+    import subprocess
+    for cand in cands:
+        if not cand or cand in seen or not os.path.isfile(cand):
+            continue
+        seen.add(cand)
+        try:
+            r = subprocess.run([cand, "-version"], capture_output=True, timeout=15)
+            if r.returncode == 0:
+                return cand
+        except Exception:
+            continue
+    # 兜底：PATH 存根再试一次（万一可用）
+    return p
+
+
+def sign_local(challenge: str, device_id: str, conn_type: str, server_time: str,
+               timeout_s: float = 120) -> Optional[str]:
+    """调用内置 unidbg 签名器计算白盒签名（离线，无模拟器/frida/网络）。失败返回 None。"""
     import json as _json
-    import urllib.request
+    import subprocess
+    java = _find_java()
+    if not java:
+        logger.warning("KPL 签名器: 未找到 java（需要 Java 8+）")
+        return None
+    signer_jar = os.path.join(SIGNER_DIR, "kplsigner.jar")
+    lib_dir = os.path.join(SIGNER_DIR, "lib")
+    if not os.path.isfile(signer_jar):
+        logger.warning("KPL 签名器: 部署物缺失 (signer/kplsigner.jar)")
+        return None
+    cp = signer_jar + os.pathsep + os.pathsep.join(
+        os.path.join(lib_dir, j) for j in sorted(os.listdir(lib_dir)) if j.endswith(".jar"))
+    req = _json.dumps({"challenge": challenge, "device_id": device_id,
+                       "conn_type": conn_type, "server_time": str(server_time)})
     try:
-        payload = _json.dumps({
-            "challenge": challenge, "device_id": device_id,
-            "conn_type": int(conn_type) if str(conn_type).isdigit() else 99,
-            "server_time": int(server_time),
-        }).encode()
-        req = urllib.request.Request(f"{SIGN_SERVER}/sign", payload,
-                                     {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=timeout_s) as r:
-            d = _json.loads(r.read().decode())
-        sig = d.get("sig")
-        if sig and len(str(sig)) > 20:
-            return str(sig)
-        logger.debug(f"KPL 签名服务返回异常: {str(d)[:80]}")
+        # 工作目录=SIGNER_DIR（签名器从 cwd 读 kpl_min.apk / patched so）
+        r = subprocess.run([java, "-Xmx512m", "-cp", cp, "kplsigner.KplSigner"],
+                           input=req.encode(), capture_output=True,
+                           timeout=timeout_s, cwd=SIGNER_DIR)
+        for line in r.stdout.decode("utf-8", "replace").splitlines():
+            line = line.strip()
+            if line.startswith('{"sig"'):
+                d = _json.loads(line)
+                sig = d.get("sig")
+                if sig and len(sig) > 20:
+                    return str(sig)
+        logger.debug(f"KPL 签名器输出异常: {r.stdout.decode('utf-8', 'replace')[-200:]}")
         return None
     except Exception as e:
-        logger.debug(f"KPL 签名服务不可达: {str(e)[:80]}")
+        logger.debug(f"KPL 签名器调用失败: {str(e)[:100]}")
         return None
 
 
 def socket_signer_available() -> bool:
-    """签名服务/本地frida 是否可用（供上层预判降级）"""
-    import json as _json
-    import urllib.request
-    try:
-        with urllib.request.urlopen(f"{SIGN_SERVER}/health", timeout=2) as r:
-            return r.status == 200 and bool(_json.loads(r.read().decode()).get("app_pid"))
-    except Exception:
-        return False
-
-
-SIGN_JS = r"""
-Java.perform(function () {
-    var _baxInit = false;
-    var SR = Java.use('com.yzj.kaipanh.newindex.data.SocketRepository');
-    rpc.exports = {
-        ping: function () { return 'pong'; },
-        sign: function (challenge, deviceid, conntype, curtime) {
-            try {
-                if (!_baxInit) {
-                    var app = Java.use('com.yzj.kaipanh.MyApplication').getInstance();
-                    SR.initBaxPwd(app.getApplicationContext().getAssets());
-                    _baxInit = true;
-                }
-                var sig = SR.whiteBoxEncrypt(challenge, deviceid, conntype, curtime);
-                var b = new Uint8Array(sig);
-                var hex = '';
-                for (var i = 0; i < b.length; i++) hex += ('0' + b[i].toString(16)).slice(-2);
-                return hex;
-            } catch (e) { return 'ERR ' + e; }
-        },
-    };
-});
-"""
-
-ADB_PATH = r"C:\Users\mark\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-ADB_SERIAL = "emulator-5554"
-APP_PKG = "com.aiyu.kaipanla"
-
-
-class FridaBridge:
-    """attach 模拟器内开盘啦进程，借白盒签名"""
-
-    def __init__(self):
-        self._session = None
-        self._exp = None
-        self._lock = threading.Lock()
-
-    def _adb_shell(self, cmd: str) -> str:
-        import subprocess
-        try:
-            r = subprocess.run([ADB_PATH, "-s", ADB_SERIAL, "shell", cmd],
-                               capture_output=True, text=True, timeout=10)
-            return r.stdout or ""
-        except Exception:
-            return ""
-
-    def ensure(self) -> bool:
-        """确保已 attach 到 App 真身并加载签名脚本。成功返回 True"""
-        with self._lock:
-            if self._exp is not None:
-                try:
-                    if self._exp.ping() == "pong":
-                        return True
-                except Exception:
-                    self._session = None
-                    self._exp = None
-            try:
-                import frida
-                import subprocess as sp
-                sp.run([ADB_PATH, "-s", ADB_SERIAL, "forward", "tcp:9876", "tcp:27042"],
-                       capture_output=True, timeout=10)
-                dev = frida.get_device_manager().add_remote_device("127.0.0.1:9876")
-                # 找 App 主进程并杀壳守护
-                rows = [l.split() for l in
-                        self._adb_shell("ps -A -o PID,PPID,NAME | grep 'kaipanla$'").splitlines()
-                        if len(l.split()) >= 3]
-                main = next((r[0] for r in rows if r[2] == APP_PKG and int(r[1]) < 1000), None)
-                if not main:
-                    self._adb_shell(f"monkey -p {APP_PKG} -c android.intent.category.LAUNCHER 1")
-                    time.sleep(8)
-                    rows = [l.split() for l in
-                            self._adb_shell("ps -A -o PID,PPID,NAME | grep 'kaipanla$'").splitlines()
-                            if len(l.split()) >= 3]
-                    main = next((r[0] for r in rows if r[2] == APP_PKG and int(r[1]) < 1000), None)
-                    if not main:
-                        logger.warning("KPL frida: App 主进程未找到")
-                        return False
-                tracer = next((r[0] for r in rows if r[2] == APP_PKG and r[1] == main), None)
-                if tracer:
-                    self._adb_shell(f"kill -9 {tracer}")
-                session = dev.attach(int(main))
-                script = session.create_script(SIGN_JS)
-                script.load()
-                self._session = session
-                self._exp = script.exports_sync if hasattr(script, "exports_sync") else script.exports
-                logger.info("KPL frida: 已 attach 并加载签名桥")
-                return True
-            except Exception as e:
-                logger.warning(f"KPL frida attach 失败: {e}")
-                self._session = None
-                self._exp = None
-                return False
-
-    def sign(self, challenge: str, device_id: str, conn_type: str, server_time: str,
-             timeout_s: float = 45) -> Optional[str]:
-        """借 App 白盒签名。先确保 App 在跑，attach 后签名（挑战时效数秒）"""
-        t0 = time.time()
-        while time.time() - t0 < timeout_s:
-            if not self.ensure():
-                # App 可能没跑，拉起后重试
-                time.sleep(4)
-                continue
-            try:
-                r = self._exp.sign(challenge, device_id, conn_type, server_time)
-                if r and not str(r).startswith("ERR") and str(r) != "NULL" and len(r) > 20:
-                    return str(r)
-                logger.debug(f"KPL 签名异常输出: {str(r)[:60]}")
-            except Exception as e:
-                logger.debug(f"KPL 签名调用失败: {e}")
-                self._session = None
-                self._exp = None
-            time.sleep(1)
-        return None
-
-
-_frida_bridge: Optional[FridaBridge] = None
-_frida_lock = threading.Lock()
-
-
-def get_frida_bridge() -> FridaBridge:
-    global _frida_bridge
-    with _frida_lock:
-        if _frida_bridge is None:
-            _frida_bridge = FridaBridge()
-        return _frida_bridge
+    """内置签名器是否可用（java + 部署物齐全）"""
+    return _find_java() is not None and os.path.isfile(os.path.join(SIGNER_DIR, "kplsigner.jar"))
 
 
 # ============= Socket 会话 =============
@@ -399,74 +305,78 @@ class KplSocketSession:
 
     # ---- 连接 ----
 
-    def _resolve_server(self) -> Optional[Tuple[str, int]]:
+    def _resolve_servers(self) -> List[Tuple[str, int]]:
+        """getIPList 动态服务器列表（8080 优先，去重保序）+ 兜底"""
+        cands: List[Tuple[str, int]] = []
         try:
             import httpx
             r = httpx.get("https://getsockip.kaipanla.com/getIPList",
                           params={"PhoneOSNew": "1", "DeviceID": self.device_id,
                                   "VerSion": "6.3.20.0"}, timeout=8)
             iplist = r.json().get("ipList") or []
-            # 优先 8080 端口
             for item in iplist:
                 ip, _, port = item.partition(":")
-                if port == "8080":
-                    return ip, 8080
-            if iplist:
-                ip, _, port = iplist[0].partition(":")
-                return ip, int(port or 8080)
+                entry = (ip, int(port or 8080))
+                if entry not in cands:
+                    cands.append(entry)
+            cands.sort(key=lambda hp: 0 if hp[1] == 8080 else 1)
         except Exception as e:
             logger.debug(f"KPL getIPList 失败: {e}")
-        return ("124.71.166.244", 8080)  # 兜底
+        for fallback in (("124.71.166.244", 8080), ("124.71.166.244", 80)):
+            if fallback not in cands:
+                cands.append(fallback)
+        return cands
 
     def connect(self) -> bool:
-        """TLS 连接 + 挑战 + 白盒签名 + 鉴权。成功返回 True"""
+        """TLS 连接 + 挑战 + 白盒签名 + 鉴权。逐服务器尝试（仅部分端口会推 260 挑战）。"""
         from config import config
         cert_p, key_p = ensure_cert_pems(self.static_dir, self.data_dir)
-        server = self._resolve_server()
-        if not server:
-            return False
-        host, port = server
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         ctx.load_cert_chain(cert_p, key_p)
-        raw = socket.create_connection((host, port), timeout=10)
-        self.sock = ctx.wrap_socket(raw, server_hostname="socket.kaipan.com")
-        self.sock.settimeout(3)
-        self._alive = True
 
-        # 挑战
-        ch_data = self._recv_challenge(timeout_s=6)
-        if not ch_data:
-            self.close()
-            return False
-        challenge, server_time = ch_data
+        for host, port in self._resolve_servers():
+            try:
+                raw = socket.create_connection((host, port), timeout=8)
+                self.sock = ctx.wrap_socket(raw, server_hostname="socket.kaipan.com")
+                self.sock.settimeout(3)
+                self._alive = True
+            except Exception as e:
+                logger.debug(f"KPL dial {host}:{port} 失败: {str(e)[:60]}")
+                continue
 
-        # 白盒签名：首选本机签名服务(HTTP, 环境解耦)，回退插件内 frida 桥
-        sig = sign_via_http(challenge, self.device_id, "99", str(server_time))
-        if not sig:
-            bridge = get_frida_bridge()
-            sig = bridge.sign(challenge, self.device_id, "99", str(server_time))
-        if not sig:
-            self.close()
-            logger.warning("KPL Socket: 白盒签名失败（需要签名服务或模拟器运行开盘啦App）")
-            return False
+            # 挑战（80/14000 等端口可能不推挑战 → 换下一台）
+            ch_data = self._recv_challenge(timeout_s=6)
+            if not ch_data:
+                logger.debug(f"KPL {host}:{port} 无挑战，换下一台")
+                self.close()
+                continue
+            challenge, server_time = ch_data
 
-        # 鉴权
-        req = (pb_str(1, self.device_id) + pb_uint(2, 1) + pb_str(3, "6.3.20.0")
-               + pb_uint(4, 129) + pb_str(5, sig) + pb_str(6, "0") + pb_str(7, "0")
-               + pb_uint(8, 99) + pb_str(10, "w48") + pb_uint(11, 0))
-        self.sock.sendall(build_frame(610, req, kind=3, seq=self._next_seq(), flags=0))
-        resp = self._wait_cmd(610, timeout_s=5)
-        if resp is None:
-            self.close()
-            logger.warning("KPL Socket: 鉴权无响应（签名可能已毒化或超时）")
-            return False
-        # 启动心跳
-        self._hb_thread = threading.Thread(target=self._heartbeat, daemon=True)
-        self._hb_thread.start()
-        logger.info(f"KPL Socket: 已鉴权连接 {host}:{port}")
-        return True
+            # 白盒签名：内置 unidbg 签名器（离线模拟 libauthSign.so，无模拟器/无网络依赖）
+            sig = sign_local(challenge, self.device_id, "99", str(server_time))
+            if not sig:
+                self.close()
+                logger.warning("KPL Socket: 离线签名失败（需 Java 8+ 且 signer 部署物完整）")
+                return False
+
+            # 鉴权
+            req = (pb_str(1, self.device_id) + pb_uint(2, 1) + pb_str(3, "6.3.20.0")
+                   + pb_uint(4, 129) + pb_str(5, sig) + pb_str(6, "0") + pb_str(7, "0")
+                   + pb_uint(8, 99) + pb_str(10, "w48") + pb_uint(11, 0))
+            self.sock.sendall(build_frame(610, req, kind=3, seq=self._next_seq(), flags=0))
+            resp = self._wait_cmd(610, timeout_s=5)
+            if resp is None:
+                self.close()
+                logger.debug(f"KPL {host}:{port} 鉴权无响应，换下一台")
+                continue
+            # 启动心跳
+            self._hb_thread = threading.Thread(target=self._heartbeat, daemon=True)
+            self._hb_thread.start()
+            logger.info(f"KPL Socket: 已鉴权连接 {host}:{port}")
+            return True
+        return False
 
     def ensure_connected(self) -> bool:
         if self.alive:
@@ -583,8 +493,6 @@ class KplSocketAPI:
             for attempt in (1, 2):
                 try:
                     if not self._session or not self._session.alive:
-                        if attempt == 1 and not get_frida_bridge().ensure():
-                            return None  # 模拟器/App不在，直接降级
                         self._session = KplSocketSession(self.device_id, self.static_dir, self.data_dir)
                     resp = self._session.rpc(cmd, body, timeout_s)
                     if resp is not None:
@@ -653,29 +561,49 @@ class KplSocketAPI:
     # ---- 题材库 ----
 
     def get_themes(self) -> Optional[List[Dict[str, Any]]]:
-        """cmd 3009: 题材库全量"""
-        resp = self._session_rpc(3009, b"")
+        """cmd 3009: 题材库全量。返回 [{id,name,pinyin,hot,zt_num,pct,is_hot,up_num}]（服务端 raw 序=热度降序）"""
+        resp = self._session_rpc(3009, b"", timeout_s=12)
         if resp is None:
             return None
         themes = []
-        for off in range(0, min(4000, len(resp))):
+        for off in range(0, min(200, len(resp))):
             try:
                 ff = pb_flat(resp[off:])
-                if sum(1 for f, wt, v in ff if f == 10) > 3:
+                if sum(1 for f, wt, v in ff if f == 10 and isinstance(v, bytes)) > 3:
                     for fno, wt, v in ff:
-                        if fno == 10:
-                            row, concepts = {}, []
-                            for f3, wt3, v3 in pb_flat(v):
-                                if f3 == 13:
-                                    concepts.append({
-                                        f4: (v4.decode("utf8", "replace") if isinstance(v4, bytes) else v4)
+                        if fno != 10 or not isinstance(v, bytes):
+                            continue
+                        it = {"concepts": []}
+                        for f3, wt3, v3 in pb_flat(v):
+                            if f3 == 1 and isinstance(v3, bytes):
+                                it["id"] = v3.decode("utf8", "replace")
+                            elif f3 == 2 and isinstance(v3, bytes):
+                                it["name"] = v3.decode("utf8", "replace")
+                            elif f3 == 4 and isinstance(v3, bytes):
+                                it["pinyin"] = v3.decode("utf8", "replace")
+                            elif f3 == 5 and wt3 == 0:
+                                it["is_hot"] = v3        # 持续火爆标
+                            elif f3 == 6 and wt3 == 0:
+                                it["hot"] = v3           # 热度
+                            elif f3 == 7 and wt3 == 0:
+                                it["zt_num"] = v3        # 涨停数
+                            elif f3 == 8 and wt3 == 0:
+                                it["up_num"] = v3        # 上涨家数
+                            elif f3 == 9 and wt3 == 0:
+                                it["is_new"] = v3
+                            elif f3 == 12 and wt3 == 5:
+                                it["pct"] = round(v3, 2)
+                            elif f3 == 12 and wt3 == 0:
+                                it["pct"] = round(v3 / 100.0, 2)
+                            elif f3 == 13 and isinstance(v3, bytes):
+                                try:
+                                    it["concepts"].append({
+                                        str(f4): (v4.decode("utf8", "replace") if isinstance(v4, bytes) else v4)
                                         for f4, wt4, v4 in pb_flat(v3)})
-                                elif isinstance(v3, bytes) and wt3 == 2:
-                                    row[f3] = v3.decode("utf8", "replace")
-                                else:
-                                    row[f3] = v3
-                            row["concepts"] = concepts[:3]
-                            themes.append(row)
+                                except Exception:
+                                    pass
+                        if it.get("name"):
+                            themes.append(it)
                     break
             except Exception:
                 continue

@@ -699,27 +699,11 @@ class KplClient:
                        for s in (info.get("Stocks") or []) if isinstance(s, dict)],
         }
 
-    # ---------- 题材库（Socket 通道, 经本机网关 127.0.0.1:9877） ----------
-
-    GATEWAY = "http://127.0.0.1:9877"
-
-    def _gw_pull(self, requests: List[Dict[str, Any]], timeout: float = 280.0) -> Optional[List[Dict[str, Any]]]:
-        """调 socket 网关拉数据。网关不可用/全失败返回 None（调用方降级提示）"""
-        import urllib.request
-        try:
-            req = urllib.request.Request(
-                f"{self.GATEWAY}/pull",
-                json.dumps({"requests": requests}).encode(),
-                {"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                d = json.loads(r.read().decode())
-            return d.get("results")
-        except Exception as e:
-            logger.debug(f"KPL socket 网关不可达: {str(e)[:80]}")
-            return None
+    # ---------- 题材库（Socket 通道：内置 unidbg 签名器 + 插件内 socket 客户端，无外部依赖） ----------
 
     def get_themes_socket(self, force: bool = False) -> Dict[str, Any]:
-        """题材库全列表（cmd=3009, 实时热度/涨停数/涨幅）。网关不可用时 error 提示"""
+        """题材库全列表（cmd=3009, 实时热度/涨停数/涨幅，服务端 raw 序=热度降序）。
+        签名器不可用时 error 提示（需 Java 8+，部署物 backend/signer/）"""
         if force:
             self.invalidate("themesock")
         hit = self._cache.get("themesock")
@@ -727,42 +711,24 @@ class KplClient:
             return hit["data"]
 
         def _fetch():
-            results = self._gw_pull([{"cmd": 3009}])
-            if not results:
-                return {"error": "socket网关未运行（需启动模拟器+kpl_gateway.py）", "items": []}
-            r = results[0]
-            if r.get("ok"):
-                items = r["data"].get("items") or []
-                items.sort(key=lambda x: x.get("hot") or 0, reverse=True)
-                return {"items": items}
-            return {"error": "网关拉取失败", "items": []}
+            import kpl_socket
+            raw = kpl_socket.get_kpl_socket().get_themes()
+            if raw is None:
+                return {"error": "socket 通道不可用（内置签名需 Java 8+；确认 backend/signer/ 完整）",
+                        "items": []}
+            items = [{
+                "id": str(t.get("id", "")), "name": t.get("name", ""),
+                "pinyin": t.get("pinyin", ""), "hot": t.get("hot", 0),
+                "zt_num": t.get("zt_num", 0), "pct": t.get("pct", 0),
+                "is_hot": t.get("is_hot", 0), "up_num": t.get("up_num", 0),
+            } for t in raw]
+            items.sort(key=lambda x: x.get("hot") or 0, reverse=True)
+            return {"items": items}
 
         data = _fetch()
         if data.get("items"):
             self._cache["themesock"] = {"data": data, "ts": time.time()}
         return data
-
-    @staticmethod
-    def _gw_build_2501(plate_id: str, count: int = 60, quota_type: int = 2) -> str:
-        """构造 2501 请求体 hex（股票池: plateId+排序+数量）"""
-        def varint(v):
-            out = b""
-            while True:
-                b = v & 0x7F
-                v >>= 7
-                out += bytes([b | (0x80 if v else 0)])
-                if not v:
-                    return out
-
-        def pbs(idx, s):
-            b = s.encode()
-            return bytes([idx << 3 | 2]) + varint(len(b)) + b
-
-        def pbu(idx, v):
-            return bytes([idx << 3 | 0]) + varint(v)
-        body = (pbs(1, plate_id) + pbu(2, quota_type) + pbu(3, 0) + pbu(4, 0) + pbu(5, 0)
-                + pbu(6, 0) + pbu(7, count) + pbu(8, 0) + pbu(9, 0) + pbu(10, 0) + pbu(11, 0))
-        return body.hex()
 
     def get_theme_detail_socket(self, theme_id: str, name: str = "") -> Dict[str, Any]:
         """题材详情（App 同源）：HTTP Theme/InfoGet 一个接口包含全部数据——
@@ -812,7 +778,7 @@ class KplClient:
             table.append(row1)
         out["table"] = table
 
-        # 成分股平铺 + 实时行情匹配（2501 经映射板块）
+        # 成分股平铺 + 实时行情匹配（2501 经映射板块，内置 socket 客户端）
         stock_list = [{
             "code": s.get("StockID"), "name": s.get("prod_name"),
             "hot": s.get("HotNum"),
@@ -823,11 +789,10 @@ class KplClient:
         bid = self._theme_board_id(out["name"])
         if bid:
             try:
-                results = self._gw_pull([{"cmd": 2501,
-                                          "body_hex": self._gw_build_2501(bid, count=200, quota_type=2)}],
-                                        timeout=120)
-                if results and results[0].get("ok"):
-                    for it in (results[0]["data"] or {}).get("items") or []:
+                import kpl_socket
+                pool = kpl_socket.get_kpl_socket().get_sector_pool(bid, quota_type=2, count=200)
+                if pool:
+                    for it in pool.get("items") or []:
                         q = it.get("quotas") or []
                         quotes[str(it.get("1", ""))] = {
                             "pct": (q[2] if len(q) > 2 else ""),

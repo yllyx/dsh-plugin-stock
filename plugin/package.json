@@ -33,7 +33,8 @@
     "README.md",
     "PUBLISHING.md",
     "CHANGELOG.md",
-    "backend/certs/*"
+    "backend/certs/*",
+    "backend/signer/**"
   ],
   "scripts": {
     "release": "node publish.js",
