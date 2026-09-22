@@ -1778,7 +1778,8 @@ window.__ModuleLoader__.load({
                 try { setHome(await api("/api/kpl/home")); } catch { /* */ }
             }, []);
             usePolling(load, 30000, []);
-            const logged = status && status.logged_in;
+            const statusLoaded = !!status;
+            const logged = statusLoaded ? !!status.logged_in : true; // 未加载完时不闪登录卡
             // 大盘解读弹窗：每次打开面板首次展示
             useEffect(() => {
                 if (home && home.explain && home.explain.content && !sessionStorage.getItem("kpl_explain_seen")) {
@@ -2366,12 +2367,19 @@ window.__ModuleLoader__.load({
 
         /* ---- 主路由：底部导航 + 下钻 ---- */
 
+        const KPL_STATUS_MEM = { data: null };
+
         function KplTab() {
             const [activeNav, setActiveNav] = useState("home");
             const [drill, setDrill] = useState(null);
-            const [status, setStatus] = useState(null);
+            // 登录态记忆：跨 Tab 切换/重挂载保留，避免每次切 Tab 闪登录卡
+            const [status, setStatus] = useState(KPL_STATUS_MEM.data);
             const loadStatus = useCallback(async () => {
-                try { setStatus(await api("/api/kpl/status")); } catch { /* */ }
+                try {
+                    const s = await api("/api/kpl/status");
+                    KPL_STATUS_MEM.data = s;
+                    setStatus(s);
+                } catch { /* */ }
             }, []);
             usePolling(loadStatus, 30000, []);
 

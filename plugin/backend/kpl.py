@@ -116,6 +116,8 @@ class KplClient:
         self._last_req: float = 0.0
         self._cache: Dict[str, Dict[str, Any]] = {}   # key -> {"data":..., "ts":...}
         self._token_invalid = False
+        self._info_cache: Optional[Dict[str, Any]] = None   # GetInfo 结果（后台验活写入）
+        self._last_verify_ts: float = 0.0                    # 上次后台验活时间
 
     # ---------- 基础 ----------
 
@@ -191,6 +193,35 @@ class KplClient:
         if data is not None:
             self._cache[key] = {"data": data, "ts": now}
         return (data if data is not None else (hit or {}).get("data"))
+
+    def _cached_swr(self, key: str, ttl: float, fn):
+        """stale-while-revalidate：过期先回旧值并后台刷新（单飞），冷启动才同步拉取。
+        用于首页各模块——前端切换 Tab 秒开，不用等 2.5s 限速串行队列。"""
+        now = time.time()
+        hit = self._cache.get(key)
+        if hit and now - hit["ts"] < ttl:
+            return hit["data"]
+        if hit:
+            if not hit.get("refreshing"):
+                hit["refreshing"] = True
+
+                def _bg():
+                    try:
+                        data = fn()
+                        if data is not None:
+                            self._cache[key] = {"data": data, "ts": time.time()}
+                        elif key in self._cache:
+                            self._cache[key]["refreshing"] = False
+                    except Exception:
+                        if key in self._cache:
+                            self._cache[key]["refreshing"] = False
+
+                threading.Thread(target=_bg, daemon=True, name=f"kpl-swr-{key}").start()
+            return hit["data"]
+        data = fn()
+        if data is not None:
+            self._cache[key] = {"data": data, "ts": now}
+        return data
 
     def invalidate(self, prefix: str = ""):
         for k in [k for k in self._cache if k.startswith(prefix)]:
@@ -317,28 +348,50 @@ class KplClient:
         config.update({"kpl_phone": phone.strip(), "kpl_password": password.strip()})
 
     def status(self) -> Dict[str, Any]:
-        logged = self.is_logged_in()
-        endtime = config.get("kpl_token_endtime")
-        info = None
-        if logged:
-            d = self.call(HOST_LHB, "UserInfo", "GetInfo")
-            if d and (d.get("UserName") or d.get("UserID")):
-                info = {"user_id": str(config.get("kpl_user_id") or ""),
-                        "username": d.get("UserName"),
-                        "kai_pan_b": d.get("KaiPanB")}
-            elif d is None:
-                self._token_invalid = True
+        """登录态（即时返回，不做阻塞式网络校验）。
+        有 Token 且未被明确判定失效 = 已登录，用户信息取自登录时持久化的 kpl_username；
+        Token 验活由后台线程限频执行（5分钟），只有服务端明确拒绝才置 token_invalid，
+        网络抖动不影响登录态。"""
+        uid = str(config.get("kpl_user_id") or "")
+        tok = str(config.get("kpl_token") or "")
+        have_token = bool(uid and tok and uid != "0")
+        if have_token and not self._token_invalid:
+            now = time.time()
+            if now - self._last_verify_ts > 300:
+                self._last_verify_ts = now
+                threading.Thread(target=self._verify_token, daemon=True,
+                                 name="kpl-verify").start()
+        info = dict(self._info_cache) if self._info_cache else None
+        if info is None and have_token and config.get("kpl_username"):
+            info = {"user_id": uid, "username": config.get("kpl_username"), "kai_pan_b": ""}
         phone = str(config.get("kpl_phone") or "")
         return {
-            "logged_in": logged and info is not None,
-            "user_id": config.get("kpl_user_id") or "",
-            "token_endtime": endtime,
+            "logged_in": have_token and not self._token_invalid,
+            "user_id": uid,
+            "token_endtime": config.get("kpl_token_endtime"),
             "user_info": info,
             "token_invalid": self._token_invalid,
             "phone_masked": (phone[:3] + "****" + phone[-4:]) if len(phone) >= 7 else "",
             "has_credentials": bool(phone and config.get("kpl_password")),
             "can_relogin": bool(phone and config.get("kpl_password")),
         }
+
+    def _verify_token(self):
+        """后台验活：成功刷新用户信息缓存；服务端明确拒绝登录态才标记失效。"""
+        d = self.call(HOST_LHB, "UserInfo", "GetInfo")
+        if d and (d.get("UserName") or d.get("UserID")):
+            self._info_cache = {"user_id": str(config.get("kpl_user_id") or ""),
+                                "username": d.get("UserName"),
+                                "kai_pan_b": d.get("KaiPanB")}
+            self._token_invalid = False
+            if d.get("UserName"):
+                config.update({"kpl_username": d.get("UserName")})
+        elif isinstance(d, dict):
+            msg = str(d.get("errmsg") or d.get("Msg") or "")
+            if "登录" in msg or "token" in msg.lower() or "失效" in msg:
+                self._token_invalid = True
+                logger.warning(f"KPL Token 被服务端判定失效: {msg[:60]}")
+        # d is None（网络失败/超时）→ 保持现状，不误杀
 
     # ---------- 自选股 ----------
 
@@ -468,7 +521,7 @@ class KplClient:
         """盯盘聚合（封单变动/机构动向/连板天梯）—— App 30s轮询同款"""
         def fetch():
             return self.call(HOST_HQ, "HomeDingPan", "ModuleVersatile")
-        return self._cached("dingpan", 15, fetch)
+        return self._cached_swr("dingpan", 15, fetch)
 
     def get_index_quotes(self) -> Optional[Dict[str, Any]]:
         def fetch():
@@ -478,14 +531,14 @@ class KplClient:
                 d = self.call(HOST_ART, "IndexPlate", "GetIndexList",
                               {"view": "1,2,3,4,6", "st": "2", "Type": "0"})
             return d
-        return self._cached("indexq", 10, fetch)
+        return self._cached_swr("indexq", 10, fetch)
 
     def get_sentiment_history(self) -> Optional[List[Dict[str, Any]]]:
         def fetch():
             d = self.call(HOST_HIS, "HisHomeDingPan", "ChangeStatistics",
                           {"st": "1000", "Index": "0"}, authed=False)
             return (d or {}).get("info") or []
-        return self._cached("senthist", 300, fetch)
+        return self._cached_swr("senthist", 300, fetch)
 
     def get_global(self) -> Optional[Dict[str, Any]]:
         def fetch():
@@ -500,13 +553,13 @@ class KplClient:
         def fetch():
             d = self.call(HOST_LHB, "Search", "TodayTopList", authed=False)
             return (d or {}).get("list") or []
-        return self._cached("hotstocks", 120, fetch)
+        return self._cached_swr("hotstocks", 120, fetch)
 
     def get_hot_words(self) -> Optional[List[str]]:
         def fetch():
             d = self.call(HOST_HIS, "HisLimitResumption", "GetHotSearch", authed=False)
             return (d or {}).get("word") or []
-        return self._cached("hotwords", 600, fetch)
+        return self._cached_swr("hotwords", 600, fetch)
 
     # ---------- 首页聚合（复刻 App 首页信息流，模块接口均为 2026-09-22 实测） ----------
 
@@ -514,7 +567,7 @@ class KplClient:
         """首页各模块聚合：大盘解读/最新主题/AI快讯/最强风口/市场风口/市场情绪/活跃板块/推荐文章"""
         if force:
             self.invalidate("homefeed")
-        return self._cached("homefeed", 20, self._fetch_home_feed)
+        return self._cached_swr("homefeed", 20, self._fetch_home_feed)
 
     def _fetch_home_feed(self) -> Optional[Dict[str, Any]]:
         out: Dict[str, Any] = {}
@@ -635,6 +688,13 @@ def start_snapshot_loop():
     def _loop():
         kpl = get_kpl()
         time.sleep(3)
+        # 预热首页缓存（后台串行拉 ~7 个请求），用户首次点开开盘啦 Tab 即秒开
+        try:
+            kpl.get_home_feed()
+            kpl.get_hot_stocks()
+            logger.info("KPL 首页缓存预热完成")
+        except Exception:
+            pass
         while not _snapshot_stop.is_set():
             wl = kpl.get_watchlist()
             stocks = (wl or {}).get("stocks", {})
