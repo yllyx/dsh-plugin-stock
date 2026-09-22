@@ -115,7 +115,7 @@ git push origin main --tags
 ## 开盘啦登录协议（逆向自 App 6.3.20.0，mitmproxy 抓包+字节码双重验证）
 
 - **RSA 加密**：用 APK `assets/pub.key`（**RSA-2048** X.509 SPKI），PKCS#1 v1.5，输出 Java `Base64.encode(bytes,0)` 风格（76字符/行+\n，URL 编码后 349 字符/手机号）。⚠️ `assets/PublicKey`+`PrivateKey` 是另一对（服务端下发数据的解密对），**不是**加密钥对——曾误用 PrivateKey 解请求密文得 93B 乱码，走上弯路
-- **发验证码**：`c=Verify a=SendVerify`，参数 `Phone=RSA(手机号)`、`CheckCode=md5(DeviceID+手机号+"kaipanla")小写hex`（公式已对照抓包实值逐字节匹配）、`SType=1`；响应 `{"Phone":"明文","errcode":"0"}`
+- **发验证码（登录页用）**：`c=PwlMob a=PwlSendVerify`（免登录态），参数 `Phone=RSA(手机号)`、`CheckCode=md5(DeviceID+手机号+"kaipanla")小写hex`（公式已对照抓包实值逐字节匹配）、`SType=1`；响应 `{"Phone":"明文","errcode":"0"}`。⚠️ `Verify/SendVerify` 是换绑手机/注销场景（**需登录**，未登录报"登录状态失效！"，别用错）
 - **短信登录**：`c=Login a=LoginPhone`，`Phone=RSA`、`Verify=明文验证码`、`InviteCode`、`DeviceToken=md5(did)`、`ClientID=3`
 - **密码登录**：`c=Login2 a=LoginDo`，`Phone=RSA(账号)`、`Password=RSA(密码)`（>50字符原样传）、`EncryptType=RSA`；密码规则限字母数字（含下划线报"密码格式有误"）
 - **登录响应**：`{Phone:RSA密文, UserID, Token, EndTime(unix), UserName, Name, ...}`

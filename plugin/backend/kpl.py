@@ -213,12 +213,13 @@ class KplClient:
     # ---------- 登录（逆向自 App 6.3.20.0：nv0/j00/ox0 字节码 + mitmproxy 抓包验证） ----------
 
     def send_code(self, phone: str, stype: str = "1") -> Dict[str, Any]:
-        """发送短信验证码 c=Verify a=SendVerify。SType: 1=登录"""
+        """发送短信验证码。⚠️ 必须用 c=PwlMob a=PwlSendVerify（登录页同款，免登录态）；
+        Verify/SendVerify 是换绑手机/注销场景（需登录，未登录报"登录状态失效！"）"""
         phone = phone.strip()
         if not phone:
             return {"ok": False, "error": "手机号不能为空"}
         did = self._device_id()
-        d = self.call(HOST_LHB, "Verify", "SendVerify", {
+        d = self.call(HOST_LHB, "PwlMob", "PwlSendVerify", {
             "Phone": kpl_rsa_encrypt(phone),
             "CheckCode": _kpl_check_code(did, phone),
             "SType": stype,
