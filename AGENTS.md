@@ -140,6 +140,16 @@ git push origin main --tags
 - **排查工具**：App 全量接口注册表已提取到 `kanpan_spec/captures/api_registry.json`（1015 对 c/a，从 ox0/j00 dump 按"相邻 const-string 对"解析）；多域轮询探测脚本 `tools/probe_home2.py`（Token 从 `stock-data/config.json` 读，5 域轮询找 class 所在域）
 - **主题机会页**（`GET /api/kpl/themes?tab=themes|calendar&index=&st=`）：双Tab同端点 `ThemeNews/GetList`（apparticle），**Type=-1=最新主题、Type=3=投资日历**（mitmproxy 代理对 apparticle 域有效——ART/LHB 域无 pinning 可抓，apphwshhq 域有 pinning 抓不到）。主题条目 `Stocks` 按 `SetTop=1` 优先展示前4只（2×2）；日历条目 `ColorType` 1红=事件 2橙=会议。分页用 Index（0,1,2…st=30/页）；`dex 里 bj 类` = ForumsTuyere 论坛仓库（GetEvnArt/AddFocus 等，主题收藏/关注用）
 - **主题详情页**（`GET /api/kpl/themes/{news_id}`）：`ThemeNews/GetInfo`（apparticle，参数 `NewsID`+`Type=0`）。Info 含 `Content`(HTML正文)、`ZSCode/ZSName/ZSDesc`(主题介绍卡)、`Stocks[{Code,Name,Rate,Desn公司简介,IsSel}]`；`TiCai/ReaderCount`(appres) 是阅读计数上报可忽略。前端 KplTab 下钻用**栈(drills)**实现逐级返回，底部导航切换时清栈
+
+### 题材库（Socket 通用通道，2026-09-22 全链路打通）
+
+- **Socket 网关**（必读）：`E:\zcode-projects\kanpan_spec\tools\kpl_gateway.py`，常驻 `http://127.0.0.1:9877`。`POST /pull {"requests":[{"cmd":3009},{"cmd":3010,"body_hex":"..."}]}` 一次签名窗口完成挑战→竞速attach签名→610鉴权→顺序拉取→解析→JSON；失败自动冷却25s+冷启动App重试3轮。`GET /health` 查状态
+- **网关部署前置**：模拟器(kpl_analysis) + 开盘啦App + **`adb root`**（⚠️ 重启模拟器后必须重做，否则杀不掉壳看护进程→attach 全部 "process not found"，这是当天排查半天的根因）+ frida-server（`/data/local/tmp/fs16 -l 0.0.0.0:27042`）+ `adb forward tcp:9876 tcp:27042`
+- **壳进程结构**：frida 视图里真身进程名是中文"开盘啦"、`com.aiyu.kaipanla` 反而是壳的 ptrace 看护子进程（无业务类，attach 它 = ClassNotFound）；adb ps 视图里真身=PPID<1000 的那个，看护=PPID==真身。竞速流程：拿260挑战→杀看护→毫秒级 attach 真身→签名→610（签名窗口一次性，用完即毒化，需冷启动重来——网关已固化此流程）
+- **已验证 cmd**：3009 题材库全列表（249题材：id/名称/拼音/热度/涨停数/涨幅，ASCII头剥除用偏移扫描找 field10 密集区）；3010 题材统计（f2=股票数/f3涨/f4跌/f5均涨/f6 map<分类id,{num,up,down,avg}>，**只认题材id，801开头板块id无响应**）；2501 板块股票池（plateId=801xxx 有效、题材id无效；quotas=[细分标签,现价,涨跌%,成交额,换手率,...]）
+- **题材名→801板块id 映射**：`Index/GetInfo`（apphwhq，**View 必须含 2,3,4,5**）响应的 `BaceFaceList`=[[题材名,涨幅,801xxx],...]；插件在 overview 时积累，详情页个股行情优先 socket 2501(映射到的板块id)，未映射题材回退东财板块桥接
+- **插件端点**：`GET /api/kpl/tika`（题材库列表，热度降序+30s缓存）、`GET /api/kpl/tika/{id}?name=`（3010统计+2501/东财个股行情，20s缓存）；前端首页3条+题材库页(热度/涨幅切换)+详情页(小表格/个股行情双视图)
+- 3010 分类 id（5043-5050 等）的中文名映射待补（需另有接口或积累样本）
 - **坑**：报 `errcode:9999 "class not exists mothod"` = **域名不对**（同一控制器类只存在于特定域）；`1020 参数出错`=参数缺失/为空
 - 模拟器 frida 运行时抓包在 pm clear 后失效（App 看门狗 2.8s 内杀被注入进程，status_hide 也压不住）；**静态 dex 逆向 + 多域探测**是当前有效路线
 
