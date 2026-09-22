@@ -19,6 +19,7 @@
 
 import base64
 import hashlib
+import json
 import random
 import threading
 import time
@@ -525,13 +526,39 @@ class KplClient:
 
     def get_index_quotes(self) -> Optional[Dict[str, Any]]:
         def fetch():
+            # View 含 2,3,4,5 才有 BaceFaceList（题材名→板块id 映射, App 同款参数）
             d = self.call(HOST_HQ2, "Index", "GetInfo",
-                          {"View": "1,7,8,9,10,11"})
+                          {"View": "2,3,4,5,7,8,9,10,11"})
             if not d:
                 d = self.call(HOST_ART, "IndexPlate", "GetIndexList",
                               {"view": "1,2,3,4,6", "st": "2", "Type": "0"})
+            # 积累 题材名→801xxx板块id 映射（BaceFaceList: [[名称, 涨幅, 板块id], ...]）
+            try:
+                for row in (d or {}).get("BaceFaceList") or []:
+                    if isinstance(row, list) and len(row) >= 3:
+                        self._theme_board_map[str(row[0])] = str(row[2])
+            except Exception:
+                pass
             return d
         return self._cached_swr("indexq", 10, fetch)
+
+    _theme_board_map: Dict[str, str] = {}
+    _theme_board_map_ts: float = 0.0
+
+    def _theme_board_id(self, name: str) -> str:
+        """题材名→801xxx 板块id（Index/GetInfo 的 BaceFaceList 积累, 10分钟缓存）"""
+        if not name:
+            return ""
+        if not self._theme_board_map or time.time() - self._theme_board_map_ts > 600:
+            try:
+                d = self.call(HOST_HQ2, "Index", "GetInfo", authed=False)
+                for row in (d or {}).get("BaceFaceList") or []:
+                    if isinstance(row, list) and len(row) >= 3:
+                        self._theme_board_map[str(row[0])] = str(row[2])
+                self._theme_board_map_ts = time.time()
+            except Exception:
+                pass
+        return self._theme_board_map.get(name, "")
 
     def get_sentiment_history(self) -> Optional[List[Dict[str, Any]]]:
         def fetch():
@@ -597,6 +624,12 @@ class KplClient:
             "stocks": [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate")}
                        for s in (x.get("Stocks") or []) if isinstance(s, dict)][:2],
         } for x in tl[:2]]
+        # 3.5 题材库热榜前3（Socket 网关, 网关未运行则空列表）
+        try:
+            tk_items = (self.get_themes_socket() or {}).get("items") or []
+            out["tika"] = tk_items[:3]
+        except Exception:
+            out["tika"] = []
         # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
         qd = self.call(HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, authed=False)
         out["qiangdu"] = (qd or {}).get("List") or []
@@ -609,21 +642,16 @@ class KplClient:
             "today": sent[0] if len(sent) > 0 else {},
             "yesterday": sent[1] if len(sent) > 1 else {},
         }
-        # 7. 近期活跃板块（指数板块列表按涨幅排序取前6）
-        idx = self.call(HOST_ART, "IndexPlate", "GetIndexList",
-                        {"view": "1,2,3,4,6", "st": "2", "Type": "0"}, authed=False)
-        plates = []
-        for lst in [(idx or {}).get("list"), (idx or {}).get("List")]:
-            if isinstance(lst, list) and lst:
-                for x in lst:
-                    if isinstance(x, dict) and x.get("Name"):
-                        plates.append({"name": x.get("Name"), "rate": x.get("PX_change_rate") or x.get("px_change_rate") or 0})
-                    elif isinstance(x, list) and len(x) >= 5:
-                        plates.append({"name": x[1], "rate": x[4]})
-                break
-        plates = [p for p in plates if isinstance(p.get("rate"), (int, float))]
-        plates.sort(key=lambda p: p["rate"], reverse=True)
-        out["active_plates"] = plates[:6]
+        # 7. 近期活跃板块（题材库 socket 数据按涨幅取前6；网关不可用则置空）
+        try:
+            tk = self.get_themes_socket()
+            tk_items = [t for t in (tk or {}).get("items") or []
+                        if isinstance(t.get("pct"), (int, float))]
+            tk_items.sort(key=lambda t: t["pct"], reverse=True)
+            out["active_plates"] = [{"name": t["name"], "rate": t["pct"], "id": t.get("id")}
+                                    for t in tk_items[:6]]
+        except Exception:
+            out["active_plates"] = []
         return out
 
     # ---------- 主题机会页（复刻 App「更多→主题机会」，2026-09-22 mitmproxy 实测） ----------
@@ -670,6 +698,154 @@ class KplClient:
                         "rate": s.get("Rate"), "desc": s.get("Desn")}
                        for s in (info.get("Stocks") or []) if isinstance(s, dict)],
         }
+
+    # ---------- 题材库（Socket 通道, 经本机网关 127.0.0.1:9877） ----------
+
+    GATEWAY = "http://127.0.0.1:9877"
+
+    def _gw_pull(self, requests: List[Dict[str, Any]], timeout: float = 280.0) -> Optional[List[Dict[str, Any]]]:
+        """调 socket 网关拉数据。网关不可用/全失败返回 None（调用方降级提示）"""
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                f"{self.GATEWAY}/pull",
+                json.dumps({"requests": requests}).encode(),
+                {"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.loads(r.read().decode())
+            return d.get("results")
+        except Exception as e:
+            logger.debug(f"KPL socket 网关不可达: {str(e)[:80]}")
+            return None
+
+    def get_themes_socket(self, force: bool = False) -> Dict[str, Any]:
+        """题材库全列表（cmd=3009, 实时热度/涨停数/涨幅）。网关不可用时 error 提示"""
+        if force:
+            self.invalidate("themesock")
+        hit = self._cache.get("themesock")
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+
+        def _fetch():
+            results = self._gw_pull([{"cmd": 3009}])
+            if not results:
+                return {"error": "socket网关未运行（需启动模拟器+kpl_gateway.py）", "items": []}
+            r = results[0]
+            if r.get("ok"):
+                items = r["data"].get("items") or []
+                items.sort(key=lambda x: x.get("hot") or 0, reverse=True)
+                return {"items": items}
+            return {"error": "网关拉取失败", "items": []}
+
+        data = _fetch()
+        if data.get("items"):
+            self._cache["themesock"] = {"data": data, "ts": time.time()}
+        return data
+
+    @staticmethod
+    def _gw_build_2501(plate_id: str, count: int = 60, quota_type: int = 2) -> str:
+        """构造 2501 请求体 hex（股票池: plateId+排序+数量）"""
+        def varint(v):
+            out = b""
+            while True:
+                b = v & 0x7F
+                v >>= 7
+                out += bytes([b | (0x80 if v else 0)])
+                if not v:
+                    return out
+
+        def pbs(idx, s):
+            b = s.encode()
+            return bytes([idx << 3 | 2]) + varint(len(b)) + b
+
+        def pbu(idx, v):
+            return bytes([idx << 3 | 0]) + varint(v)
+        body = (pbs(1, plate_id) + pbu(2, quota_type) + pbu(3, 0) + pbu(4, 0) + pbu(5, 0)
+                + pbu(6, 0) + pbu(7, count) + pbu(8, 0) + pbu(9, 0) + pbu(10, 0) + pbu(11, 0))
+        return body.hex()
+
+    def get_theme_detail_socket(self, theme_id: str, name: str = "") -> Dict[str, Any]:
+        """题材详情:
+        - 小表格视图: 3010 分类统计（socket 网关）
+        - 个股行情视图: 题材名→东财板块桥接→成分股实时行情（socket 无题材成分股 cmd）
+        """
+        tid = str(theme_id)
+        hit = self._cache.get(f"themedet:{tid}")
+        if hit and time.time() - hit["ts"] < 20:
+            return hit["data"]
+        out: Dict[str, Any] = {"id": tid, "name": name}
+
+        # 1. 小表格: 3010 分类统计（仅题材id；801 开头的板块id 服务器不响应, 跳过避免网关空转）
+        def varint(v):
+            o = b""
+            while True:
+                b = v & 0x7F
+                v >>= 7
+                o += bytes([b | (0x80 if v else 0)])
+                if not v:
+                    return o
+        if not tid.startswith("801"):
+            body3010 = bytes([0x08]) + varint(int(tid))
+            results = self._gw_pull([{"cmd": 3010, "body_hex": body3010.hex()}], timeout=120)
+            if results:
+                r = results[0]
+                if r.get("ok"):
+                    d = r["data"]
+                    out["stat"] = {"stock_num": d.get("stock_num"),
+                                   "up_num": d.get("up_num"), "down_num": d.get("down_num"),
+                                   "avg_pct": d.get("avg_pct"),
+                                   "classes": d.get("classes") or []}
+            else:
+                out["stat_error"] = "socket网关未运行（需启动模拟器+kpl_gateway.py）"
+        else:
+            out["stat_error"] = "板块id无小表格数据（板块id直接进入个股行情）"
+
+        # 2. 个股行情: 题材名→板块id 映射（BaceFaceList 积累）→ socket 2501；
+        #    未映射到的题材回退东财板块桥接
+        stocks: List[Dict[str, Any]] = []
+        board_name = ""
+        if name:
+            bid = self._theme_board_id(name)
+            if bid:
+                try:
+                    body2501 = self._gw_build_2501(bid, count=60, quota_type=2)
+                    results = self._gw_pull([{"cmd": 2501, "body_hex": body2501}], timeout=120)
+                    if results and results[0].get("ok"):
+                        for it in (results[0]["data"] or {}).get("items") or []:
+                            q = it.get("quotas") or []
+                            stocks.append({
+                                "code": str(it.get("1", "")), "name": str(it.get("2", "")),
+                                "pct": (q[2] if len(q) > 2 else ""),
+                                "price": (q[1] if len(q) > 1 else ""),
+                                "tag": (q[0] if q else ""),
+                            })
+                        board_name = f"板块{bid}"
+                except Exception as e:
+                    logger.debug(f"题材详情 socket 2501 失败({name}): {e}")
+            if not stocks:
+                try:
+                    from sector_mapper import get_sector_mapper
+                    from sector_monitor import sector_monitor
+                    boards = get_sector_mapper().resolve_real_boards(name, max_boards=1)
+                    if boards:
+                        b = boards[0]
+                        board_name = b.get("name") or ""
+                        info = sector_monitor.get_board_realtime(b["bk_code"], board_name, top_n=30)
+                        for s in (info.get("leaders") or info.get("stocks") or [])[:30]:
+                            stocks.append({
+                                "code": s.get("code") or s.get("stock_code") or "",
+                                "name": s.get("name") or s.get("stock_name") or "",
+                                "pct": s.get("change_pct") if s.get("change_pct") is not None else s.get("pct"),
+                                "price": s.get("price") or s.get("last_px") or "",
+                                "tag": s.get("reason") or "",
+                            })
+                except Exception as e:
+                    logger.debug(f"题材详情东财桥接失败({name}): {e}")
+        out["board_name"] = board_name
+        out["stocks"] = [s for s in stocks if s["code"]]
+        if out.get("stat") or out.get("stocks"):
+            self._cache[f"themedet:{tid}"] = {"data": out, "ts": time.time()}
+        return out
 
     @staticmethod
     def _norm_news(it: Dict[str, Any]) -> Dict[str, Any]:

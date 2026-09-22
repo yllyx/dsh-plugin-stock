@@ -1891,13 +1891,32 @@ window.__ModuleLoader__.load({
                                     y != null && React.createElement("span", { className: "yest" }, " / 昨 " + y))))),
                     today.Day && React.createElement("div", { className: "kpl-sent-day" }, `数据日 ${today.Day}${yest.Day ? `（对比 ${yest.Day}）` : ""}`)),
 
+                // ===== 题材库（Socket 实时, 前3条 + 更多进题材库页） =====
+                ((home && home.tika) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
+                    React.createElement("div", { className: "kpl-sec-head" },
+                        React.createElement("span", { className: "t" }, "题材库"),
+                        React.createElement("span", { className: "more", onClick: () => go({ page: "tika" }) }, "更多 ›")),
+                    home.tika.map(t =>
+                        React.createElement("div", {
+                            key: t.id, className: "kpl-tika-row",
+                            onClick: () => go({ page: "tikaDetail", id: t.id, name: t.name }),
+                        },
+                            React.createElement("span", { className: "rank hot-rank" }, "热"),
+                            React.createElement("span", { className: "name" }, t.name),
+                            React.createElement("span", { className: "hot" }, "🔥 " + (t.hot || 0)),
+                            React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct)),
+                            React.createElement("span", { className: "zt" }, t.zt_num ? t.zt_num + "涨停" : "")))),
+
                 // ===== 近期活跃板块 =====
                 ((home && home.active_plates) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "近期活跃板块")),
                     React.createElement("div", { className: "kpl-active-plates" },
                         home.active_plates.map((p, i) =>
-                            React.createElement("div", { key: i, className: "kpl-active-plate" },
+                            React.createElement("div", {
+                                key: i, className: "kpl-active-plate",
+                                onClick: p.id ? () => go({ page: "tikaDetail", id: p.id, name: p.name }) : undefined,
+                            },
                                 React.createElement("div", { className: "n" }, p.name),
                                 React.createElement("div", { className: "r " + rateCls(p.rate) }, fmtRate(p.rate)))))),
 
@@ -2090,6 +2109,126 @@ window.__ModuleLoader__.load({
                                 React.createElement("span", { className: "code" }, s.code),
                                 React.createElement("b", { className: rateCls(s.rate) }, fmtRate(s.rate))),
                             s.desc && React.createElement("div", { className: "desc" }, s.desc)))));
+        }
+
+        /* ---- 题材库页（Socket 实时: 热度/涨幅排序 + 详情双视图） ---- */
+
+        function KplTikaPage({ go }) {
+            const [sort, setSort] = useState("hot");
+            const [data, setData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const load = useCallback(async () => {
+                setLoading(true);
+                try { setData(await api("/api/kpl/tika")); } catch { setData({ items: [] }); }
+                setLoading(false);
+            }, []);
+            useEffect(() => { load(); }, [load]);
+            const items = (data && data.items) || [];
+            const sorted = [...items].sort((a, b) =>
+                sort === "hot" ? (b.hot || 0) - (a.hot || 0) : (b.pct || 0) - (a.pct || 0));
+            const rateCls = r => (Number(r) >= 0 ? "up" : "down");
+            const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, {
+                    title: "题材库", onBack: () => go({ page: "back" }),
+                    onSearch: () => go({ page: "search" }),
+                }),
+                React.createElement("div", { className: "kpl-subtabs" },
+                    [["hot", "按热度"], ["pct", "按涨幅"]].map(([id, label]) =>
+                        React.createElement("span", {
+                            key: id,
+                            className: `kpl-subtab ${sort === id ? "on" : ""}`,
+                            onClick: () => setSort(id),
+                        }, label))),
+                data && data.error && React.createElement("div", { className: "kpl-empty" },
+                    "⚠ " + data.error),
+                loading && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
+                sorted.map((t, i) =>
+                    React.createElement("div", {
+                        key: t.id, className: "kpl-tika-row",
+                        onClick: () => go({ page: "tikaDetail", id: t.id, name: t.name }),
+                    },
+                        React.createElement("span", { className: "rank" }, i + 1),
+                        React.createElement("span", { className: "name" }, "#" + t.name),
+                        sort === "hot"
+                            ? React.createElement("span", { className: "hot" }, "🔥 " + (t.hot || 0))
+                            : React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct)),
+                        sort === "hot"
+                            ? React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct))
+                            : React.createElement("span", { className: "hot" }, "🔥 " + (t.hot || 0)),
+                        React.createElement("span", { className: "zt" }, t.zt_num ? t.zt_num + "涨停" : ""))),
+                !loading && items.length === 0 && !data?.error && React.createElement("div", { className: "kpl-empty" }, "暂无数据"));
+        }
+
+        function KplTikaDetailPage({ id, name, go }) {
+            const [view, setView] = useState("table");
+            const [d, setD] = useState(null);
+            const [err, setErr] = useState(null);
+            useEffect(() => {
+                let alive = true;
+                api(`/api/kpl/tika/${id}?name=${encodeURIComponent(name || "")}`).then(x => {
+                    if (!alive) return;
+                    if (x.error) setErr(x.error); else setD(x);
+                }).catch(e => { if (alive) setErr(e.message || "加载失败"); });
+                return () => { alive = false; };
+            }, [id, name]);
+            const rateCls = r => (Number(r) >= 0 ? "up" : "down");
+            const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+            const amountFmt = a => {
+                const n = Number(a);
+                if (!isFinite(n) || n === 0) return a || "-";
+                return n >= 1e8 ? (n / 1e8).toFixed(2) + "亿" : n >= 1e4 ? (n / 1e4).toFixed(0) + "万" : String(a);
+            };
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, {
+                    title: "#" + (name || "题材"), onBack: () => go({ page: "back" }),
+                    onSearch: () => go({ page: "search" }),
+                }),
+                React.createElement("div", { className: "kpl-subtabs" },
+                    [["table", "小表格"], ["stocks", "个股行情"]].map(([vid, label]) =>
+                        React.createElement("span", {
+                            key: vid,
+                            className: `kpl-subtab ${view === vid ? "on" : ""}`,
+                            onClick: () => setView(vid),
+                        }, label))),
+                err && React.createElement("div", { className: "kpl-empty" }, "⚠ " + err),
+                !d && !err && React.createElement("div", { className: "kpl-empty" }, "加载中…（首次需建立socket通道, 约10-30秒）"),
+                d && view === "table" && React.createElement("div", { className: "kpl-tikad-table" },
+                    (d.stat && d.stat.classes && d.stat.classes.length)
+                        ? React.createElement("div", null,
+                            React.createElement("div", { className: "kpl-tikad-thead" },
+                                React.createElement("span", null, "分类"),
+                                React.createElement("span", null, "股票数"),
+                                React.createElement("span", null, "上涨"),
+                                React.createElement("span", null, "下跌"),
+                                React.createElement("span", null, "均涨")),
+                            d.stat.classes.map((c, i) =>
+                                React.createElement("div", { key: i, className: "kpl-tikad-trow" },
+                                    React.createElement("span", { className: "n" }, c.name),
+                                    React.createElement("span", null, c.num != null ? c.num : "-"),
+                                    React.createElement("span", { className: rateCls(1) }, c.up != null ? c.up : "-"),
+                                    React.createElement("span", { className: rateCls(-1) }, c.down != null ? c.down : "-"),
+                                    React.createElement("b", { className: rateCls(c.avg_pct || 0) },
+                                        c.avg_pct != null ? fmtRate(c.avg_pct) : "-"))))
+                        : React.createElement("div", { className: "kpl-empty" }, "暂无分类统计数据")),
+                d && view === "stocks" && React.createElement("div", { className: "kpl-tikad-stocks" },
+                    (d.stocks || []).length > 0 && React.createElement("div", { className: "kpl-tikad-sthead" },
+                        `共 ${d.total || (d.stocks || []).length} 只 · 按涨幅排序`),
+                    (d.stocks || []).map(s =>
+                        React.createElement("div", {
+                            key: s.code, className: "kpl-tikad-srow",
+                            onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                        },
+                            React.createElement("div", { className: "row" },
+                                React.createElement("span", { className: "name" }, s.name),
+                                React.createElement("span", { className: "code" }, s.code),
+                                React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct))),
+                            React.createElement("div", { className: "meta" },
+                                React.createElement("span", null, s.tag || ""),
+                                React.createElement("span", null, "价 " + (s.price || "-")),
+                                React.createElement("span", null, "额 " + amountFmt(s.amount)),
+                                React.createElement("span", null, "换手 " + (s.turnover || "-") + "%")))),
+                    d && (d.stocks || []).length === 0 && React.createElement("div", { className: "kpl-empty" }, "暂无个股数据")));
         }
 
         /* ---- 行情页（子Tab: 板块/个股/...） ---- */
@@ -2452,6 +2591,8 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "lhb") content = React.createElement(KplLhbPage);
                 else if (drill.page === "themes") content = React.createElement(KplThemesPage, { go });
                 else if (drill.page === "themeDetail") content = React.createElement(KplThemeDetailPage, { id: drill.id, go });
+                else if (drill.page === "tika") content = React.createElement(KplTikaPage, { go });
+                else if (drill.page === "tikaDetail") content = React.createElement(KplTikaDetailPage, { id: drill.id, name: drill.name, go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
                 content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
@@ -3233,6 +3374,31 @@ window.__ModuleLoader__.load({
                 .kpl-thmd-stock .code { font-size: 14px; font-weight: 600; }
                 .kpl-thmd-stock b { text-align: right; font-size: 14px; }
                 .kpl-thmd-stock .desc { font-size: 13px; color: var(--dsw-alias-label-secondary); line-height: 1.7; margin-top: 6px; text-indent: 2em; }
+                /* ---- 题材库（Socket 实时） ---- */
+                .kpl-tika-row { display: flex; gap: 10px; align-items: center; padding: 10px 6px; border-bottom: 1px solid var(--dsw-alias-border-l2); cursor: pointer; }
+                .kpl-tika-row:last-child { border-bottom: none; }
+                .kpl-tika-row:hover { background: var(--dsw-alias-button-elevated-fill); }
+                .kpl-tika-row .rank { width: 22px; text-align: center; color: var(--dsw-alias-label-secondary); font-weight: 700; }
+                .kpl-tika-row .rank.hot-rank { background: #f59e0b; color: #fff; border-radius: 4px; font-size: 11px; width: auto; padding: 1px 5px; }
+                .kpl-tika-row .name { flex: 1; font-weight: 700; font-size: 14px; }
+                .kpl-tika-row .hot { color: #f59e0b; font-size: 12px; min-width: 70px; text-align: right; }
+                .kpl-tika-row .zt { color: #ef4444; font-size: 11px; border: 1px solid rgba(239,68,68,.4); border-radius: 4px; padding: 1px 6px; }
+                .kpl-tika-row b { min-width: 64px; text-align: right; font-size: 13px; }
+                .kpl-tikad-table { padding: 8px 0; }
+                .kpl-tikad-thead, .kpl-tikad-trow { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap: 4px; padding: 8px 10px; font-size: 13px; align-items: center; }
+                .kpl-tikad-thead { color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l2); }
+                .kpl-tikad-trow { border-bottom: 1px dashed var(--dsw-alias-border-l2); }
+                .kpl-tikad-trow:last-child { border-bottom: none; }
+                .kpl-tikad-trow .n { font-weight: 600; }
+                .kpl-tikad-trow b { text-align: right; }
+                .kpl-tikad-sthead { font-size: 12px; color: var(--dsw-alias-label-secondary); padding: 8px 6px 4px; }
+                .kpl-tikad-srow { padding: 10px 6px; border-bottom: 1px solid var(--dsw-alias-border-l2); cursor: pointer; }
+                .kpl-tikad-srow:hover { background: var(--dsw-alias-button-elevated-fill); }
+                .kpl-tikad-srow .row { display: grid; grid-template-columns: 1.4fr 1fr 1fr; align-items: center; gap: 8px; }
+                .kpl-tikad-srow .name { font-weight: 700; font-size: 14px; color: #3b82f6; }
+                .kpl-tikad-srow .code { color: var(--dsw-alias-label-secondary); font-size: 13px; }
+                .kpl-tikad-srow b { text-align: right; font-size: 14px; }
+                .kpl-tikad-srow .meta { display: flex; gap: 12px; margin-top: 4px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
             `;
             document.head.appendChild(style);
         }

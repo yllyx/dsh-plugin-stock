@@ -1466,6 +1466,18 @@ async def kpl_theme_detail(news_id: str):
     return await asyncio.to_thread(kpl_api.get_kpl().get_theme_detail, news_id)
 
 
+@app.get("/api/kpl/tika")
+async def kpl_tika(force: bool = Query(False)):
+    """题材库全列表（Socket 3009 经网关, 实时热度/涨停数/涨幅, 已按热度降序）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_themes_socket, force)
+
+
+@app.get("/api/kpl/tika/{theme_id}")
+async def kpl_tika_detail(theme_id: str, name: str = Query("")):
+    """题材详情：3010统计(小表格) + 东财桥接个股行情"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_theme_detail_socket, theme_id, name)
+
+
 @app.get("/api/kpl/watchlist")
 async def kpl_watchlist():
     """自选分组+列表（后端快照循环维护实时行情）"""
