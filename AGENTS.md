@@ -124,6 +124,23 @@ git push origin main --tags
 - **已实测**：假手机号 LoginDo 返回"手机号码未注册!"，证明服务端成功解密 RSA、协议全通；真实发码待用户收码验证
 - 逆向工具链沉淀在 `E:\zcode-projects\kanpan_spec\`（dex 字节码 dump 用 `tools/dump_class.py`，androguard 走 `py` 启动器）
 
+### 开盘啦首页模块接口（2026-09-22 逆向+实测，聚合在 `GET /api/kpl/home`）
+
+| 首页模块 | 接口（域） | 关键参数/说明 |
+|---|---|---|
+| 大盘解读弹窗+推荐文章 | `UserInfo/AppNews`（applhb） | `Type=39`=盘面解读文案；其余条目=文章(Title/Content/URL/Time) |
+| AI快讯 | `PCNewsFlash/GetList`（apparticle） | `st/Type/Index/Date`；含 `Stocks`关联板块涨跌幅、`Source`来源 |
+| 最新主题 | `ThemeNews/GetSearch`（apparticle） | `KeyWord`**必须非空**(空报参数错,用"AI")、`st/Index`；含 ZSName 主题+Stocks |
+| 最强风口 | `ZhiShuRanking/QiangDu_Article`（apphwshhq） | 无参；**盘中才有数据**，收盘后 List 空 |
+| 市场风口热词 | `ForumsTuyere/GetHotSearch`（apparticle） | 无参；KeyWord+num |
+| 市场情绪(涨停/封板率/跌停) | `HisHomeDingPan/ChangeStatistics`（已有） | info[]字段：`ztjs`=涨停家数、`strong`=封板率%、`df_num`=跌停、`lbgd`=连板高度 |
+| 近期活跃板块 | **走 Socket 3009 题材列表（二期）** | HTTP 无对应端点，`IndexPlate/GetIndexList` 返回的是文章非板块 |
+| 风向标/人气榜 | Socket 2126 QxWindVane / 未定位到 HTTP | 二期 |
+
+- **排查工具**：App 全量接口注册表已提取到 `kanpan_spec/captures/api_registry.json`（1015 对 c/a，从 ox0/j00 dump 按"相邻 const-string 对"解析）；多域轮询探测脚本 `tools/probe_home2.py`（Token 从 `stock-data/config.json` 读，5 域轮询找 class 所在域）
+- **坑**：报 `errcode:9999 "class not exists mothod"` = **域名不对**（同一控制器类只存在于特定域）；`1020 参数出错`=参数缺失/为空
+- 模拟器 frida 运行时抓包在 pm clear 后失效（App 看门狗 2.8s 内杀被注入进程，status_hide 也压不住）；**静态 dex 逆向 + 多域探测**是当前有效路线
+
 ## 关键经验（踩过的坑，勿再犯）
 
 1. **AI 工具 `output.render` 必须返回 `[{type:"text", text:"..."}]` content block 数组**——返回字符串/字符串数组会报 `content.some is not a function`（DSH Agent 按 pi-ai 内容块处理）

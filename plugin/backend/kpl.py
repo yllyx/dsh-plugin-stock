@@ -508,6 +508,79 @@ class KplClient:
             return (d or {}).get("word") or []
         return self._cached("hotwords", 600, fetch)
 
+    # ---------- 首页聚合（复刻 App 首页信息流，模块接口均为 2026-09-22 实测） ----------
+
+    def get_home_feed(self, force: bool = False) -> Optional[Dict[str, Any]]:
+        """首页各模块聚合：大盘解读/最新主题/AI快讯/最强风口/市场风口/市场情绪/活跃板块/推荐文章"""
+        if force:
+            self.invalidate("homefeed")
+        return self._cached("homefeed", 20, self._fetch_home_feed)
+
+    def _fetch_home_feed(self) -> Optional[Dict[str, Any]]:
+        out: Dict[str, Any] = {}
+        # 1. 大盘解读(Type=39) + 推荐文章 —— applhb UserInfo/AppNews
+        news = self.call(HOST_LHB, "UserInfo", "AppNews", {"st": "30", "Index": "0"}, authed=False)
+        items = (news or {}).get("List") or []
+        explain = next((it for it in items if str(it.get("Type")) == "39"), None)
+        out["explain"] = self._norm_news(explain) if explain else None
+        out["articles"] = [self._norm_news(it) for it in items if str(it.get("Type")) != "39"][:10]
+        # 2. AI快讯 —— apparticle PCNewsFlash/GetList
+        flash = self.call(HOST_ART, "PCNewsFlash", "GetList",
+                          {"st": "20", "Type": "0", "Index": "0", "Date": ""}, authed=False)
+        fl = (flash or {}).get("List") or []
+        out["flash"] = [{
+            "id": x.get("CID"), "time": x.get("Time"), "title": x.get("Title"),
+            "content": x.get("Content"), "source": x.get("Source"),
+            "stocks": [{"code": s[0], "name": s[1], "rate": s[2]}
+                       for s in (x.get("Stocks") or []) if isinstance(s, list) and len(s) >= 3],
+        } for x in fl]
+        # 3. 最新主题 —— apparticle ThemeNews/GetSearch（KeyWord 需非空，空串服务端报参数错）
+        themes = self.call(HOST_ART, "ThemeNews", "GetSearch",
+                           {"KeyWord": "AI", "st": "10", "Index": "0"}, authed=False)
+        tl = (themes or {}).get("List") or []
+        out["themes"] = [{
+            "id": x.get("CID"), "title": x.get("Title"), "theme": x.get("ZSName"),
+            "time": x.get("TimeStamp"), "source": x.get("Source"),
+            "stocks": [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate")}
+                       for s in (x.get("Stocks") or []) if isinstance(s, dict)][:2],
+        } for x in tl[:4]]
+        # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
+        qd = self.call(HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, authed=False)
+        out["qiangdu"] = (qd or {}).get("List") or []
+        # 5. 市场风口热词 —— apparticle ForumsTuyere/GetHotSearch
+        tuyere = self.call(HOST_ART, "ForumsTuyere", "GetHotSearch", {}, authed=False)
+        out["tuyere_words"] = (tuyere or {}).get("List") or []
+        # 6. 市场情绪（今日/昨日 涨停家数/封板率/跌停数）—— 复用情绪历史前两条
+        sent = self.get_sentiment_history() or []
+        out["sentiment"] = {
+            "today": sent[0] if len(sent) > 0 else {},
+            "yesterday": sent[1] if len(sent) > 1 else {},
+        }
+        # 7. 近期活跃板块（指数板块列表按涨幅排序取前6）
+        idx = self.call(HOST_ART, "IndexPlate", "GetIndexList",
+                        {"view": "1,2,3,4,6", "st": "2", "Type": "0"}, authed=False)
+        plates = []
+        for lst in [(idx or {}).get("list"), (idx or {}).get("List")]:
+            if isinstance(lst, list) and lst:
+                for x in lst:
+                    if isinstance(x, dict) and x.get("Name"):
+                        plates.append({"name": x.get("Name"), "rate": x.get("PX_change_rate") or x.get("px_change_rate") or 0})
+                    elif isinstance(x, list) and len(x) >= 5:
+                        plates.append({"name": x[1], "rate": x[4]})
+                break
+        plates = [p for p in plates if isinstance(p.get("rate"), (int, float))]
+        plates.sort(key=lambda p: p["rate"], reverse=True)
+        out["active_plates"] = plates[:6]
+        return out
+
+    @staticmethod
+    def _norm_news(it: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "id": it.get("ID"), "time": it.get("Time"), "type": it.get("Type"),
+            "content": it.get("Content"), "url": it.get("URL"),
+            "stock_name": it.get("StockName"), "stock_id": it.get("StockID"),
+        }
+
 
 _kpl: Optional[KplClient] = None
 

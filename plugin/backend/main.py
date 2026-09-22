@@ -1441,6 +1441,13 @@ async def kpl_unbind():
     return {"status": "ok"}
 
 
+@app.get("/api/kpl/home")
+async def kpl_home(force: bool = Query(False)):
+    """首页聚合：大盘解读/最新主题/AI快讯/最强风口/市场风口/市场情绪/活跃板块/推荐文章"""
+    d = await asyncio.to_thread(kpl_api.get_home_feed, force)
+    return d or {}
+
+
 @app.get("/api/kpl/watchlist")
 async def kpl_watchlist():
     """自选分组+列表（后端快照循环维护实时行情）"""
