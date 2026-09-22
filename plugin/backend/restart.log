@@ -1,0 +1,77 @@
+[00:13:51] helper started
+[32m2026-09-23 00:14:09.992[0m | [1mINFO    [0m | [36mmain[0m:[36mlifespan[0m:[36m142[0m - [1mDSH 股票后端启动...[0m
+[32m2026-09-23 00:14:09.993[0m | [1mINFO    [0m | [36mmain[0m:[36mlifespan[0m:[36m146[0m - [1m数据目录: C:\Users\mark\.dsh\stock-data[0m
+[32m2026-09-23 00:14:09.994[0m | [1mINFO    [0m | [36malert_engine[0m:[36mload[0m:[36m68[0m - [1m加载 3 持仓，1 预警规则，41 条历史[0m
+[32m2026-09-23 00:14:09.994[0m | [1mINFO    [0m | [36mmain[0m:[36mlifespan[0m:[36m152[0m - [1m行情连接将在后台建立（不阻塞启动）[0m
+[32m2026-09-23 00:14:09.995[0m | [1mINFO    [0m | [36mkpl[0m:[36mstart_snapshot_loop[0m:[36m906[0m - [1mKPL 自选行情快照循环已启动（2.5s/只）[0m
+[32m2026-09-23 00:14:09.996[0m | [1mINFO    [0m | [36msentiment_db[0m:[36m_connect[0m:[36m48[0m - [1m舆情数据库连接成功: C:\Users\mark\.dsh\stock-data\sentiment.db[0m
+[32m2026-09-23 00:14:09.998[0m | [1mINFO    [0m | [36msentiment_db[0m:[36m_init_tables[0m:[36m254[0m - [1m舆情数据库表结构初始化完成[0m
+[32m2026-09-23 00:14:09.999[0m | [1mINFO    [0m | [36muser_keywords[0m:[36m_load_data[0m:[36m45[0m - [1m用户关键词数据加载成功: 0 条[0m
+[32m2026-09-23 00:14:09.999[0m | [1mINFO    [0m | [36mnews_filter[0m:[36m__init__[0m:[36m30[0m - [1m使用SentimentKeywords关键词库和UserKeywords[0m
+[32m2026-09-23 00:14:10.001[0m | [1mINFO    [0m | [36mimpact_analyzer[0m:[36m_connect[0m:[36m61[0m - [1m影响分析器连接成功[0m
+[32m2026-09-23 00:14:10.001[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mstart[0m:[36m424[0m - [1m舆情监控已启动[0m
+[32m2026-09-23 00:14:10.003[0m | [1mINFO    [0m | [36malert_engine[0m:[36mrun_loop[0m:[36m350[0m - [1m预警引擎启动（间隔 30s，冷却 300s）[0m
+[32m2026-09-23 00:14:15.641[0m | [1mINFO    [0m | [36mscreener[0m:[36mdb_load_all[0m:[36m238[0m - [1mK线库载入 5247 只（5.6s，1477574 行）[0m
+[32m2026-09-23 00:14:30.260[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mmonitor_loop[0m:[36m391[0m - [1m舆情监控循环启动，间隔: 300秒[0m
+[32m2026-09-23 00:14:30.266[0m | [1mINFO    [0m | [36mevolution_loop[0m:[36mevolution_loop[0m:[36m310[0m - [1m进化循环启动（每日16:30后执行，检查间隔3600秒）[0m
+[32m2026-09-23 00:14:30.411[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-09-23 00:14:30.503[0m | [1mINFO    [0m | [36mws_manager[0m:[36mconnect[0m:[36m26[0m - [1mWebSocket 已连接，当前连接数: 1[0m
+[32m2026-09-23 00:14:30.572[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-09-23 00:14:30.735[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:14:31.820[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-09-23 00:14:31.820[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-09-23 00:14:31.878[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 40 条重要舆情到数据库[0m
+[32m2026-09-23 00:14:35.174[0m | [1mINFO    [0m | [36mkpl[0m:[36m_loop[0m:[36m878[0m - [1mKPL 首页缓存预热完成[0m
+[32m2026-09-23 00:14:53.051[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:15:07.191[0m | [1mINFO    [0m | [36mscreener[0m:[36mload_local_tdx[0m:[36m405[0m - [1m本地通达信载入 5247 只（51.4s，目录 D:\app\tdx\vipdoc）[0m
+[32m2026-09-23 00:15:13.774[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:15:36.983[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:16:10.974[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:16:31.627[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:16:52.287[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:17:22.327[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:17:43.053[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:18:03.719[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:18:33.676[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:18:54.321[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:19:15.003[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:19:39.548[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:19:44.490[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-09-23 00:19:44.609[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-09-23 00:19:45.207[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-09-23 00:19:45.208[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-09-23 00:19:45.229[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 39 条重要舆情到数据库[0m
+[32m2026-09-23 00:20:05.650[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:20:35.060[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:20:55.739[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:21:16.412[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:21:22.601[0m | [33m[1mWARNING [0m | [36msystem_api[0m:[36mrestart_backend[0m:[36m382[0m - [33m[1m后端自重启（端口 8765），helper 将在3秒后拉起新进程[0m
+[00:21:22] helper started
+[32m2026-09-23 00:21:27.045[0m | [1mINFO    [0m | [36mmain[0m:[36mlifespan[0m:[36m142[0m - [1mDSH 股票后端启动...[0m
+[32m2026-09-23 00:21:27.047[0m | [1mINFO    [0m | [36mmain[0m:[36mlifespan[0m:[36m146[0m - [1m数据目录: C:\Users\mark\.dsh\stock-data[0m
+[32m2026-09-23 00:21:27.048[0m | [1mINFO    [0m | [36malert_engine[0m:[36mload[0m:[36m68[0m - [1m加载 3 持仓，1 预警规则，41 条历史[0m
+[32m2026-09-23 00:21:27.048[0m | [1mINFO    [0m | [36mmain[0m:[36mlifespan[0m:[36m152[0m - [1m行情连接将在后台建立（不阻塞启动）[0m
+[32m2026-09-23 00:21:27.049[0m | [1mINFO    [0m | [36mkpl[0m:[36mstart_snapshot_loop[0m:[36m915[0m - [1mKPL 自选行情快照循环已启动（2.5s/只）[0m
+[32m2026-09-23 00:21:27.049[0m | [1mINFO    [0m | [36msentiment_db[0m:[36m_connect[0m:[36m48[0m - [1m舆情数据库连接成功: C:\Users\mark\.dsh\stock-data\sentiment.db[0m
+[32m2026-09-23 00:21:27.052[0m | [1mINFO    [0m | [36msentiment_db[0m:[36m_init_tables[0m:[36m254[0m - [1m舆情数据库表结构初始化完成[0m
+[32m2026-09-23 00:21:27.053[0m | [1mINFO    [0m | [36muser_keywords[0m:[36m_load_data[0m:[36m45[0m - [1m用户关键词数据加载成功: 0 条[0m
+[32m2026-09-23 00:21:27.053[0m | [1mINFO    [0m | [36mnews_filter[0m:[36m__init__[0m:[36m30[0m - [1m使用SentimentKeywords关键词库和UserKeywords[0m
+[32m2026-09-23 00:21:27.053[0m | [1mINFO    [0m | [36mimpact_analyzer[0m:[36m_connect[0m:[36m61[0m - [1m影响分析器连接成功[0m
+[32m2026-09-23 00:21:27.053[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mstart[0m:[36m424[0m - [1m舆情监控已启动[0m
+[32m2026-09-23 00:21:27.054[0m | [1mINFO    [0m | [36malert_engine[0m:[36mrun_loop[0m:[36m350[0m - [1m预警引擎启动（间隔 30s，冷却 300s）[0m
+[32m2026-09-23 00:21:33.660[0m | [1mINFO    [0m | [36mscreener[0m:[36mdb_load_all[0m:[36m238[0m - [1mK线库载入 5247 只（6.6s，1477574 行）[0m
+[32m2026-09-23 00:21:47.585[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mmonitor_loop[0m:[36m391[0m - [1m舆情监控循环启动，间隔: 300秒[0m
+[32m2026-09-23 00:21:47.587[0m | [1mINFO    [0m | [36mevolution_loop[0m:[36mevolution_loop[0m:[36m310[0m - [1m进化循环启动（每日16:30后执行，检查间隔3600秒）[0m
+[32m2026-09-23 00:21:47.866[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-09-23 00:21:48.050[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:21:48.072[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-09-23 00:21:48.256[0m | [1mINFO    [0m | [36mws_manager[0m:[36mconnect[0m:[36m26[0m - [1mWebSocket 已连接，当前连接数: 1[0m
+[32m2026-09-23 00:21:48.758[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-09-23 00:21:48.759[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-09-23 00:21:48.775[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 39 条重要舆情到数据库[0m
+[32m2026-09-23 00:22:10.461[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:22:15.488[0m | [1mINFO    [0m | [36mscreener[0m:[36mload_local_tdx[0m:[36m405[0m - [1m本地通达信载入 5247 只（41.7s，目录 D:\app\tdx\vipdoc）[0m
+[32m2026-09-23 00:22:19.515[0m | [1mINFO    [0m | [36mkpl[0m:[36m_loop[0m:[36m887[0m - [1mKPL 首页缓存预热完成[0m
+[32m2026-09-23 00:22:31.108[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:22:54.358[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-09-23 00:23:28.341[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m

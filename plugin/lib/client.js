@@ -1903,9 +1903,9 @@ window.__ModuleLoader__.load({
                         },
                             React.createElement("span", { className: "rank hot-rank" }, "热"),
                             React.createElement("span", { className: "name" }, t.name),
-                            React.createElement("span", { className: "hot" }, "🔥 " + (t.hot || 0)),
-                            React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct)),
-                            React.createElement("span", { className: "zt" }, t.zt_num ? t.zt_num + "涨停" : "")))),
+                            React.createElement("span", { className: "zt" }, (t.zt_num || 0) + "涨停"),
+                            t.is_hot === 1 && React.createElement("span", { className: "kpl-hot-fire" }, "持续火爆"),
+                            React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct))))),
 
                 // ===== 近期活跃板块 =====
                 ((home && home.active_plates) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
@@ -2179,9 +2179,13 @@ window.__ModuleLoader__.load({
                 if (!isFinite(n) || n === 0) return a || "-";
                 return n >= 1e8 ? (n / 1e8).toFixed(2) + "亿" : n >= 1e4 ? (n / 1e4).toFixed(0) + "万" : String(a);
             };
+            const dateFmt = ts => ts ? new Date(ts * 1000).toLocaleDateString("zh-CN",
+                { year: "2-digit", month: "2-digit", day: "2-digit" }).replace(/\//g, "-") : "";
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement(KplPageHeader, {
-                    title: "#" + (name || "题材"), onBack: () => go({ page: "back" }),
+                    title: d ? (d.name || name) : (name || "题材"),
+                    subtitle: d && d.pct != null ? fmtRate(d.pct) : undefined,
+                    onBack: () => go({ page: "back" }),
                     onSearch: () => go({ page: "search" }),
                 }),
                 React.createElement("div", { className: "kpl-subtabs" },
@@ -2192,28 +2196,33 @@ window.__ModuleLoader__.load({
                             onClick: () => setView(vid),
                         }, label))),
                 err && React.createElement("div", { className: "kpl-empty" }, "⚠ " + err),
-                !d && !err && React.createElement("div", { className: "kpl-empty" }, "加载中…（首次需建立socket通道, 约10-30秒）"),
+                !d && !err && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
+                // ===== 简介 + 日期（App 小表格顶部同款） =====
+                d && (d.brief || d.update_time) && React.createElement("div", { className: "kpl-tikad-intro" },
+                    d.brief && React.createElement("div", { className: "kpl-tikad-brief" }, d.brief),
+                    (d.create_time || d.update_time) && React.createElement("div", { className: "kpl-tikad-dates" },
+                        d.create_time ? `25-${dateFmt(d.create_time).slice(3)}创建` : "",
+                        d.update_time ? `${dateFmt(d.update_time)}更新` : "")),
+                // ===== 小表格视图：分类矩阵（App 同款 Level1→Level2→股票名网格） =====
                 d && view === "table" && React.createElement("div", { className: "kpl-tikad-table" },
-                    (d.stat && d.stat.classes && d.stat.classes.length)
-                        ? React.createElement("div", null,
-                            React.createElement("div", { className: "kpl-tikad-thead" },
-                                React.createElement("span", null, "分类"),
-                                React.createElement("span", null, "股票数"),
-                                React.createElement("span", null, "上涨"),
-                                React.createElement("span", null, "下跌"),
-                                React.createElement("span", null, "均涨")),
-                            d.stat.classes.map((c, i) =>
-                                React.createElement("div", { key: i, className: "kpl-tikad-trow" },
-                                    React.createElement("span", { className: "n" }, c.name),
-                                    React.createElement("span", null, c.num != null ? c.num : "-"),
-                                    React.createElement("span", { className: rateCls(1) }, c.up != null ? c.up : "-"),
-                                    React.createElement("span", { className: rateCls(-1) }, c.down != null ? c.down : "-"),
-                                    React.createElement("b", { className: rateCls(c.avg_pct || 0) },
-                                        c.avg_pct != null ? fmtRate(c.avg_pct) : "-"))))
-                        : React.createElement("div", { className: "kpl-empty" }, "暂无分类统计数据")),
+                    (d.table || []).length > 0 ? d.table.map(lv1 =>
+                        React.createElement("div", { key: lv1.id, className: "kpl-tikad-l1" },
+                            React.createElement("div", { className: "kpl-tikad-l1name" }, lv1.name),
+                            (lv1.groups || []).map(g =>
+                                React.createElement("div", { key: g.id, className: "kpl-tikad-l2" },
+                                    React.createElement("div", { className: "kpl-tikad-l2name" }, g.name),
+                                    React.createElement("div", { className: "kpl-tikad-grid" },
+                                        (g.stocks || []).map(s =>
+                                            React.createElement("span", {
+                                                key: s.code,
+                                                className: "kpl-tikad-cell" + (s.is_zz === "2" ? " zz" : ""),
+                                                onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                                            }, s.name)))))))
+                        : React.createElement("div", { className: "kpl-empty" }, "暂无小表格数据")),
+                // ===== 个股行情视图 =====
                 d && view === "stocks" && React.createElement("div", { className: "kpl-tikad-stocks" },
                     (d.stocks || []).length > 0 && React.createElement("div", { className: "kpl-tikad-sthead" },
-                        `共 ${d.total || (d.stocks || []).length} 只 · 按涨幅排序`),
+                        `共 ${(d.stocks || []).length} 只`),
                     (d.stocks || []).map(s =>
                         React.createElement("div", {
                             key: s.code, className: "kpl-tikad-srow",
@@ -2222,12 +2231,12 @@ window.__ModuleLoader__.load({
                             React.createElement("div", { className: "row" },
                                 React.createElement("span", { className: "name" }, s.name),
                                 React.createElement("span", { className: "code" }, s.code),
-                                React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct))),
+                                s.pct != null && s.pct !== "" && React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct))),
                             React.createElement("div", { className: "meta" },
-                                React.createElement("span", null, s.tag || ""),
-                                React.createElement("span", null, "价 " + (s.price || "-")),
-                                React.createElement("span", null, "额 " + amountFmt(s.amount)),
-                                React.createElement("span", null, "换手 " + (s.turnover || "-") + "%")))),
+                                (s.tags || []).map(t => React.createElement("span", { key: t.id, title: t.reason }, t.name)),
+                                s.price && React.createElement("span", null, "价 " + s.price),
+                                s.amount && React.createElement("span", null, "额 " + amountFmt(s.amount)),
+                                s.turnover && React.createElement("span", null, "换手 " + s.turnover + "%")))),
                     d && (d.stocks || []).length === 0 && React.createElement("div", { className: "kpl-empty" }, "暂无个股数据")));
         }
 
@@ -3399,6 +3408,18 @@ window.__ModuleLoader__.load({
                 .kpl-tikad-srow .code { color: var(--dsw-alias-label-secondary); font-size: 13px; }
                 .kpl-tikad-srow b { text-align: right; font-size: 14px; }
                 .kpl-tikad-srow .meta { display: flex; gap: 12px; margin-top: 4px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+                .kpl-tikad-intro { background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 10px 12px; margin: 8px; }
+                .kpl-tikad-brief { font-size: 13px; line-height: 1.8; color: var(--dsw-alias-label-primary); }
+                .kpl-tikad-dates { display: flex; gap: 16px; margin-top: 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+                .kpl-tikad-l1 { margin: 8px; }
+                .kpl-tikad-l1name { font-size: 15px; font-weight: 800; padding: 6px 0; border-bottom: 2px solid #ef4444; }
+                .kpl-tikad-l2 { margin-top: 8px; }
+                .kpl-tikad-l2name { font-size: 13px; font-weight: 700; color: var(--dsw-alias-label-secondary); padding: 4px 0; }
+                .kpl-tikad-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+                .kpl-tikad-cell { text-align: center; color: #3b82f6; font-size: 13px; padding: 6px 2px; cursor: pointer; border: 1px solid var(--dsw-alias-border-l2); border-radius: 4px; }
+                .kpl-tikad-cell:hover { border-color: #3b82f6; }
+                .kpl-tikad-cell.zz { color: #ef4444; font-weight: 600; }
+                .kpl-hot-fire { background: #ef4444; color: #fff; font-size: 11px; font-weight: 700; border-radius: 3px; padding: 2px 6px; white-space: nowrap; }
             `;
             document.head.appendChild(style);
         }

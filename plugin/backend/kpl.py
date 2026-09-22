@@ -765,85 +765,85 @@ class KplClient:
         return body.hex()
 
     def get_theme_detail_socket(self, theme_id: str, name: str = "") -> Dict[str, Any]:
-        """题材详情:
-        - 小表格视图: 3010 分类统计（socket 网关）
-        - 个股行情视图: 题材名→东财板块桥接→成分股实时行情（socket 无题材成分股 cmd）
-        """
+        """题材详情（App 同源）：HTTP Theme/InfoGet 一个接口包含全部数据——
+        Table（小表格分类矩阵：Level1一级分类→Level2二级分类→Stocks成分股，含中文名/入选理由/主板标记）、
+        StockList（成分股平铺）、BriefIntro（简介）、Introduction（新闻HTML）、Create/UpdateTime、ZT（涨停股）。
+        个股行情涨幅：经 _theme_board_map 映射板块后用 socket 2501 实时行情按代码匹配（无映射则缺涨幅）。"""
         tid = str(theme_id)
         hit = self._cache.get(f"themedet:{tid}")
-        if hit and time.time() - hit["ts"] < 20:
+        if hit and time.time() - hit["ts"] < 30:
             return hit["data"]
         out: Dict[str, Any] = {"id": tid, "name": name}
 
-        # 1. 小表格: 3010 分类统计（仅题材id；801 开头的板块id 服务器不响应, 跳过避免网关空转）
-        def varint(v):
-            o = b""
-            while True:
-                b = v & 0x7F
-                v >>= 7
-                o += bytes([b | (0x80 if v else 0)])
-                if not v:
-                    return o
-        if not tid.startswith("801"):
-            body3010 = bytes([0x08]) + varint(int(tid))
-            results = self._gw_pull([{"cmd": 3010, "body_hex": body3010.hex()}], timeout=120)
-            if results:
-                r = results[0]
-                if r.get("ok"):
-                    d = r["data"]
-                    out["stat"] = {"stock_num": d.get("stock_num"),
-                                   "up_num": d.get("up_num"), "down_num": d.get("down_num"),
-                                   "avg_pct": d.get("avg_pct"),
-                                   "classes": d.get("classes") or []}
-            else:
-                out["stat_error"] = "socket网关未运行（需启动模拟器+kpl_gateway.py）"
-        else:
-            out["stat_error"] = "板块id无小表格数据（板块id直接进入个股行情）"
+        d = self.call(HOST_LHB, "Theme", "InfoGet", {"ID": tid, "id": tid}, authed=True)
+        if not d or str(d.get("errcode", "0")) != "0":
+            return {"error": "题材详情获取失败", "id": tid}
 
-        # 2. 个股行情: 题材名→板块id 映射（BaceFaceList 积累）→ socket 2501；
-        #    未映射到的题材回退东财板块桥接
-        stocks: List[Dict[str, Any]] = []
-        board_name = ""
-        if name:
-            bid = self._theme_board_id(name)
-            if bid:
-                try:
-                    body2501 = self._gw_build_2501(bid, count=60, quota_type=2)
-                    results = self._gw_pull([{"cmd": 2501, "body_hex": body2501}], timeout=120)
-                    if results and results[0].get("ok"):
-                        for it in (results[0]["data"] or {}).get("items") or []:
-                            q = it.get("quotas") or []
-                            stocks.append({
-                                "code": str(it.get("1", "")), "name": str(it.get("2", "")),
-                                "pct": (q[2] if len(q) > 2 else ""),
-                                "price": (q[1] if len(q) > 1 else ""),
-                                "tag": (q[0] if q else ""),
-                            })
-                        board_name = f"板块{bid}"
-                except Exception as e:
-                    logger.debug(f"题材详情 socket 2501 失败({name}): {e}")
-            if not stocks:
-                try:
-                    from sector_mapper import get_sector_mapper
-                    from sector_monitor import sector_monitor
-                    boards = get_sector_mapper().resolve_real_boards(name, max_boards=1)
-                    if boards:
-                        b = boards[0]
-                        board_name = b.get("name") or ""
-                        info = sector_monitor.get_board_realtime(b["bk_code"], board_name, top_n=30)
-                        for s in (info.get("leaders") or info.get("stocks") or [])[:30]:
-                            stocks.append({
-                                "code": s.get("code") or s.get("stock_code") or "",
-                                "name": s.get("name") or s.get("stock_name") or "",
-                                "pct": s.get("change_pct") if s.get("change_pct") is not None else s.get("pct"),
-                                "price": s.get("price") or s.get("last_px") or "",
-                                "tag": s.get("reason") or "",
-                            })
-                except Exception as e:
-                    logger.debug(f"题材详情东财桥接失败({name}): {e}")
-        out["board_name"] = board_name
-        out["stocks"] = [s for s in stocks if s["code"]]
-        if out.get("stat") or out.get("stocks"):
+        out["name"] = d.get("Name") or name
+        out["brief"] = d.get("BriefIntro") or ""
+        out["introduction"] = d.get("Introduction") or ""
+        out["create_time"] = d.get("CreateTime")
+        out["update_time"] = d.get("UpdateTime")
+        out["zt"] = d.get("ZT") or {}
+        # 题材自身涨幅（3009 缓存里查）
+        try:
+            for t in (self._cache.get("themesock") or {}).get("data", {}).get("items") or []:
+                if str(t.get("id")) == tid:
+                    out["pct"] = t.get("pct")
+                    out["hot"] = t.get("hot")
+                    break
+        except Exception:
+            pass
+
+        # 小表格矩阵：Level1 → Level2 → Stocks
+        table = []
+        for lv1 in d.get("Table") or []:
+            l1 = lv1.get("Level1") or {}
+            row1 = {"id": l1.get("ID"), "name": l1.get("Name"), "groups": []}
+            for lv2 in lv1.get("Level2") or []:
+                row1["groups"].append({
+                    "id": lv2.get("ID"), "name": lv2.get("Name"),
+                    "stocks": [{
+                        "code": s.get("StockID"), "name": s.get("prod_name"),
+                        "hot": s.get("Hot"), "is_zz": s.get("IsZz"), "is_hot": s.get("IsHot"),
+                        "reason": s.get("Reason"),
+                    } for s in lv2.get("Stocks") or []],
+                })
+            table.append(row1)
+        out["table"] = table
+
+        # 成分股平铺 + 实时行情匹配（2501 经映射板块）
+        stock_list = [{
+            "code": s.get("StockID"), "name": s.get("prod_name"),
+            "hot": s.get("HotNum"),
+            "tags": [{"id": t.get("ID"), "name": t.get("Name"), "reason": t.get("Reason")}
+                     for t in s.get("Tag") or []],
+        } for s in d.get("StockList") or []]
+        quotes = {}
+        bid = self._theme_board_id(out["name"])
+        if bid:
+            try:
+                results = self._gw_pull([{"cmd": 2501,
+                                          "body_hex": self._gw_build_2501(bid, count=200, quota_type=2)}],
+                                        timeout=120)
+                if results and results[0].get("ok"):
+                    for it in (results[0]["data"] or {}).get("items") or []:
+                        q = it.get("quotas") or []
+                        quotes[str(it.get("1", ""))] = {
+                            "pct": (q[2] if len(q) > 2 else ""),
+                            "price": (q[1] if len(q) > 1 else ""),
+                            "amount": (q[3] if len(q) > 3 else ""),
+                            "turnover": (q[4] if len(q) > 4 else ""),
+                        }
+            except Exception as e:
+                logger.debug(f"题材详情 2501 行情失败({out['name']}): {e}")
+        for s in stock_list:
+            q = quotes.get(s["code"])
+            if q:
+                s.update(q)
+        out["stocks"] = stock_list
+        out["quotes_source"] = "socket2501" if quotes else ""
+        if stock_list or table:
             self._cache[f"themedet:{tid}"] = {"data": out, "ts": time.time()}
         return out
 
