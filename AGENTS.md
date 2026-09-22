@@ -141,15 +141,19 @@ git push origin main --tags
 - **主题机会页**（`GET /api/kpl/themes?tab=themes|calendar&index=&st=`）：双Tab同端点 `ThemeNews/GetList`（apparticle），**Type=-1=最新主题、Type=3=投资日历**（mitmproxy 代理对 apparticle 域有效——ART/LHB 域无 pinning 可抓，apphwshhq 域有 pinning 抓不到）。主题条目 `Stocks` 按 `SetTop=1` 优先展示前4只（2×2）；日历条目 `ColorType` 1红=事件 2橙=会议。分页用 Index（0,1,2…st=30/页）；`dex 里 bj 类` = ForumsTuyere 论坛仓库（GetEvnArt/AddFocus 等，主题收藏/关注用）
 - **主题详情页**（`GET /api/kpl/themes/{news_id}`）：`ThemeNews/GetInfo`（apparticle，参数 `NewsID`+`Type=0`）。Info 含 `Content`(HTML正文)、`ZSCode/ZSName/ZSDesc`(主题介绍卡)、`Stocks[{Code,Name,Rate,Desn公司简介,IsSel}]`；`TiCai/ReaderCount`(appres) 是阅读计数上报可忽略。前端 KplTab 下钻用**栈(drills)**实现逐级返回，底部导航切换时清栈
 
-### 题材库（Socket 通用通道，2026-09-22 全链路打通）
+### 题材库（Socket 通道已独立化：内置 unidbg 签名器，无模拟器/无网关/无 frida，2026-09-23 全链路实测）
 
-- **Socket 网关**（必读）：`E:\zcode-projects\kanpan_spec\tools\kpl_gateway.py`，常驻 `http://127.0.0.1:9877`。`POST /pull {"requests":[{"cmd":3009},{"cmd":3010,"body_hex":"..."}]}` 一次签名窗口完成挑战→竞速attach签名→610鉴权→顺序拉取→解析→JSON；失败自动冷却25s+冷启动App重试3轮。`GET /health` 查状态
-- **网关部署前置**：模拟器(kpl_analysis) + 开盘啦App + **`adb root`**（⚠️ 重启模拟器后必须重做，否则杀不掉壳看护进程→attach 全部 "process not found"，这是当天排查半天的根因）+ frida-server（`/data/local/tmp/fs16 -l 0.0.0.0:27042`）+ `adb forward tcp:9876 tcp:27042`
-- **壳进程结构**：frida 视图里真身进程名是中文"开盘啦"、`com.aiyu.kaipanla` 反而是壳的 ptrace 看护子进程（无业务类，attach 它 = ClassNotFound）；adb ps 视图里真身=PPID<1000 的那个，看护=PPID==真身。竞速流程：拿260挑战→杀看护→毫秒级 attach 真身→签名→610（签名窗口一次性，用完即毒化，需冷启动重来——网关已固化此流程）
-- **已验证 cmd**：3009 题材库全列表（249题材：id/名称/拼音/热度/涨停数/涨幅，ASCII头剥除用偏移扫描找 field10 密集区）；3010 题材统计（f2=股票数/f3涨/f4跌/f5均涨/f6 map<分类id,{num,up,down,avg}>，**只认题材id，801开头板块id无响应**）；2501 板块股票池（plateId=801xxx 有效、题材id无效；quotas=[细分标签,现价,涨跌%,成交额,换手率,...]）
-- **题材名→801板块id 映射**：`Index/GetInfo`（apphwhq，**View 必须含 2,3,4,5**）响应的 `BaceFaceList`=[[题材名,涨幅,801xxx],...]；插件在 overview 时积累，详情页个股行情优先 socket 2501(映射到的板块id)，未映射题材回退东财板块桥接
-- **插件端点**：`GET /api/kpl/tika`（题材库列表，热度降序+30s缓存）、`GET /api/kpl/tika/{id}?name=`（3010统计+2501/东财个股行情，20s缓存）；前端首页3条+题材库页(热度/涨幅切换)+详情页(小表格/个股行情双视图)
-- 3010 分类 id（5043-5050 等）的中文名映射待补（需另有接口或积累样本）
+- **架构**：`kpl.py` → `kpl_socket.get_kpl_socket()`（KplSocketAPI：3009/3010/2501/3001/3006）→ `KplSocketSession.connect()`（TLS mTLS + 260挑战 + **`sign_local()`** + 610鉴权 + 心跳7s）
+- **内置签名器**：`backend/signer/`（kplsigner.jar + lib/*.jar + kpl_min.apk 裁剪版 1.2MB + libauthSign_armv7_patched.so，~30MB 随插件分发）。原理 = unidbg 模拟 armeabi-v7a 的 libauthSign.so：VM 传真 APK（包名/签名证书/assets 自动解析），mock `currentApplication`/`getAssets`/`Config.channelID("129")`/`versionName("6.3.20.0")`/`ApiConfig.apiVersion("w48")`，so 内 unidbg/frida 检测字符串已 patch（等长破坏 9 处）。**依赖系统 Java 8+**（`_find_java` 自动定位并执行校验，规避 Oracle java8path 存根——该存根 `java -version` 直接失败）
+- **build_frame 的 total 字段 = len(inner)（不含 kind1B+total4B 头）**——App 同款；多算 5B 服务器会静默丢弃帧（鉴权"无响应"假象，曾误导为签名被毒化，实际是帧格式 bug）
+- **服务器端口特性**：getIPList 下发多台多端口，**只有部分端口（如 124.71.166.244:8080）主动推 260 挑战**，80/14000 端口 TLS 可连但无挑战 → connect 对每台完整走"挑战→签名→鉴权"，失败换下一台
+- **签名含时间成分**：同挑战不同时刻输出不同（勿做签名缓存对照），服务器均接受；挑战与连接绑定且时效数秒
+- **已验证 cmd**：3009 题材库全列表（~248题材：id/名称/拼音/热度/涨停数/涨幅/isHot/upNum/isNew，ASCII头剥除用偏移扫描找 field10 密集区）；3010 题材统计（**只认题材id，801开头板块id无响应**）；2501 板块股票池（plateId=801xxx 有效、题材id无效；quotas=[细分标签,现价,涨跌%,成交额,换手率,...]）
+- **题材名→801板块id 映射**：`Index/GetInfo`（apphwhq，**View 必须含 2,3,4,5**）响应的 `BaceFaceList`=[[题材名,涨幅,801xxx],...]（仅热门4条）；详情页个股行情 2501 匹配用
+- **插件端点**：`GET /api/kpl/tika`（题材库列表，热度降序+30s缓存）、`GET /api/kpl/tika/{id}?name=`（题材详情）
+- **题材详情 = HTTP `Theme/InfoGet`**（applhb，**需登录态**，ID 与 3009 同体系）一个接口全量：`Table`（小表格分类矩阵 Level1→Level2→Stocks，分类中文名/入选理由/IsZz主板标——3010 分类 id 的中文名就在此）、`StockList`（成分股+Tag）、`BriefIntro`/`Introduction`、`Create/UpdateTime`、`ZT`（涨停股 map）；个股实时涨幅经 BaceFaceList 映射板块后 2501 匹配（BaceFaceList 仅热门4条，多数题材无实时涨幅属数据现实）
+- **首页题材库 3 条**：3009 hotVal 降序前 3（与 App 同源同序；列表动态，盘中介入题材会进出）；`isHot(f5)`=红底"持续火爆"标签
+- **历史（已废弃）**：模拟器+frida 竞速签名网关（kanpan_spec/tools/kpl_gateway.py 归档）——壳进程结构（frida 视图真身名"开盘啦"/com.aiyu.kaipanla 为 ptrace 看护）、adb root 依赖等经验见 git 历史；模拟器 frida 抓包在 pm clear 后失效（App 看门狗杀注入进程）
 - **坑**：报 `errcode:9999 "class not exists mothod"` = **域名不对**（同一控制器类只存在于特定域）；`1020 参数出错`=参数缺失/为空
 - 模拟器 frida 运行时抓包在 pm clear 后失效（App 看门狗 2.8s 内杀被注入进程，status_hide 也压不住）；**静态 dex 逆向 + 多域探测**是当前有效路线
 
