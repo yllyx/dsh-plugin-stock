@@ -2014,7 +2014,10 @@ window.__ModuleLoader__.load({
                 groups.map(g => React.createElement("div", { key: g.key, className: "kpl-thm-day" },
                     React.createElement("div", { className: "kpl-thm-dayhead" }, dayLabel(g.key)),
                     g.rows.map(row => tab === "themes"
-                        ? React.createElement("div", { key: row.id, className: "kpl-thm-item" },
+                        ? React.createElement("div", {
+                            key: row.id, className: "kpl-thm-item",
+                            onClick: () => go({ page: "themeDetail", id: row.id }),
+                        },
                             React.createElement("div", { className: "kpl-thm-top" },
                                 React.createElement("span", { className: "kpl-thm-name" }, row.theme || "主题"),
                                 React.createElement("span", { className: "kpl-thm-time" },
@@ -2037,6 +2040,56 @@ window.__ModuleLoader__.load({
                     onClick: () => load(tab, index + 1, true),
                 }, loading ? "加载中…" : "加载更多"),
                 loading && items.length > 0 && React.createElement("div", { className: "kpl-empty" }, "加载中…"));
+        }
+
+        /* ---- 主题详情页 ---- */
+
+        function KplThemeDetailPage({ id, go }) {
+            const [d, setD] = useState(null);
+            const [err, setErr] = useState(null);
+            useEffect(() => {
+                let alive = true;
+                api(`/api/kpl/themes/${id}`).then(x => { if (alive) setD(x); })
+                    .catch(e => { if (alive) setErr(e.message || "加载失败"); });
+                return () => { alive = false; };
+            }, [id]);
+            const rateCls = r => (Number(r) >= 0 ? "up" : "down");
+            const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, {
+                    title: "主题机会", onBack: () => go({ page: "back" }),
+                    onSearch: () => go({ page: "search" }),
+                }),
+                err && React.createElement("div", { className: "kpl-empty" }, "✗ " + err),
+                !d && !err && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
+                d && React.createElement("div", { className: "kpl-thmd" },
+                    React.createElement("div", { className: "kpl-thmd-title" }, d.title),
+                    React.createElement("div", { className: "kpl-thmd-meta" },
+                        React.createElement("span", null,
+                            d.time ? new Date(d.time * 1000).toLocaleString("zh-CN", {
+                                year: "numeric", month: "2-digit", day: "2-digit",
+                                hour: "2-digit", minute: "2-digit",
+                            }).replace(/\//g, "-") : ""),
+                        React.createElement("span", { className: "src" }, d.source || ""))),
+                d && d.theme && d.theme.name && React.createElement("div", { className: "kpl-thmd-intro" },
+                    React.createElement("div", { className: "kpl-thmd-badge" }, d.theme.name),
+                    React.createElement("div", { className: "kpl-thmd-desc" }, d.theme.desc || "")),
+                d && d.content && React.createElement("div", {
+                    className: "kpl-thmd-content",
+                    dangerouslySetInnerHTML: { __html: d.content },
+                }),
+                d && (d.stocks || []).length > 0 && React.createElement("div", { className: "kpl-thmd-stocks" },
+                    React.createElement("div", { className: "kpl-thmd-sthead" }, "关联个股："),
+                    d.stocks.map(s =>
+                        React.createElement("div", { key: s.code, className: "kpl-thmd-stock" },
+                            React.createElement("div", { className: "row" },
+                                React.createElement("span", {
+                                    className: "name",
+                                    onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                                }, s.name),
+                                React.createElement("span", { className: "code" }, s.code),
+                                React.createElement("b", { className: rateCls(s.rate) }, fmtRate(s.rate))),
+                            s.desc && React.createElement("div", { className: "desc" }, s.desc)))));
         }
 
         /* ---- 行情页（子Tab: 板块/个股/...） ---- */
@@ -2371,8 +2424,8 @@ window.__ModuleLoader__.load({
 
         function KplTab() {
             const [activeNav, setActiveNav] = useState("home");
-            const [drill, setDrill] = useState(null);
-            // 登录态记忆：跨 Tab 切换/重挂载保留，避免每次切 Tab 闪登录卡
+            // 下钻页栈：支持 主题机会→详情→个股 逐级返回
+            const [drills, setDrills] = useState([]);
             const [status, setStatus] = useState(KPL_STATUS_MEM.data);
             const loadStatus = useCallback(async () => {
                 try {
@@ -2384,12 +2437,13 @@ window.__ModuleLoader__.load({
             usePolling(loadStatus, 30000, []);
 
             const go = (r) => {
-                if (r.page === "back") { setDrill(null); return; }
-                setDrill(r);
+                if (r.page === "back") { setDrills(prev => prev.slice(0, -1)); return; }
+                setDrills(prev => [...prev, r]);
             };
-            const switchNav = (id) => { setDrill(null); setActiveNav(id); };
+            const switchNav = (id) => { setDrills([]); setActiveNav(id); };
 
-            // 下钻页面渲染
+            // 下钻页面渲染（栈顶）
+            const drill = drills.length > 0 ? drills[drills.length - 1] : null;
             let content;
             if (drill) {
                 if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
@@ -2397,6 +2451,7 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
                 else if (drill.page === "lhb") content = React.createElement(KplLhbPage);
                 else if (drill.page === "themes") content = React.createElement(KplThemesPage, { go });
+                else if (drill.page === "themeDetail") content = React.createElement(KplThemeDetailPage, { id: drill.id, go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
                 content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
@@ -3160,6 +3215,24 @@ window.__ModuleLoader__.load({
                 .kpl-thm-brief { font-size: 15px; font-weight: 600; line-height: 1.6; }
                 .kpl-thm-more { margin: 4px 8px 12px; background: var(--dsw-alias-button-elevated-fill); border: 1px dashed var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); border-radius: 8px; padding: 10px 0; cursor: pointer; font-size: 13px; }
                 .kpl-thm-more:hover { color: #ef4444; border-color: #ef4444; }
+                /* ---- 主题详情页 ---- */
+                .kpl-thmd { display: flex; flex-direction: column; }
+                .kpl-thmd-title { font-size: 19px; font-weight: 800; line-height: 1.5; padding: 12px 12px 0; }
+                .kpl-thmd-meta { display: flex; justify-content: space-between; padding: 8px 12px 12px; font-size: 12px; color: var(--dsw-alias-label-secondary); border-bottom: 1px solid var(--dsw-alias-border-l2); }
+                .kpl-thmd-intro { display: flex; gap: 12px; align-items: center; background: var(--dsw-alias-button-elevated-fill); margin: 10px 8px; border-radius: 10px; padding: 12px; }
+                .kpl-thmd-badge { min-width: 78px; height: 78px; display: flex; align-items: center; justify-content: center; background: rgba(239,68,68,.75); color: #fff; font-size: 15px; font-weight: 700; border-radius: 8px; padding: 6px; text-align: center; }
+                .kpl-thmd-desc { font-size: 14px; line-height: 1.8; }
+                .kpl-thmd-content { padding: 4px 12px 8px; font-size: 15px; line-height: 2; color: var(--dsw-alias-label-primary); }
+                .kpl-thmd-content p { margin: 0 0 10px; }
+                .kpl-thmd-stocks { padding: 8px 12px 16px; }
+                .kpl-thmd-sthead { color: #ef4444; font-size: 15px; font-weight: 800; padding: 6px 0; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+                .kpl-thmd-stock { border-bottom: 1px solid var(--dsw-alias-border-l2); padding: 10px 0; }
+                .kpl-thmd-stock:last-child { border-bottom: none; }
+                .kpl-thmd-stock .row { display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center; gap: 8px; }
+                .kpl-thmd-stock .name { color: #3b82f6; font-size: 15px; font-weight: 700; cursor: pointer; }
+                .kpl-thmd-stock .code { font-size: 14px; font-weight: 600; }
+                .kpl-thmd-stock b { text-align: right; font-size: 14px; }
+                .kpl-thmd-stock .desc { font-size: 13px; color: var(--dsw-alias-label-secondary); line-height: 1.7; margin-top: 6px; text-indent: 2em; }
             `;
             document.head.appendChild(style);
         }

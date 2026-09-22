@@ -1460,6 +1460,12 @@ async def kpl_themes(tab: str = "themes", index: int = Query(0), st: int = Query
     return await asyncio.to_thread(kpl_api.get_kpl().get_theme_list, tab, index, st)
 
 
+@app.get("/api/kpl/themes/{news_id}")
+async def kpl_theme_detail(news_id: str):
+    """主题详情：标题/时间/HTML正文/主题介绍/关联个股（带公司简介）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_theme_detail, news_id)
+
+
 @app.get("/api/kpl/watchlist")
 async def kpl_watchlist():
     """自选分组+列表（后端快照循环维护实时行情）"""

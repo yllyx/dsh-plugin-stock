@@ -655,6 +655,22 @@ class KplClient:
             } for x in lst]
         return {"items": items, "index": index, "has_more": len(lst) >= st}
 
+    def get_theme_detail(self, news_id) -> Dict[str, Any]:
+        """主题详情（点击最新主题条目）：ThemeNews/GetInfo（apparticle）。
+        含标题/时间/HTML正文/主题介绍卡(ZSCode/ZSName/ZSDesc)/关联个股(带Desn公司简介)"""
+        d = self.call(HOST_ART, "ThemeNews", "GetInfo",
+                      {"NewsID": str(news_id), "Type": "0"}, authed=False)
+        info = (d or {}).get("Info") or {}
+        return {
+            "id": info.get("CID"), "title": info.get("Title"), "source": info.get("Source"),
+            "time": info.get("TimeStamp"), "content": info.get("Content"),
+            "theme": {"code": info.get("ZSCode"), "name": info.get("ZSName"),
+                      "desc": info.get("ZSDesc")},
+            "stocks": [{"code": s.get("Code"), "name": s.get("Name"),
+                        "rate": s.get("Rate"), "desc": s.get("Desn")}
+                       for s in (info.get("Stocks") or []) if isinstance(s, dict)],
+        }
+
     @staticmethod
     def _norm_news(it: Dict[str, Any]) -> Dict[str, Any]:
         return {
