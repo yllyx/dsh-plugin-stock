@@ -1824,7 +1824,7 @@ window.__ModuleLoader__.load({
             ];
             return React.createElement("div", { className: "kpl-page" },
                 !logged && React.createElement(KplBindCard, { onBound: reloadStatus }),
-                logged && status.user_info && React.createElement("div", { className: "kpl-user-bar" },
+                logged && status && status.user_info && React.createElement("div", { className: "kpl-user-bar" },
                     React.createElement("span", null,
                         "👤 " + (status.user_info.username || status.user_info.user_id)
                         + (status.phone_masked ? `（${status.phone_masked}）` : "")
