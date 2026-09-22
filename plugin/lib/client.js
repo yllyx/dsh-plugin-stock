@@ -1547,8 +1547,15 @@ window.__ModuleLoader__.load({
             );
         }
 
-        // ============= 开盘啦 Tab =============
-        // 精选板块（KPL代码；详情页对任意80xxxx码通用，可经细分chips下钻扩展）
+        // ============= 开盘啦 Tab（仿App结构：底部导航 + 功能模块页 + 下钻详情） =============
+
+        const KPL_NAV = [
+            { id: "home", label: "首页", icon: "🏠" },
+            { id: "market", label: "行情", icon: "📈" },
+            { id: "watchlist", label: "自选股", icon: "➕" },
+            { id: "lhb", label: "龙虎榜", icon: "📊" },
+            { id: "recommend", label: "推荐", icon: "👍" },
+        ];
         const KPL_SECTORS = [
             { code: "801045", name: "医药" }, { code: "801723", name: "创新药" },
             { code: "801676", name: "地产链" }, { code: "801007", name: "房地产" },
@@ -1556,7 +1563,8 @@ window.__ModuleLoader__.load({
             { code: "801722", name: "存储" }, { code: "801162", name: "通信" },
         ];
 
-        // 分时图 canvas（价格线+昨收基线+量柱区）
+        /* ---- 通用小组件 ---- */
+
         function KplTrendChart({ trend, preclose, height }) {
             const ref = useRef(null);
             useEffect(() => {
@@ -1566,232 +1574,360 @@ window.__ModuleLoader__.load({
                 cv.width = W * 2; cv.height = H * 2;
                 const ctx = cv.getContext("2d");
                 ctx.scale(2, 2);
-                const chartH = H * 0.75, volH = H - chartH - 14;
+                const chartH = H * 0.72, volTop = chartH + 10, volH = H - volTop - 16;
                 const prices = trend.map((t) => t[1]);
                 const hi = Math.max(...prices, preclose), lo = Math.min(...prices, preclose);
-                const pad = (hi - lo) * 0.08 || 1;
+                const pad = (hi - lo) * 0.1 || 1;
                 const top = hi + pad, bot = lo - pad;
-                const X = (i) => (i / Math.max(1, trend.length - 1)) * (W - 8) + 4;
-                const Y = (p) => 6 + (top - p) / (top - bot) * (chartH - 12);
-                ctx.strokeStyle = "#888"; ctx.setLineDash([3, 3]);
+                const X = (i) => (i / Math.max(1, trend.length - 1)) * (W - 4) + 2;
+                const Y = (p) => 4 + (top - p) / (top - bot) * (chartH - 8);
+                // 昨收虚线
+                ctx.strokeStyle = "#5a6478"; ctx.setLineDash([4, 3]); ctx.lineWidth = 0.8;
                 ctx.beginPath(); ctx.moveTo(0, Y(preclose)); ctx.lineTo(W, Y(preclose)); ctx.stroke();
                 ctx.setLineDash([]);
-                ctx.strokeStyle = "#e8eaf0"; ctx.lineWidth = 1.2; ctx.beginPath();
+                // 价格线
+                const upTrend = prices[prices.length - 1] >= preclose;
+                ctx.strokeStyle = upTrend ? "#e74c4c" : "#2ecc71"; ctx.lineWidth = 1.4;
+                ctx.beginPath();
                 trend.forEach((t, i) => { i ? ctx.lineTo(X(i), Y(t[1])) : ctx.moveTo(X(i), Y(t[1])); });
-                ctx.stroke(); ctx.lineWidth = 1;
-                ctx.fillStyle = "rgba(148,163,184,.5)";
+                ctx.stroke();
+                // 均价线（如有第3列则用它，否则跳过）
+                ctx.strokeStyle = "#f39c12"; ctx.lineWidth = 1; ctx.setLineDash([]);
+                ctx.beginPath();
+                let hasAvg = false;
                 trend.forEach((t, i) => {
-                    if (t[4]) ctx.fillRect(X(i) - 1, chartH + 14 + volH * 0.2, 2, Math.max(1, volH * 0.6 * 0.5));
+                    if (t[2]) { hasAvg = true; i ? ctx.lineTo(X(i), Y(t[2])) : ctx.moveTo(X(i), Y(t[2])); }
+                    else { i ? ctx.lineTo(X(i), Y(t[1])) : ctx.moveTo(X(i), Y(t[1])); }
                 });
-                ctx.fillStyle = "#9aa3b5"; ctx.font = "9px sans-serif";
+                if (hasAvg) ctx.stroke(); else ctx.beginPath();
+                ctx.lineWidth = 1;
+                // 量柱
+                const maxVol = Math.max(...trend.map((t) => t[4] || 0), 1);
+                trend.forEach((t, i) => {
+                    const v = t[4] || 0;
+                    if (!v) return;
+                    const bh = (v / maxVol) * volH;
+                    ctx.fillStyle = t[1] >= (trend[i - 1] ? trend[i - 1][1] : preclose) ? "rgba(231,76,60,.5)" : "rgba(46,204,113,.5)";
+                    ctx.fillRect(X(i) - 1, volTop + volH - bh, 2, bh);
+                });
+                // 时间轴
+                ctx.fillStyle = "#7a8499"; ctx.font = "9px sans-serif";
                 ctx.fillText("09:30", 2, H - 2);
                 ctx.fillText("11:30/13:00", W / 2 - 28, H - 2);
                 ctx.fillText("15:00", W - 32, H - 2);
+                // 涨跌幅标注
+                ctx.fillStyle = upTrend ? "#e74c4c" : "#2ecc71";
+                ctx.fillText(`${((prices[prices.length - 1] / preclose - 1) * 100).toFixed(2)}%`, W - 42, Y(prices[prices.length - 1]) - 4);
             }, [trend, preclose, height]);
-            return React.createElement("canvas", { ref, style: { width: "100%", height: (height || 160) + "px" } });
+            return React.createElement("canvas", { ref, style: { width: "100%", height: (height || 160) + "px", display: "block" } });
         }
 
-        // 登录绑定卡
+        function KplLadder({ asks, bids, totalAsk, totalBid }) {
+            const fmtV = (v) => v >= 1e8 ? (v / 1e8).toFixed(2) + "亿" : v >= 1e4 ? (v / 1e4).toFixed(1) + "万" : String(v || 0);
+            const row = (label, px, vol, color) =>
+                React.createElement("div", { className: "kpl-ladder-row", key: label },
+                    React.createElement("span", { className: "lbl" }, label),
+                    React.createElement("span", { className: "px", style: { color } }, px ? px.toFixed(2) : "--"),
+                    React.createElement("span", { className: "vol" }, fmtV(vol)));
+            const askRows = asks.map((a, i) => row(`卖${asks.length - i}`, a.px, a.vol, "#2ecc71"));
+            const bidRows = bids.map((b, i) => row(`买${i + 1}`, b.px, b.vol, "#e74c4c"));
+            return React.createElement("div", { className: "kpl-ladder" },
+                React.createElement("div", { className: "kpl-ladder-total sell" }, React.createElement("span", null, "总卖"), React.createElement("span", null, fmtV(totalAsk || 0))),
+                ...askRows,
+                React.createElement("div", { className: "kpl-ladder-sep" }),
+                ...bidRows,
+                React.createElement("div", { className: "kpl-ladder-total buy" }, React.createElement("span", null, "总买"), React.createElement("span", null, fmtV(totalBid || 0))));
+        }
+
+        /* ---- 页面头部（返回+标题+搜索） ---- */
+
+        function KplPageHeader({ title, subtitle, onBack, onSearch, extra }) {
+            return React.createElement("div", { className: "kpl-page-head" },
+                React.createElement("button", { className: "kpl-head-back", onClick: onBack }, "◀"),
+                React.createElement("div", { className: "kpl-head-center" },
+                    React.createElement("span", { className: "t" }, title),
+                    subtitle && React.createElement("span", { className: "c" }, subtitle)),
+                extra,
+                React.createElement("button", { className: "kpl-head-search", onClick: onSearch }, "🔍"));
+        }
+
+        /* ---- 登录卡（短信 / 密码 / 手动绑定 三模式） ---- */
+
         function KplBindCard({ onBound }) {
-            const [uid, setUid] = useState("");
-            const [tok, setTok] = useState("");
-            const [msg, setMsg] = useState(null);
-            const [busy, setBusy] = useState(false);
-            const bind = async () => {
-                if (!uid.trim() || !tok.trim()) { setMsg("✗ 请填写 UserID 和 Token"); return; }
+            const [mode, setMode] = useState("sms");
+            const [phone, setPhone] = useState("");
+            const [code, setCode] = useState("");
+            const [account, setAccount] = useState("");
+            const [password, setPassword] = useState("");
+            const [remember, setRemember] = useState(true);
+            const [uid, setUid] = useState(""); const [tok, setTok] = useState("");
+            const [msg, setMsg] = useState(null); const [busy, setBusy] = useState(false);
+            const [countdown, setCountdown] = useState(0);
+
+            const tick = useRef(null);
+            useEffect(() => {
+                tick.current = setInterval(() => setCountdown(c => (c > 0 ? c - 1 : 0)), 1000);
+                return () => clearInterval(tick.current);
+            }, []);
+
+            const doSendCode = async () => {
+                if (!/^1\d{10}$/.test(phone.trim())) { setMsg("✗ 请输入正确的11位手机号"); return; }
+                setBusy(true); setMsg(null);
+                try {
+                    const r = await post("/api/kpl/send-code", { phone: phone.trim() });
+                    if (r.ok) { setMsg("✓ 验证码已发送，请查收短信"); setCountdown(60); }
+                    else setMsg("✗ " + (r.error || "发送失败"));
+                } catch (e) { setMsg("✗ " + e.message); }
+                setBusy(false);
+            };
+            const doLoginSms = async () => {
+                if (!/^1\d{10}$/.test(phone.trim())) { setMsg("✗ 手机号不正确"); return; }
+                if (!code.trim()) { setMsg("✗ 请输入验证码"); return; }
+                setBusy(true); setMsg(null);
+                try {
+                    const r = await post("/api/kpl/login-sms", { phone: phone.trim(), code: code.trim() });
+                    if (r.ok) { setMsg("✓ 登录成功"); onBound(); }
+                    else setMsg("✗ " + (r.error || "登录失败"));
+                } catch (e) { setMsg("✗ " + e.message); }
+                setBusy(false);
+            };
+            const doLoginPwd = async () => {
+                if (!account.trim() || !password.trim()) { setMsg("✗ 请填写账号和密码"); return; }
+                setBusy(true); setMsg(null);
+                try {
+                    const r = await post("/api/kpl/login-pwd", {
+                        account: account.trim(), password: password, remember,
+                    });
+                    if (r.ok) { setMsg("✓ 登录成功"); onBound(); }
+                    else setMsg("✗ " + (r.error || "登录失败"));
+                } catch (e) { setMsg("✗ " + e.message); }
+                setBusy(false);
+            };
+            const doBind = async () => {
+                if (!uid.trim() || !tok.trim()) { setMsg("✗ 请填写"); return; }
                 setBusy(true);
                 try {
                     const s = await post("/api/kpl/bind", { user_id: uid.trim(), token: tok.trim() });
-                    if (s.logged_in) { setMsg("✓ 绑定成功"); onBound && onBound(); }
-                    else { setMsg("✗ Token 校验失败或已过期"); }
-                } catch (e) { setMsg(`✗ ${e.message}`); }
+                    setMsg(s.logged_in ? "✓ 绑定成功" : "✗ Token 校验失败");
+                    if (s.logged_in) onBound();
+                } catch (e) { setMsg("✗ " + e.message); }
                 setBusy(false);
             };
-            return React.createElement("div", { className: "dsh-stock-kpl-bind" },
-                React.createElement("div", { className: "dsh-stock-kpl-bind-title" }, "🔐 绑定开盘啦账号"),
-                React.createElement("div", { className: "dsh-stock-kpl-bind-desc" },
-                    "在开盘啦App登录后，通过抓包获取 UserID 与 Token（约2个月有效）。填写后即可使用自选股云端同步与个股五档详情。"),
-                React.createElement("label", { className: "dsh-stock-field" },
-                    React.createElement("span", { className: "dsh-stock-field-label" }, "UserID（数字）"),
-                    React.createElement("input", {
-                        className: "dsh-stock-input", style: { width: "100%" },
-                        placeholder: "如 1166637", value: uid,
-                        onChange: (e) => setUid(e.target.value),
-                    })),
-                React.createElement("label", { className: "dsh-stock-field" },
-                    React.createElement("span", { className: "dsh-stock-field-label" }, "Token（32位）"),
-                    React.createElement("input", {
-                        className: "dsh-stock-input", style: { width: "100%" },
-                        placeholder: "32位hex字符串", value: tok,
-                        onChange: (e) => setTok(e.target.value),
-                    })),
-                React.createElement("button", { className: "dsh-stock-btn sm", disabled: busy, onClick: bind },
-                    busy ? "校验中…" : "绑定并校验"),
-                msg && React.createElement("div", { className: "dsh-stock-cfg-msg" }, msg));
+
+            const tabs = [["sms", "短信登录"], ["pwd", "密码登录"], ["bind", "手动绑定"]];
+            return React.createElement("div", { className: "kpl-bind" },
+                React.createElement("div", { className: "kpl-bind-h" }, "🔐 登录开盘啦账号"),
+                React.createElement("div", { className: "kpl-bind-tabs" },
+                    tabs.map(([id, label]) =>
+                        React.createElement("div", {
+                            key: id,
+                            className: `kpl-bind-tab ${mode === id ? "on" : ""}`,
+                            onClick: () => { setMode(id); setMsg(null); },
+                        }, label))),
+                mode === "sms" && React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "kpl-bind-row" },
+                        React.createElement("input", { className: "kpl-bind-in", placeholder: "手机号",
+                            maxLength: 11, value: phone, onChange: e => setPhone(e.target.value) }),
+                        React.createElement("button", {
+                            className: "kpl-bind-btn ghost", disabled: busy || countdown > 0,
+                            onClick: doSendCode,
+                        }, countdown > 0 ? countdown + "s" : "获取验证码")),
+                    React.createElement("input", { className: "kpl-bind-in", placeholder: "短信验证码",
+                        maxLength: 6, value: code, onChange: e => setCode(e.target.value) }),
+                    React.createElement("button", { className: "kpl-bind-btn", disabled: busy, onClick: doLoginSms },
+                        busy ? "登录中…" : "登 录")),
+                mode === "pwd" && React.createElement(React.Fragment, null,
+                    React.createElement("input", { className: "kpl-bind-in", placeholder: "账号（手机号/用户名）",
+                        value: account, onChange: e => setAccount(e.target.value) }),
+                    React.createElement("input", { className: "kpl-bind-in", type: "password", placeholder: "密码",
+                        value: password, onChange: e => setPassword(e.target.value) }),
+                    React.createElement("label", { className: "kpl-bind-remember" },
+                        React.createElement("input", { type: "checkbox", checked: remember,
+                            onChange: e => setRemember(e.target.checked) }),
+                        "记住密码（Token失效时自动重登；明文存本机配置）"),
+                    React.createElement("button", { className: "kpl-bind-btn", disabled: busy, onClick: doLoginPwd },
+                        busy ? "登录中…" : "登 录")),
+                mode === "bind" && React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "kpl-bind-d" }, "App登录后抓包获取 UserID+Token（约2个月有效）"),
+                    React.createElement("input", { className: "kpl-bind-in", placeholder: "UserID", value: uid, onChange: e => setUid(e.target.value) }),
+                    React.createElement("input", { className: "kpl-bind-in", placeholder: "Token", value: tok, onChange: e => setTok(e.target.value) }),
+                    React.createElement("button", { className: "kpl-bind-btn", disabled: busy, onClick: doBind }, busy ? "…" : "绑定")),
+                msg && React.createElement("div", { className: "kpl-bind-msg" }, msg));
         }
 
-        // 十档委托梯
-        function KplLadder({ asks, bids, totalAsk, totalBid }) {
-            const fmtV = (v) => v >= 10000 ? (v / 10000).toFixed(1) + "万" : String(v || 0);
-            return React.createElement("div", { className: "dsh-stock-kpl-ladder" },
-                React.createElement("div", { className: "dsh-stock-kpl-ladder-row sell" },
-                    React.createElement("span", null, "总卖"), React.createElement("span", null, fmtV(totalAsk || 0))),
-                asks.map((a, i) => React.createElement("div", { key: "s" + i, className: "dsh-stock-kpl-ladder-row sell" },
-                    React.createElement("span", null, "卖" + (asks.length - i)),
-                    React.createElement("span", { className: "px" }, a.px ? a.px.toFixed(2) : "--"),
-                    React.createElement("span", { className: "vol" }, fmtV(a.vol)))),
-                React.createElement("div", { className: "dsh-stock-kpl-ladder-sep" }),
-                bids.map((b, i) => React.createElement("div", { key: "b" + i, className: "dsh-stock-kpl-ladder-row buy" },
-                    React.createElement("span", null, "买" + (i + 1)),
-                    React.createElement("span", { className: "px" }, b.px ? b.px.toFixed(2) : "--"),
-                    React.createElement("span", { className: "vol" }, fmtV(b.vol)))),
-                React.createElement("div", { className: "dsh-stock-kpl-ladder-row buy" },
-                    React.createElement("span", null, "总买"), React.createElement("span", null, fmtV(totalBid || 0))));
+        /* ---- 底部导航 ---- */
+
+        function KplBottomNav({ active, onChange }) {
+            return React.createElement("div", { className: "kpl-bottom-nav" },
+                KPL_NAV.map((n) =>
+                    React.createElement("div", {
+                        key: n.id, className: `kpl-nav-item ${active === n.id ? "on" : ""}`,
+                        onClick: () => onChange(n.id),
+                    }, React.createElement("span", { className: "ico" }, n.icon),
+                       React.createElement("span", { className: "lbl" }, n.label))));
         }
 
-        // 板块详情页（1:1还原）
-        function KplSectorDetail({ plate, list, go }) {
+        /* ---- 首页 ---- */
+
+        function KplHomePage({ go, status, reloadStatus }) {
+            const [ov, setOv] = useState(null);
+            const load = useCallback(async () => {
+                try { setOv(await api("/api/kpl/overview")); } catch { /* */ }
+            }, []);
+            usePolling(load, 30000, []);
+            const logged = status && status.logged_in;
+            const funcs = [
+                ["📊 龙虎榜", () => go({ page: "lhb" })],
+                ["🌡 市场情绪", () => go({ page: "market", sub: "sentiment" })],
+                ["📝 复盘啦", () => {}],
+                ["📚 题材库", () => go({ page: "market", sub: "plate" })],
+                ["🛒 商品现货", () => {}],
+                ["📰 快讯", () => go({ page: "market", sub: "live" })],
+                ["🎥 大盘直播", () => go({ page: "market", sub: "live" })],
+                ["💼 ETF基金", () => {}],
+                ["📖 功能介绍", () => {}],
+                ["🏢 机构增仓", () => {}],
+            ];
+            return React.createElement("div", { className: "kpl-page" },
+                !logged && React.createElement(KplBindCard, { onBound: reloadStatus }),
+                logged && status.user_info && React.createElement("div", { className: "kpl-user-bar" },
+                    React.createElement("span", null,
+                        "👤 " + (status.user_info.username || status.user_info.user_id)
+                        + (status.phone_masked ? `（${status.phone_masked}）` : "")
+                        + (status.token_invalid ? " ⚠ Token已失效" : (status.can_relogin ? " · 自动续期✓" : ""))),
+                    React.createElement("button", {
+                        className: "kpl-user-logout", onClick: async () => {
+                            try { await post("/api/kpl/logout", {}); reloadStatus(); } catch { /* */ }
+                        },
+                    }, "退出")),
+                React.createElement("div", { className: "kpl-func-grid" },
+                    funcs.map(([label, fn]) =>
+                        React.createElement("div", { key: label, className: "kpl-func-btn", onClick: fn }, label))),
+                React.createElement("div", { className: "kpl-sec-title" }, "🔥 热搜股票"),
+                React.createElement("div", { className: "kpl-hot-grid" },
+                    ((ov && ov.hot_stocks) || []).slice(0, 10).map((h, i) =>
+                        React.createElement("div", { key: h.ID || i, className: "kpl-hot-item",
+                            onClick: () => go({ page: "stock", stock: { code: h.ID, name: h.Name || h.ID } }) },
+                            React.createElement("span", { className: "rank" }, i + 1),
+                            React.createElement("span", { className: "code" }, h.ID)))),
+                React.createElement("div", { className: "kpl-sec-title" }, "🔥 热搜词"),
+                React.createElement("div", { className: "kpl-hot-words" },
+                    ((ov && ov.hot_words) || []).slice(0, 12).map((w, i) =>
+                        React.createElement("span", { key: i, className: "kpl-hot-word" }, w))));
+        }
+
+        /* ---- 行情页（子Tab: 板块/个股/...） ---- */
+
+        function KplMarketPage({ go, initialSub }) {
+            const [sub, setSub] = useState(initialSub || "plate");
+            const subs = ["板块", "个股", "港股", "打板", "情绪", "直播", "全球"];
+            const subMap = { "板块": "plate", "个股": "stock", "港股": "hk", "打板": "daban", "情绪": "sentiment", "直播": "live", "全球": "global" };
+            const activeSub = Object.keys(subMap).find(k => subMap[k] === sub) || "板块";
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement("div", { className: "kpl-subtabs" },
+                    subs.map(s => React.createElement("span", {
+                        key: s, className: `kpl-subtab ${subMap[s] === sub ? "on" : ""}`,
+                        onClick: () => setSub(subMap[s]),
+                    }, s))),
+                sub === "plate" && React.createElement(KplPlateSub, { go }),
+                sub === "sentiment" && React.createElement(KplSentimentSub, null),
+                sub === "global" && React.createElement(KplGlobalSub, null),
+                !["plate", "sentiment", "global"].includes(sub) && React.createElement("div", { className: "kpl-placeholder" }, `${activeSub} 页面二期提供`));
+        }
+
+        function KplPlateSub({ go }) {
+            const [ov, setOv] = useState(null);
+            const load = useCallback(async () => {
+                try { setOv(await api("/api/kpl/overview")); } catch { /* */ }
+            }, []);
+            usePolling(load, 20000, []);
+            const dingpan = (ov && ov.dingpan) || {};
+            const db = dingpan.DaBanList || dingpan.DaBanList === 0 ? dingpan.DaBanList : {};
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement("div", { className: "kpl-stat-cards" },
+                    [["涨停板", (db.tZhangTing ?? "-") + " / " + (db.lZhangTing ?? "-")], ["封板率", (db.tFengBan ?? "-") + "%"], ["跌停股", (db.tDieTing ?? "-") + " / " + (db.lDieTing ?? "-")]]
+                        .map(([label, val], i) =>
+                            React.createElement("div", { key: i, className: "kpl-stat-card" },
+                                React.createElement("div", { className: "kpl-stat-label" }, label),
+                                React.createElement("div", { className: "kpl-stat-value" }, val)))),
+                React.createElement("div", { className: "kpl-sec-title" }, "📈 精选板块强度（点击下钻）"),
+                React.createElement("div", { className: "kpl-sector-table" },
+                    KPL_SECTORS.map((s) => React.createElement(KplSectorRow, { key: s.code, sector: s, go, list: KPL_SECTORS }))));
+        }
+
+        function KplSectorRow({ sector, go, list }) {
+            const [info, setInfo] = useState(null);
+            useEffect(() => {
+                let alive = true;
+                const t = setTimeout(async () => {
+                    try { const d = await api(`/api/kpl/plate/${sector.code}`); if (alive) setInfo(d.info); }
+                    catch { /* */ }
+                }, Math.floor(Math.random() * 2500));
+                return () => { alive = false; clearTimeout(t); };
+            }, [sector.code]);
+            return React.createElement("div", { className: "kpl-sector-row", onClick: () => go({ page: "sector", plate: sector, list }) },
+                React.createElement("div", { className: "kpl-sector-name" },
+                    React.createElement("div", { className: "n" }, sector.name),
+                    React.createElement("div", { className: "c" }, sector.code)),
+                info ? React.createElement("div", { className: "kpl-sector-num" }, React.createElement("span", { className: cls(info.change_pct) + " strong" }, String(info.point ?? "-")),
+                    React.createElement("span", { className: cls(info.change_pct) + " pct" }, formatPct(info.change_pct)))
+                    : React.createElement("div", { className: "kpl-sector-num" }, "--"),
+                info ? React.createElement("div", { className: "kpl-sector-num" }, React.createElement("span", { className: cls(info.main_net >= 0) }, (info.main_net / 1e8).toFixed(1) + "亿"))
+                    : React.createElement("div", { className: "kpl-sector-num" }, "--"),
+                info && info.zt_count != null ? React.createElement("div", { className: "kpl-sector-zt" }, `涨停 ${info.zt_count}`) : null);
+        }
+
+        function KplSentimentSub() {
             const [data, setData] = useState(null);
-            const [error, setError] = useState(null);
-            const [mode, setMode] = useState("trend");
             const load = useCallback(async () => {
-                try {
-                    const d = await api(`/api/kpl/plate/${plate.code}`);
-                    setError(null); setData(d);
-                } catch (e) { setError(e.message); }
-            }, [plate.code]);
-            usePolling(load, 20000, [plate.code]);
-
-            const info = data && data.info;
-            const idx = list.findIndex((s) => s.code === plate.code);
-            const nav = (dir) => {
-                const ni = (idx + dir + list.length) % list.length;
-                go({ page: "sector", plate: list[ni], list });
-            };
-
-            return React.createElement("div", { className: "dsh-stock-kpl-page" },
-                React.createElement("div", { className: "dsh-stock-kpl-head" },
-                    React.createElement("button", { className: "dsh-stock-kpl-back", onClick: () => go({ page: "overview" }) }, "◀"),
-                    React.createElement("div", { className: "dsh-stock-kpl-head-title" },
-                        React.createElement("div", { className: "t" }, plate.name),
-                        React.createElement("div", { className: "c" }, plate.code)),
-                    list.length > 1 && React.createElement("button", { className: "dsh-stock-kpl-nav", onClick: () => nav(-1) }, "◀"),
-                    list.length > 1 && React.createElement("button", { className: "dsh-stock-kpl-nav", onClick: () => nav(1) }, "▶"),
-                    React.createElement("button", { className: "dsh-stock-kpl-nav", onClick: () => go({ page: "search" }) }, "🔍")),
-                React.createElement(LoadingBar, { show: !data && !error }),
-                React.createElement(ErrorBox, { error }),
-                info && React.createElement(React.Fragment, null,
-                    React.createElement("div", { className: "dsh-stock-kpl-strength" },
-                        React.createElement("div", { className: "big" }, `强度 ${info.point}`),
-                        React.createElement("div", { className: "sub" }, `排名 ${info.rank ?? "-"} · ${info.date || "今日"}`),
-                        React.createElement("div", { className: "dsh-stock-kpl-ind-grid" },
-                            [["涨幅", formatPct(info.change_pct), info.change_pct >= 0],
-                             ["主力净额", (info.main_net / 1e8).toFixed(2) + "亿", info.main_net >= 0],
-                             ["成交额", (info.amount / 1e8).toFixed(1) + "亿", true],
-                             ["涨停数", info.zt_count, true],
-                             ["涨停封单", (info.zt_seal / 1e8).toFixed(2) + "亿", true],
-                             ["大单封单", (info.big_seal / 1e8).toFixed(2) + "亿", true]]
-                                .map(([k, v, up], i) =>
-                                    React.createElement("div", { key: i, className: "item" },
-                                        React.createElement("span", { className: "label" }, k),
-                                        React.createElement("span", { className: `value ${up ? "up" : "down"}` }, v)))))),
-                React.createElement("div", { className: "dsh-stock-kpl-chart-wrap" },
-                    React.createElement("div", { className: "dsh-stock-kpl-chart" },
-                        data && data.trend && data.trend.trend && data.trend.trend.length > 0
-                            ? React.createElement(KplTrendChart, { trend: data.trend.trend, preclose: data.trend.preclose, height: 170 })
-                            : React.createElement("div", { className: "dsh-stock-loading" }, "暂无分时数据")),
-                    React.createElement("div", { className: "dsh-stock-kpl-side" },
-                        React.createElement("button", { className: "active" }, "分时"),
-                        React.createElement("button", { className: "dsh-stock-kpl-nav dim", onClick: () => go({ page: "overview" }) }, "K线"))),
-                React.createElement("div", { className: "dsh-stock-kpl-tabs" },
-                    React.createElement("span", { className: "on" }, "股票池"),
-                    React.createElement("span", { className: "dim" }, "机构纪要(二期)"),
-                    React.createElement("span", { className: "dim" }, "要闻(二期)"),
-                    React.createElement("span", { className: "dim" }, "股票筛选(二期)")),
-                data && (data.son_plates || []).length > 0 && React.createElement("div", { className: "dsh-stock-kpl-chips" },
-                    data.son_plates.map((s) =>
-                        React.createElement("span", {
-                            key: s.code, className: "dsh-stock-kpl-chip",
-                            onClick: () => go({ page: "sector", plate: { code: s.code, name: s.name }, list }),
-                        }, `${s.name} ${s.strength}`))),
-                data && (data.filter_tags || []).length > 0 && React.createElement("div", { className: "dsh-stock-kpl-filterchips" },
-                    data.filter_tags.map((t, i) =>
-                        React.createElement("span", { key: i, className: `dsh-stock-kpl-fchip ${t.open ? "" : "vip"}` },
-                            t.open ? t.name : `🔒${t.name}`))),
-                React.createElement("div", { className: "dsh-stock-kpl-note" },
-                    "ℹ️ 股票池列表（龙一/龙二/人气值）走KPL Socket通道，二期提供。当前可通过细分板块下钻，或用「🔍搜索」查看个股。"),
-            );
+                try { setData(await api("/api/kpl/overview")); } catch { /* */ }
+            }, []);
+            usePolling(load, 60000, []);
+            const hist = (data && data.sentiment_history) || [];
+            return React.createElement("div", { className: "kpl-page" },
+                hist.length === 0 && React.createElement("div", { className: "kpl-placeholder" }, "暂无情绪数据"),
+                hist.slice(0, 10).map((d, i) =>
+                    React.createElement("div", { key: i, className: "kpl-sent-row" },
+                        React.createElement("span", { className: "day" }, d.Day),
+                        React.createElement("span", { className: "strong" }, `强度 ${d.strong}`),
+                        React.createElement("span", { className: "zt" }, `涨停 ${d.ztjs}`),
+                        React.createElement("span", { className: "lb" }, `连板高度 ${d.lbgd}`))));
         }
 
-        // 个股详情页
-        function KplStockDetail({ stock, go }) {
-            const [q, setQ] = useState(null);
-            const [error, setError] = useState(null);
-            const [inWatch, setInWatch] = useState(null);
+        function KplGlobalSub() {
+            const [data, setData] = useState(null);
             const load = useCallback(async () => {
-                try {
-                    const d = await api(`/api/kpl/quote/${stock.code}?force=1`);
-                    setError(null); setQ(d);
-                } catch (e) { setError(e.message); }
-            }, [stock.code]);
-            usePolling(load, 10000, [stock.code]);
-
-            const toggleWatch = async () => {
-                try {
-                    if (inWatch) await post("/api/kpl/watchlist/del", { code: stock.code });
-                    else await post("/api/kpl/watchlist/add", { code: stock.code });
-                    setInWatch(!inWatch);
-                } catch (e) { setError(e.message); }
-            };
-
-            const up = q && q.change >= 0;
-            return React.createElement("div", { className: "dsh-stock-kpl-page" },
-                React.createElement("div", { className: "dsh-stock-kpl-head" },
-                    React.createElement("button", { className: "dsh-stock-kpl-back", onClick: () => go({ page: "back" }) }, "◀"),
-                    React.createElement("div", { className: "dsh-stock-kpl-head-title" },
-                        React.createElement("div", { className: "t" }, q ? q.name : stock.name),
-                        React.createElement("div", { className: "c" }, stock.code),
-                        q && q.group_tag && React.createElement("span", { className: "dsh-stock-kpl-tag" }, q.group_tag)),
-                    React.createElement("button", { className: "dsh-stock-kpl-nav", onClick: () => go({ page: "search" }) }, "🔍")),
-                React.createElement(LoadingBar, { show: !q && !error }),
-                React.createElement(ErrorBox, { error }),
-                q && React.createElement(React.Fragment, null,
-                    React.createElement("div", { className: `dsh-stock-kpl-quotehead ${up ? "up" : "down"}` },
-                        React.createElement("div", { className: "price" },
-                            React.createElement("div", { className: "big" }, formatNum(q.last)),
-                            React.createElement("div", { className: "chg" }, `${q.change >= 0 ? "+" : ""}${formatNum(q.change)}  ${formatPct(q.change_pct)}`)),
-                        React.createElement("div", { className: "grid" },
-                            [["高", formatNum(q.high)], ["换手", formatNum(q.turnover_ratio) + "%"], ["振幅", formatNum(q.amplitude) + "%"],
-                             ["低", formatNum(q.low)], ["市值", formatYi((q.market_cap || 0) / 1e8)], ["金额", formatYi((q.amount || 0) / 1e8)],
-                             ["开", formatNum(q.open)], ["流通", formatYi((q.float_cap || 0) / 1e8)], ["市盈TTM", formatNum(q.pe_ttm)]]
-                                .map(([k, v], i) => React.createElement("div", { key: i, className: "gi" },
-                                    React.createElement("span", { className: "k" }, k),
-                                    React.createElement("span", { className: "v" }, v))))),
-                    q.zt_reason && React.createElement("div", { className: "dsh-stock-kpl-reason" },
-                        `📌 涨停原因：${q.zt_reason}`),
-                    React.createElement("div", { className: "dsh-stock-kpl-detail-body" },
-                        React.createElement("div", { className: "dsh-stock-kpl-pankou" },
-                            React.createElement("div", { className: "dsh-stock-kpl-pankou-title" }, "五档 · 十档委托"),
-                            React.createElement(KplLadder, { asks: q.asks, bids: q.bids, totalAsk: q.total_ask, totalBid: q.total_bid })),
-                        React.createElement("div", { className: "dsh-stock-kpl-detail-side" },
-                            React.createElement("div", { className: "dsh-stock-kpl-mini" },
-                                React.createElement("div", { className: "k" }, "主力净入"),
-                                React.createElement("div", { className: `v ${cls((q.amount_in || 0) - (q.amount_out || 0))}` },
-                                    formatYi(((q.amount_in || 0) - (q.amount_out || 0)) / 1e8))),
-                            React.createElement("div", { className: "dsh-stock-kpl-mini" },
-                                React.createElement("div", { className: "k" }, "量比"),
-                                React.createElement("div", { className: "v" }, formatNum(q.vol_ratio))),
-                            React.createElement("div", { className: "dsh-stock-kpl-mini" },
-                                React.createElement("div", { className: "k" }, "委比"),
-                                React.createElement("div", { className: "v" }, formatNum(q.entrust_rate) + "%")))),
-                    React.createElement("div", { className: "dsh-stock-kpl-actions" },
-                        React.createElement("button", { className: "dsh-stock-btn sm", onClick: () => go({ page: "lhb" }) }, "📊 龙虎榜(二期)"),
-                        React.createElement("button", { className: "dsh-stock-btn sm ghost", onClick: toggleWatch }, inWatch ? "★ 移出自选" : "☆ 加自选"))),
-            );
+                try { setData(await api("/api/kpl/overview")); } catch { /* */ }
+            }, []);
+            usePolling(load, 60000, []);
+            const global = (data && data.global) || {};
+            const groups = {};
+            for (const [k, v] of Object.entries(global)) {
+                if (!Array.isArray(v) || !v.length) continue;
+                for (const item of v) {
+                    if (item && typeof item === "object" && item.last_px) {
+                        const cat = k.replace(/Time|Type/g, "");
+                        if (!groups[cat]) groups[cat] = [];
+                        groups[cat].push(item);
+                    }
+                }
+            }
+            return React.createElement("div", { className: "kpl-page" },
+                Object.keys(groups).length === 0 && React.createElement("div", { className: "kpl-placeholder" }, "暂无全球指数数据"),
+                Object.entries(groups).map(([cat, items]) =>
+                    React.createElement("div", { key: cat },
+                        React.createElement("div", { className: "kpl-sec-title" }, cat),
+                        React.createElement("div", { className: "kpl-global-grid" },
+                            items.slice(0, 6).map((item, i) =>
+                                React.createElement("div", { key: i, className: "kpl-global-card" },
+                                    React.createElement("div", { className: "name" }, item.prod_name || item.code || "-"),
+                                    React.createElement("div", { className: `px ${cls(item.change_rate)}` }, item.last_px),
+                                    React.createElement("div", { className: `chg ${cls(item.change_rate)}` }, item.increase_amount + " " + item.change_rate)))))));
         }
 
-        // 自选股页
-        function KplWatchlist({ go }) {
+        /* ---- 自选股页 ---- */
+
+        function KplWatchPage({ go }) {
             const [wl, setWl] = useState(null);
             const [quotes, setQuotes] = useState({});
             const [group, setGroup] = useState("0");
@@ -1804,162 +1940,256 @@ window.__ModuleLoader__.load({
                     const codes = ((d || {}).stocks || {})[group] || [];
                     const qs = {};
                     for (const code of codes.slice(0, 15)) {
-                        try { qs[code] = await api(`/api/kpl/quote/${code}`); } catch { /* ignore */ }
+                        try { qs[code] = await api(`/api/kpl/quote/${code}`); } catch { /* */ }
                     }
                     setQuotes(qs);
                 } catch (e) { setError(e.message); }
             }, [group]);
             usePolling(load, 10000, [group]);
-
             const del = async (code) => {
                 try { await post("/api/kpl/watchlist/del", { code, combine_id: group }); load(); }
                 catch (e) { setError(e.message); }
             };
-
             const groups = (wl && wl.groups) || [];
             const codes = (wl && wl.stocks && wl.stocks[group]) || [];
-            return React.createElement("div", { className: "dsh-stock-kpl-page" },
-                React.createElement(TabHead, { title: "⭐ 自选股（开盘啦云端）", onRefresh: load }),
+            return React.createElement("div", { className: "kpl-page" },
                 React.createElement(ErrorBox, { error }),
-                groups.length > 0 && React.createElement("div", { className: "dsh-stock-kpl-groups" },
+                groups.length > 0 && React.createElement("div", { className: "kpl-groups" },
                     groups.map((g) => React.createElement("span", {
-                        key: g.id, className: `dsh-stock-kpl-group ${group === g.id ? "on" : ""}`,
+                        key: g.id, className: `kpl-group-chip ${group === g.id ? "on" : ""}`,
                         onClick: () => setGroup(g.id),
                     }, g.name))),
-                wl && codes.length === 0 && React.createElement("div", { className: "dsh-stock-empty-inline" },
-                    groups.length === 0 ? "未绑定账号或无自选分组" : "该分组暂无自选股，去「🔍搜索」添加"),
+                wl && codes.length === 0 && React.createElement("div", { className: "kpl-placeholder" },
+                    "该分组暂无自选股"),
                 codes.map((code) => {
                     const qt = quotes[code];
                     const name = (qt && qt.name) || code;
-                    return React.createElement("div", { key: code, className: "dsh-stock-kpl-wrow" },
-                        React.createElement("span", { className: "name", onClick: () => go({ page: "stock", stock: { code, name } }) },
-                            name, React.createElement("span", { className: "code" }, " " + code)),
-                        qt && React.createElement("span", { className: `num ${cls(qt.change_pct)}` },
-                            `${formatNum(qt.last)} ${formatPct(qt.change_pct)}`),
-                        React.createElement("button", { className: "dsh-stock-btn sm danger", onClick: () => del(code) }, "－"));
+                    return React.createElement("div", { key: code, className: "kpl-wrow",
+                        onClick: () => go({ page: "stock", stock: { code, name } }) },
+                        React.createElement("div", { className: "kpl-wrow-info" },
+                            React.createElement("div", { className: "n" }, name),
+                            React.createElement("div", { className: "c" }, code)),
+                        qt ? React.createElement("div", { className: "kpl-wrow-quote" },
+                            React.createElement("div", { className: `px ${cls(qt.change_pct)}` }, formatNum(qt.last)),
+                            React.createElement("div", { className: `pct ${cls(qt.change_pct)}` }, formatPct(qt.change_pct)))
+                            : React.createElement("div", { className: "kpl-wrow-quote" }, "--"),
+                        React.createElement("button", { className: "kpl-wrow-del",
+                            onClick: (e) => { e.stopPropagation(); del(code); } }, "－"));
                 }),
-                React.createElement("button", { className: "dsh-stock-btn sm ghost", style: { marginTop: "6px" }, onClick: () => go({ page: "search" }) }, "＋ 搜索添加自选股"),
-            );
+                React.createElement("button", { className: "kpl-add-stock-btn", onClick: () => go({ page: "search" }) },
+                    "＋ 搜索添加自选股"));
         }
 
-        // 搜索页
+        /* ---- 龙虎榜 / 推荐 (占位) ---- */
+
+        function KplLhbPage() {
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement("div", { className: "kpl-placeholder" }, "📊 龙虎榜功能二期提供"));
+        }
+
+        function KplRecommendPage() {
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement("div", { className: "kpl-placeholder" }, "👍 推荐功能二期提供"));
+        }
+
+        /* ---- 板块详情（下钻 1:1） ---- */
+
+        function KplSectorDetail({ plate, list, go }) {
+            const [data, setData] = useState(null);
+            const [error, setError] = useState(null);
+            const load = useCallback(async () => {
+                try { const d = await api(`/api/kpl/plate/${plate.code}`); setError(null); setData(d); }
+                catch (e) { setError(e.message); }
+            }, [plate.code]);
+            usePolling(load, 20000, [plate.code]);
+            const info = data && data.info;
+            const idx = list.findIndex((s) => s.code === plate.code);
+            const nav = (dir) => {
+                const ni = (idx + dir + list.length) % list.length;
+                go({ page: "sector", plate: list[ni], list });
+            };
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: plate.name, subtitle: plate.code,
+                    onBack: () => go({ page: "back" }), onSearch: () => go({ page: "search" }),
+                    extra: list.length > 1 && [
+                        React.createElement("button", { key: "p", className: "kpl-head-nav", onClick: () => nav(-1) }, "◀"),
+                        React.createElement("button", { key: "n", className: "kpl-head-nav", onClick: () => nav(1) }, "▶"),
+                    ] }),
+                React.createElement(LoadingBar, { show: !data && !error }),
+                React.createElement(ErrorBox, { error }),
+                info && React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "kpl-sf-block" },
+                        React.createElement("div", { className: "kpl-sf-big" }, String(info.point)),
+                        React.createElement("div", { className: "kpl-sf-rank" }, `排名 ${info.rank ?? "-"}`)),
+                    React.createElement("div", { className: "kpl-sf-grid" },
+                        [["涨幅", formatPct(info.change_pct), info.change_pct >= 0],
+                         ["主力净额", (info.main_net / 1e8).toFixed(2) + "亿", info.main_net >= 0],
+                         ["成交额", (info.amount / 1e8).toFixed(1) + "亿", true],
+                         ["涨停数", info.zt_count, true],
+                         ["涨停封单", (info.zt_seal / 1e8).toFixed(2) + "亿", true],
+                         ["大单封单", (info.big_seal / 1e8).toFixed(2) + "亿", true]]
+                            .map(([k, v, up], i) =>
+                                React.createElement("div", { key: i, className: "kpl-sf-item" },
+                                    React.createElement("span", { className: "k" }, k),
+                                    React.createElement("span", { className: "v " + (up ? "up" : "down") }, v))))),
+                data && (data.son_plates || []).length > 0 && React.createElement("div", { className: "kpl-son-chips" },
+                    React.createElement("span", { className: "kpl-son-label" }, "细分"),
+                    data.son_plates.map((s) =>
+                        React.createElement("span", { key: s.code, className: "kpl-son-chip",
+                            onClick: () => go({ page: "sector", plate: { code: s.code, name: s.name }, list }),
+                        }, React.createElement("b", null, s.name), React.createElement("span", null, s.strength)))),
+                data && (data.filter_tags || []).length > 0 && React.createElement("div", { className: "kpl-ft-chips" },
+                    data.filter_tags.map((t, i) =>
+                        React.createElement("span", { key: i, className: `kpl-ft-chip ${t.open ? "" : "locked"}` },
+                            t.open ? t.name : `🔒${t.name}`))),
+                data && data.trend && data.trend.trend && data.trend.trend.length > 0 &&
+                    React.createElement(KplTrendChart, { trend: data.trend.trend, preclose: data.trend.preclose, height: 170 }),
+                React.createElement("div", { className: "kpl-note" },
+                    "ℹ️ 股票池列表（龙一/人气值）走KPL Socket通道，二期提供"));
+        }
+
+        /* ---- 个股详情（下钻） ---- */
+
+        function KplStockDetail({ stock, go }) {
+            const [q, setQ] = useState(null);
+            const [error, setError] = useState(null);
+            const [inWatch, setInWatch] = useState(null);
+            const load = useCallback(async () => {
+                try { const d = await api(`/api/kpl/quote/${stock.code}?force=1`); setError(null); setQ(d); }
+                catch (e) { setError(e.message); }
+            }, [stock.code]);
+            usePolling(load, 10000, [stock.code]);
+            const toggleWatch = async () => {
+                try {
+                    if (inWatch) await post("/api/kpl/watchlist/del", { code: stock.code });
+                    else await post("/api/kpl/watchlist/add", { code: stock.code });
+                    setInWatch(!inWatch);
+                } catch (e) { setError(e.message); }
+            };
+            const up = q && q.change >= 0;
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: q ? q.name : stock.name, subtitle: stock.code,
+                    onBack: () => go({ page: "back" }), onSearch: () => go({ page: "search" }) }),
+                React.createElement(LoadingBar, { show: !q && !error }),
+                React.createElement(ErrorBox, { error }),
+                q && React.createElement(React.Fragment, null,
+                    React.createElement("div", { className: "kpl-stock-quote" },
+                        React.createElement("div", { className: "kpl-stock-price" },
+                            React.createElement("div", { className: "big " + (up ? "up" : "down") }, formatNum(q.last)),
+                            React.createElement("div", { className: "chg " + (up ? "up" : "down") },
+                                `${q.change >= 0 ? "+" : ""}${formatNum(q.change)}  ${formatPct(q.change_pct)}`)),
+                        React.createElement("div", { className: "kpl-stock-grid" },
+                            [["高", formatNum(q.high)], ["换手", formatNum(q.turnover_ratio) + "%"], ["振幅", formatNum(q.amplitude) + "%"],
+                             ["低", formatNum(q.low)], ["市值", formatYi((q.market_cap || 0) / 1e8)], ["金额", formatYi((q.amount || 0) / 1e8)],
+                             ["开", formatNum(q.open)], ["流通", formatYi((q.float_cap || 0) / 1e8)], ["市盈TTM", formatNum(q.pe_ttm)]]
+                                .map(([k, v], i) => React.createElement("div", { key: i, className: "kpl-sg-item" },
+                                    React.createElement("span", { className: "k" }, k),
+                                    React.createElement("span", { className: "v" }, v))))),
+                    q.zt_reason && React.createElement("div", { className: "kpl-reason" }, `📌 ${q.zt_reason}`),
+                    React.createElement("div", { className: "kpl-stock-ladder-wrap" },
+                        React.createElement(KplLadder, { asks: q.asks, bids: q.bids, totalAsk: q.total_ask, totalBid: q.total_bid }),
+                        React.createElement("div", { className: "kpl-stock-side" },
+                            React.createElement("div", { className: "kpl-mini" },
+                                React.createElement("div", { className: "k" }, "主力净入"),
+                                React.createElement("div", { className: "v " + cls((q.amount_in || 0) - (q.amount_out || 0)) },
+                                    formatYi(((q.amount_in || 0) - (q.amount_out || 0)) / 1e8))),
+                            React.createElement("div", { className: "kpl-mini" },
+                                React.createElement("div", { className: "k" }, "量比"),
+                                React.createElement("div", { className: "v" }, formatNum(q.vol_ratio))),
+                            React.createElement("div", { className: "kpl-mini" },
+                                React.createElement("div", { className: "k" }, "委比"),
+                                React.createElement("div", { className: "v" }, formatNum(q.entrust_rate) + "%")))),
+                    React.createElement("div", { className: "kpl-stock-actions" },
+                        React.createElement("button", { className: "kpl-action-btn", onClick: () => go({ page: "lhb" }) }, "📊 龙虎榜(二期)"),
+                        React.createElement("button", { className: "kpl-action-btn star", onClick: toggleWatch },
+                            inWatch ? "★ 移出自选" : "☆ 加自选")),
+                ));
+        }
+
+        /* ---- 搜索（下钻） ---- */
+
         function KplSearch({ go }) {
             const [q, setQ] = useState("");
             const [hot, setHot] = useState([]);
             const [results, setResults] = useState(null);
-            const [names, setNames] = useState({});
-            const [msg, setMsg] = useState({});
             const loadHot = useCallback(async () => {
-                try {
-                    const d = await api("/api/kpl/overview");
-                    setHot((d && d.hot_stocks) || []);
-                } catch { /* ignore */ }
+                try { const d = await api("/api/kpl/overview"); setHot((d && d.hot_stocks) || []); } catch { /* */ }
             }, []);
             useEffect(() => { loadHot(); }, []);
             useEffect(() => {
                 if (!q.trim()) { setResults(null); return; }
                 const t = setTimeout(async () => {
-                    try {
-                        const d = await api(`/api/kpl/search-local?q=${encodeURIComponent(q.trim())}`);
-                        setResults(d.results || []);
-                        (d.results || []).slice(0, 5).forEach(async (r) => {
-                            try {
-                                const pk = await api(`/api/kpl/quote/${r.code}`);
-                                setNames((prev) => ({ ...prev, [r.code]: pk.name }));
-                            } catch { /* ignore */ }
-                        });
-                    } catch { /* ignore */ }
+                    try { const d = await api(`/api/kpl/search-local?q=${encodeURIComponent(q.trim())}`); setResults(d.results || []); }
+                    catch { /* */ }
                 }, 300);
                 return () => clearTimeout(t);
             }, [q]);
             const add = async (code) => {
-                try {
-                    await post("/api/kpl/watchlist/add", { code });
-                    setMsg((m) => ({ ...m, [code]: "✓ 已加入自选" }));
-                } catch (e) { setMsg((m) => ({ ...m, [code]: "✗ " + e.message })); }
+                try { await post("/api/kpl/watchlist/add", { code }); }
+                catch { /* */ }
             };
             const rows = results !== null ? results : hot.map((h) => ({ code: h.ID, name: h.Name || "" }));
-            return React.createElement("div", { className: "dsh-stock-kpl-page" },
-                React.createElement("div", { className: "dsh-stock-kpl-searchbar" },
-                    React.createElement("input", {
-                        className: "dsh-stock-input", style: { flex: 1 },
-                        placeholder: "搜索个股（代码/名称/拼音缩写）",
-                        value: q, onChange: (e) => setQ(e.target.value),
-                    }),
-                    q && React.createElement("button", { className: "dsh-stock-btn sm ghost", onClick: () => setQ("") }, "清空")),
-                results === null && React.createElement("div", { className: "dsh-stock-kpl-section-title" }, "🔥 热搜股票"),
-                rows.map((r) => React.createElement("div", { key: r.code, className: "dsh-stock-kpl-srow" },
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "搜索", onBack: () => go({ page: "back" }) }),
+                React.createElement("input", { className: "kpl-search-input", placeholder: "搜索个股（代码/名称）",
+                    value: q, onChange: (e) => setQ(e.target.value) }),
+                results === null && React.createElement("div", { className: "kpl-sec-title" }, "🔥 热搜股票"),
+                rows.map((r) => React.createElement("div", { key: r.code, className: "kpl-search-row" },
                     React.createElement("span", { className: "name", onClick: () => go({ page: "stock", stock: r }) },
-                        (names[r.code] || r.name || "—") + " "),
+                        (r.name || "—") + " "),
                     React.createElement("span", { className: "code" }, r.code),
-                    React.createElement("button", { className: "dsh-stock-btn sm ghost", onClick: () => add(r.code) }, "＋"),
-                    msg[r.code] && React.createElement("span", { className: "dsh-stock-cfg-msg" }, msg[r.code]))),
-                results !== null && rows.length === 0 && React.createElement("div", { className: "dsh-stock-empty-inline" }, "无匹配结果"),
-            );
+                    React.createElement("button", { className: "kpl-add-btn", onClick: () => add(r.code) }, "＋"))),
+                results !== null && rows.length === 0 && React.createElement("div", { className: "kpl-placeholder" }, "无匹配结果"));
         }
 
-        // 总览页
-        function KplOverview({ go, status, reloadStatus }) {
-            const [ov, setOv] = useState(null);
-            const [error, setError] = useState(null);
-            const load = useCallback(async () => {
-                try { setOv(await api("/api/kpl/overview")); setError(null); }
-                catch (e) { setError(e.message); }
+        /* ---- 主路由：底部导航 + 下钻 ---- */
+
+        function KplTab() {
+            const [activeNav, setActiveNav] = useState("home");
+            const [drill, setDrill] = useState(null);
+            const [status, setStatus] = useState(null);
+            const loadStatus = useCallback(async () => {
+                try { setStatus(await api("/api/kpl/status")); } catch { /* */ }
             }, []);
-            usePolling(load, 30000, []);
-            const logged = status && status.logged_in;
-            return React.createElement("div", { className: "dsh-stock-tab-body" },
-                React.createElement(TabHead, { title: "🚀 开盘啦", onRefresh: load }),
-                React.createElement(ErrorBox, { error }),
-                !logged && React.createElement(KplBindCard, { onBound: reloadStatus }),
-                logged && status.user_info && React.createElement("div", { className: "dsh-stock-kpl-userbar" },
-                    `👤 ${status.user_info.username || status.user_info.user_id}`,
-                    status.user_info.kai_pan_b != null ? ` · 开盘B ${status.user_info.kai_pan_b}` : "",
-                    React.createElement("button", { className: "dsh-stock-btn sm ghost", style: { marginLeft: "8px" }, onClick: () => go({ page: "watchlist" }) }, "⭐ 我的自选")),
-                logged && React.createElement("div", { className: "dsh-stock-kpl-quick" },
-                    React.createElement("button", { className: "dsh-stock-btn sm", onClick: () => go({ page: "watchlist" }) }, "⭐ 自选股"),
-                    React.createElement("button", { className: "dsh-stock-btn sm ghost", onClick: () => go({ page: "search" }) }, "🔍 搜索"),
-                    KPL_SECTORS.slice(0, 4).map((s) => React.createElement("button", {
-                        key: s.code, className: "dsh-stock-btn sm ghost",
-                        onClick: () => go({ page: "sector", plate: s, list: KPL_SECTORS }),
-                    }, s.name))),
-                React.createElement("div", { className: "dsh-stock-kpl-section-title" }, "📈 精选板块强度（点击下钻详情）"),
-                React.createElement("div", { className: "dsh-stock-kpl-sectorlist" },
-                    KPL_SECTORS.map((s) => React.createElement(KplSectorRow, { key: s.code, sector: s, go, list: KPL_SECTORS }))),
-                React.createElement("div", { className: "dsh-stock-kpl-section-title" }, "🔥 热搜股票"),
-                React.createElement("div", { className: "dsh-stock-kpl-hotlist" },
-                    ((ov && ov.hot_stocks) || []).slice(0, 8).map((h, i) =>
-                        React.createElement("div", { key: h.ID || i, className: "dsh-stock-kpl-hotrow" },
-                            React.createElement("span", { className: "rank" }, i + 1),
-                            React.createElement("span", { className: "code" }, h.ID),
-                            React.createElement("button", { className: "dsh-stock-btn sm ghost", onClick: () => go({ page: "stock", stock: { code: h.ID, name: h.Name || h.ID } }) }, "查看")))),
-                React.createElement("div", { className: "dsh-stock-kpl-section-title" }, "🔥 热搜词"),
-                React.createElement("div", { className: "dsh-stock-kpl-hotwords" },
-                    ((ov && ov.hot_words) || []).slice(0, 15).map((w, i) =>
-                        React.createElement("span", { key: i, className: "dsh-stock-kpl-hotword" }, w))),
-            );
+            usePolling(loadStatus, 30000, []);
+
+            const go = (r) => {
+                if (r.page === "back") { setDrill(null); return; }
+                setDrill(r);
+            };
+            const switchNav = (id) => { setDrill(null); setActiveNav(id); };
+
+            // 下钻页面渲染
+            let content;
+            if (drill) {
+                if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
+                else if (drill.page === "stock") content = React.createElement(KplStockDetail, { stock: drill.stock, go });
+                else if (drill.page === "search") content = React.createElement(KplSearch, { go });
+                else if (drill.page === "lhb") content = React.createElement(KplLhbPage);
+                else content = React.createElement(KplOverview, { go });
+            } else if (activeNav === "home") {
+                content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
+            } else if (activeNav === "market") {
+                content = React.createElement(KplMarketPage, { go });
+            } else if (activeNav === "watchlist") {
+                content = React.createElement(KplWatchPage, { go });
+            } else if (activeNav === "lhb") {
+                content = React.createElement(KplLhbPage);
+            } else {
+                content = React.createElement(KplRecommendPage);
+            }
+
+            return React.createElement("div", { className: "kpl-app" },
+                React.createElement("div", { className: "kpl-content" }, content),
+                React.createElement(KplBottomNav, { active: activeNav, onChange: switchNav }));
         }
 
-        function KplSectorRow({ sector, go, list }) {
-            const [info, setInfo] = useState(null);
-            useEffect(() => {
-                let alive = true;
-                const t = setTimeout(async () => {
-                    try {
-                        const d = await api(`/api/kpl/plate/${sector.code}`);
-                        if (alive) setInfo(d.info);
-                    } catch { /* ignore */ }
-                }, Math.floor(Math.random() * 3000));
-                return () => { alive = false; clearTimeout(t); };
-            }, [sector.code]);
-            return React.createElement("div", { className: "dsh-stock-kpl-sectorrow", onClick: () => go({ page: "sector", plate: sector, list }) },
-                React.createElement("span", { className: "name" }, sector.name),
-                React.createElement("span", { className: "code" }, sector.code),
-                info ? React.createElement("span", { className: `num ${cls(info.change_pct)}` }, formatPct(info.change_pct)) : React.createElement("span", { className: "num" }, "-"),
-                info ? React.createElement("span", { className: "num" }, (info.main_net / 1e8).toFixed(1) + "亿") : React.createElement("span", { className: "num" }, "-"),
-                info && info.zt_count != null && React.createElement("span", { className: "num zt" }, `涨停${info.zt_count}`));
+        // 兼容：KplOverview 用于首页（一期保留名称）
+        function KplOverview({ go, status, reloadStatus }) {
+            return React.createElement(KplHomePage, { go, status, reloadStatus });
         }
 
+        // ============= 主面板 =============
         // ============= 主面板 =============
         const TABS = [
             { id: "timing", label: "⏱ 择时" },
@@ -2508,6 +2738,121 @@ window.__ModuleLoader__.load({
                 .dsh-stock-kpl-hotrow .rank { color: #ef4444; font-weight: 700; width: 18px; }
                 .dsh-stock-kpl-hotwords { display: flex; gap: 6px; flex-wrap: wrap; }
                 .dsh-stock-kpl-hotword { background: var(--dsw-alias-button-elevated-fill); border-radius: 10px; padding: 2px 10px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+                /* ===== KPL App 底部导航 + 新布局 ===== */
+                .kpl-app { display: flex; flex-direction: column; height: calc(100vh - 120px); min-height: 500px; overflow: hidden; }
+                .kpl-content { flex: 1; overflow-y: auto; min-height: 0; }
+                .kpl-bottom-nav { display: flex; background: var(--dsw-alias-bg-base, #1a1a2e); border-top: 1px solid var(--dsw-alias-border-l2); flex-shrink: 0; }
+                .kpl-nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 6px 0; cursor: pointer; color: var(--dsw-alias-label-secondary); }
+                .kpl-nav-item .ico { font-size: 16px; }
+                .kpl-nav-item .lbl { font-size: 10px; margin-top: 1px; }
+                .kpl-nav-item.on { color: #ef4444; font-weight: 700; }
+                .kpl-page { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+                .kpl-subtabs { display: flex; gap: 14px; overflow-x: auto; border-bottom: 1px solid var(--dsw-alias-border-l2); padding-bottom: 4px; }
+                .kpl-subtab { color: var(--dsw-alias-label-secondary); cursor: pointer; white-space: nowrap; font-size: 13px; padding: 4px 0; }
+                .kpl-subtab.on { color: #ef4444; font-weight: 700; border-bottom: 2px solid #ef4444; }
+                .kpl-stat-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+                .kpl-stat-card { background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 10px 8px; text-align: center; }
+                .kpl-stat-label { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .kpl-stat-value { font-size: 16px; font-weight: 700; margin-top: 2px; }
+                .kpl-sector-table { display: flex; flex-direction: column; gap: 4px; }
+                .kpl-sector-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr .8fr; gap: 4px; background: var(--dsw-alias-button-elevated-fill); border-radius: 6px; padding: 10px 10px; cursor: pointer; align-items: center; }
+                .kpl-sector-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+                .kpl-sector-name .n { font-weight: 600; font-size: 13px; }
+                .kpl-sector-name .c { color: var(--dsw-alias-label-secondary); font-size: 10px; }
+                .kpl-sector-num { text-align: right; }
+                .kpl-sector-num .strong { font-size: 15px; font-weight: 700; }
+                .kpl-sector-num .pct { font-size: 12px; display: block; }
+                .kpl-sector-num .up { color: #ef4444; }
+                .kpl-sector-num .down { color: #22c55e; }
+                .kpl-sector-zt { font-size: 10px; color: #ef4444; text-align: center; }
+                .kpl-func-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+                .kpl-func-btn { background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 12px 4px; text-align: center; cursor: pointer; font-size: 11px; font-weight: 500; }
+                .kpl-func-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+                .kpl-user-bar { background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; }
+                .kpl-hot-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+                .kpl-hot-item { background: var(--dsw-alias-button-elevated-fill); border-radius: 6px; padding: 8px 4px; text-align: center; cursor: pointer; }
+                .kpl-hot-item .rank { color: #ef4444; font-weight: 700; display: block; font-size: 14px; }
+                .kpl-hot-item .code { font-size: 11px; color: var(--dsw-alias-label-secondary); }
+                .kpl-hot-words { display: flex; gap: 6px; flex-wrap: wrap; }
+                .kpl-hot-word { background: var(--dsw-alias-button-elevated-fill); border-radius: 10px; padding: 2px 10px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
+                .kpl-page-head { display: flex; align-items: center; gap: 8px; }
+                .kpl-head-back, .kpl-head-nav, .kpl-head-search { background: transparent; border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+                .kpl-head-back:hover, .kpl-head-nav:hover, .kpl-head-search:hover { color: var(--dsw-alias-label-primary); }
+                .kpl-head-center { flex: 1; display: flex; align-items: baseline; gap: 6px; }
+                .kpl-head-center .t { font-weight: 700; font-size: 15px; }
+                .kpl-head-center .c { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+                .kpl-sf-block { background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 12px; display: flex; align-items: baseline; gap: 12px; }
+                .kpl-sf-big { font-size: 26px; font-weight: 800; }
+                .kpl-sf-rank { font-size: 12px; color: var(--dsw-alias-label-secondary); }
+                .kpl-sf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 4px; }
+                .kpl-sf-item { display: flex; flex-direction: column; gap: 1px; }
+                .kpl-sf-item .k { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .kpl-sf-item .v { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+                .kpl-sf-item .v.up { color: #ef4444; }
+                .kpl-sf-item .v.down { color: #22c55e; }
+                .kpl-son-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+                .kpl-son-label { font-size: 10px; color: var(--dsw-alias-label-secondary); writing-mode: vertical-rl; text-align: center; }
+                .kpl-son-chip { flex: none; background: rgba(239,68,68,.4); color: white; border-radius: 4px; padding: 8px 14px; font-size: 12px; cursor: pointer; text-align: center; }
+                .kpl-son-chip:hover { background: #ef4444; }
+                .kpl-son-chip b { display: block; font-size: 13px; }
+                .kpl-son-chip span { font-size: 11px; opacity: .85; }
+                .kpl-ft-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+                .kpl-ft-chip { border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); border-radius: 14px; padding: 3px 12px; font-size: 11px; cursor: default; }
+                .kpl-ft-chip.locked { opacity: .5; }
+                .kpl-note { font-size: 10px; color: var(--dsw-alias-label-secondary); line-height: 1.5; }
+                .kpl-stock-quote { display: flex; gap: 14px; background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 14px; align-items: flex-start; }
+                .kpl-stock-price .big { font-size: 36px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
+                .kpl-stock-price .chg { font-size: 13px; font-weight: 600; margin-top: 4px; }
+                .kpl-stock-price .up { color: #ef4444; }
+                .kpl-stock-price .down { color: #22c55e; }
+                .kpl-stock-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 14px; flex: 1; }
+                .kpl-sg-item { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+                .kpl-sg-item .k { color: var(--dsw-alias-label-secondary); }
+                .kpl-stock-ladder-wrap { display: flex; gap: 8px; }
+                .kpl-stock-ladder-wrap > :first-child { flex: 1; }
+                .kpl-stock-side { display: flex; flex-direction: column; gap: 6px; width: 120px; }
+                .kpl-mini { background: var(--dsw-alias-button-elevated-fill); border-radius: 6px; padding: 8px; }
+                .kpl-mini .k { font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .kpl-mini .v { font-size: 16px; font-weight: 700; }
+                .kpl-stock-actions { display: flex; gap: 6px; }
+                .kpl-action-btn { flex: 1; background: var(--dsw-alias-button-elevated-fill); border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); border-radius: 6px; padding: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
+                .kpl-action-btn.star { background: rgba(239,68,68,.12); color: #ef4444; border-color: rgba(239,68,68,.3); }
+                .kpl-action-btn:hover { opacity: .85; }
+                .kpl-groups { display: flex; gap: 4px; flex-wrap: wrap; }
+                .kpl-group-chip { padding: 4px 12px; border-radius: 14px; font-size: 11px; cursor: pointer; background: var(--dsw-alias-button-elevated-fill); color: var(--dsw-alias-label-secondary); }
+                .kpl-group-chip.on { background: #ef4444; color: white; font-weight: 600; }
+                .kpl-wrow { display: flex; gap: 10px; align-items: center; background: var(--dsw-alias-button-elevated-fill); border-radius: 6px; padding: 10px 12px; cursor: pointer; }
+                .kpl-wrow:hover { background: var(--dsw-alias-interactive-bg-hover); }
+                .kpl-wrow-info { flex: 1; }
+                .kpl-wrow-info .n { font-weight: 600; font-size: 13px; }
+                .kpl-wrow-info .c { color: var(--dsw-alias-label-secondary); font-size: 10px; }
+                .kpl-wrow-quote { text-align: right; }
+                .kpl-wrow-quote .px { font-weight: 700; font-size: 14px; font-variant-numeric: tabular-nums; }
+                .kpl-wrow-quote .pct { font-size: 11px; }
+                .kpl-wrow-del { background: rgba(239,68,68,.12); border: none; color: #ef4444; border-radius: 4px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+                .kpl-add-stock-btn { width: 100%; padding: 12px; border: 1px dashed var(--dsw-alias-border-l2); border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; font-size: 13px; }
+                .kpl-add-stock-btn:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-label-primary); }
+                .kpl-search-input { width: 100%; padding: 10px 12px; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; color: var(--dsw-alias-label-primary); font-size: 14px; outline: none; }
+                .kpl-search-row { display: flex; gap: 8px; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+                .kpl-search-row .name { flex: 1; cursor: pointer; font-weight: 500; }
+                .kpl-search-row .code { color: var(--dsw-alias-label-secondary); font-size: 11px; }
+                .kpl-add-btn { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); color: #ef4444; border-radius: 4px; width: 30px; height: 30px; cursor: pointer; font-size: 16px; }
+                .kpl-bind { background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+                .kpl-bind-h { font-weight: 700; }
+                .kpl-bind-d { font-size: 11px; color: var(--dsw-alias-label-secondary); line-height: 1.5; }
+                .kpl-bind-in { background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-primary); border-radius: 4px; padding: 8px 10px; font-size: 13px; width: 100%; }
+                .kpl-bind-btn { background: #ef4444; color: white; border: none; border-radius: 4px; padding: 8px 16px; cursor: pointer; font-size: 13px; font-weight: 600; }
+                .kpl-bind-btn.ghost { background: var(--dsw-alias-bg-base); color: #ef4444; border: 1px solid var(--dsw-alias-border-l2); white-space: nowrap; min-width: 92px; }
+                .kpl-bind-btn:disabled { opacity: .55; cursor: not-allowed; }
+                .kpl-bind-msg { font-size: 11px; }
+                .kpl-bind-tabs { display: flex; gap: 4px; background: var(--dsw-alias-bg-base); border-radius: 6px; padding: 3px; }
+                .kpl-bind-tab { flex: 1; text-align: center; font-size: 12px; padding: 5px 0; border-radius: 4px; cursor: pointer; color: var(--dsw-alias-label-secondary); }
+                .kpl-bind-tab.on { background: #ef4444; color: #fff; font-weight: 600; }
+                .kpl-bind-row { display: flex; gap: 8px; align-items: stretch; }
+                .kpl-bind-remember { display: flex; gap: 6px; align-items: center; font-size: 11px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+                .kpl-user-bar { display: flex; justify-content: space-between; align-items: center; background: var(--dsw-alias-button-elevated-fill); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+                .kpl-user-logout { background: transparent; border: 1px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); border-radius: 4px; padding: 3px 10px; cursor: pointer; font-size: 11px; }
+                .kpl-user-logout:hover { color: #ef4444; border-color: #ef4444; }
             `;
             document.head.appendChild(style);
         }

@@ -29,6 +29,8 @@ DEFAULTS: Dict[str, Any] = {
     "kpl_token": "",         # 开盘啦Token（约2个月长效，App内登录获得）
     "kpl_token_endtime": "", # Token到期时间（展示用）
     "kpl_username": "",      # 开盘啦昵称（展示用）
+    "kpl_phone": "",         # 开盘啦绑定手机号（Token失效时自动重登用）
+    "kpl_password": "",      # 开盘啦密码（明文保存，同通达信先例，界面已提示风险）
     "kpl_device_id": "",     # 设备ID（留空自动生成一次并固定）
 }
 

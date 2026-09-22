@@ -110,6 +110,19 @@ git push origin main --tags
 | 0.3.4 | **健康检查误杀修复**（status() 去锁 + DataFrame 构建移出锁 + 窗口 15s→30s）、前端删除 backendOk 门禁（后端启动不阻塞页面） |
 | 0.4.0 | **🌐 舆情联动监控系统**：三源抓取（东财7×24快讯/新浪滚动/美联储RSS）、智能过滤+用户/AI关键词、舆情-板块-个股关联+投资建议弹窗、事件日历（规则库+时区换算）、历史影响预测、个性化推送；新增第 8 Tab、19 个后端模块、40+ API |
 | 0.4.1 | **投资建议具体化+自动进化闭环+真实日历**：建议接入东财实时板块/龙头（SECTOR_BRIDGE桥接+148词库）、百度股市通真实日历（前值/预期/公布值，替换mock）、FOMC官方日期修正（原编造8错5）、事件→板块映射、进化循环（回填/学习/验证/日历，每日盘后自动） |
+| 未发版 | **🚀 开盘啦登录协议逆向完成并实现**（详见下方「开盘啦登录协议」小节）：短信验证码登录+账号密码登录+自动重登，前端三模式登录卡 |
+
+## 开盘啦登录协议（逆向自 App 6.3.20.0，mitmproxy 抓包+字节码双重验证）
+
+- **RSA 加密**：用 APK `assets/pub.key`（**RSA-2048** X.509 SPKI），PKCS#1 v1.5，输出 Java `Base64.encode(bytes,0)` 风格（76字符/行+\n，URL 编码后 349 字符/手机号）。⚠️ `assets/PublicKey`+`PrivateKey` 是另一对（服务端下发数据的解密对），**不是**加密钥对——曾误用 PrivateKey 解请求密文得 93B 乱码，走上弯路
+- **发验证码**：`c=Verify a=SendVerify`，参数 `Phone=RSA(手机号)`、`CheckCode=md5(DeviceID+手机号+"kaipanla")小写hex`（公式已对照抓包实值逐字节匹配）、`SType=1`；响应 `{"Phone":"明文","errcode":"0"}`
+- **短信登录**：`c=Login a=LoginPhone`，`Phone=RSA`、`Verify=明文验证码`、`InviteCode`、`DeviceToken=md5(did)`、`ClientID=3`
+- **密码登录**：`c=Login2 a=LoginDo`，`Phone=RSA(账号)`、`Password=RSA(密码)`（>50字符原样传）、`EncryptType=RSA`；密码规则限字母数字（含下划线报"密码格式有误"）
+- **登录响应**：`{Phone:RSA密文, UserID, Token, EndTime(unix), UserName, Name, ...}`
+- **域名**：登录/用户走 `applhb.longhuvip.com`（即 HOST_LHB）
+- **插件实现**：`kpl.py` 的 `kpl_rsa_encrypt`（纯 Python modexp，零依赖）+ `/api/kpl/send-code|login-sms|login-pwd|logout`；`config.py` 增 `kpl_phone`/`kpl_password`（明文存，同通达信先例）用于 Token 失效自动重登（60s 节流）
+- **已实测**：假手机号 LoginDo 返回"手机号码未注册!"，证明服务端成功解密 RSA、协议全通；真实发码待用户收码验证
+- 逆向工具链沉淀在 `E:\zcode-projects\kanpan_spec\`（dex 字节码 dump 用 `tools/dump_class.py`，androguard 走 `py` 启动器）
 
 ## 关键经验（踩过的坑，勿再犯）
 

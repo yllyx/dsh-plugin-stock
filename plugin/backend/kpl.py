@@ -17,6 +17,9 @@
 - 板块强度排行总表走Socket → 用 GetIndexList 指数/板块列表 + SonPlate 降级
 """
 
+import base64
+import hashlib
+import random
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -28,7 +31,7 @@ from config import config
 
 # ============= 常量 =============
 
-HOST_LHB = "https://applhb.longhuvip.com/w1/api/index.php"     # 用户/自选/搜索
+HOST_LHB = "https://applhb.longhuvip.com/w1/api/index.php"     # 用户/自选/搜索/登录
 HOST_HQ = "https://apphwshhq.longhuvip.com/w1/api/index.php"   # 行情L2/板块
 HOST_HQ2 = "https://apphwhq.longhuvip.com/w1/api/index.php"    # 指数行情
 HOST_ART = "https://apparticle.longhuvip.com/w1/api/index.php" # 资讯/板块列表
@@ -40,6 +43,66 @@ _HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
     "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 11; sdk_gphone_x86 Build/RSB4.210609.001)",
 }
+
+# ============= 登录 RSA（逆向自 App: nv0 类，实现在 kpl_rsa_encrypt） =============
+
+# APK assets/pub.key: RSA-2048 X.509 SPKI（Base64 内文）。App 登录/发码均用它加密，
+# 与 assets/PublicKey+PrivateKey 不是同一对（后者用于解密服务端下发数据）。
+_RSA_PUB_B64 = (
+    "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyFNPWCzVAVxio7Gwir3B"
+    "weI0aHuxBAu9e9HaoX+pnyyx9dK38iaDGRnkL0Ms5isF3nBCiZkzvix64CJ81woE"
+    "W6PUHTd4w/xlsvtspca8WM++S/1YrFOpKst/FJVCvWZ7vwcxf530OZiwqchY/LHo"
+    "cVzii7fwCV2i6ZIQH3uC7ksFHZanK+ah6nA6dUbEnUcHakMMsEKG/yZHPYsHu60W"
+    "3SJy1i0mnjFDngAfejrWlv0qZjp57JFYcmh8I3a8maN/fis678rgkjAgZqF05bwL"
+    "B2vb5eIS/WFFC9CQ8BWpbrZYlQ7IZ+8NvdX5DFSDel7t4/1dEXSd8zRP9ywkDhG4"
+    "FwIDAQAB"
+)
+
+def _parse_spki_rsa_pub(b64_body: str):
+    """解析 X.509 SPKI Base64 内文 → (n, e)（DER 最小解析，免依赖）"""
+    def read_tlv(d, i):
+        tag = d[i]; i += 1
+        l = d[i]; i += 1
+        if l & 0x80:
+            nb = l & 0x7F
+            l = int.from_bytes(d[i:i + nb], "big"); i += nb
+        return tag, d[i:i + l], i + l
+
+    der = base64.b64decode(b64_body)
+    _, spki, _ = read_tlv(der, 0)          # SubjectPublicKeyInfo SEQUENCE
+    _, _, i = read_tlv(spki, 0)            # AlgorithmIdentifier（跳过）
+    _, bitstr, _ = read_tlv(spki, i)       # BIT STRING
+    _, rsa_seq, _ = read_tlv(bitstr[1:], 0)  # 跳过 unused-bits 字节 → RSAPublicKey SEQUENCE
+    _, mod_bytes, j = read_tlv(rsa_seq, 0)   # modulus INTEGER
+    _, exp_bytes, _ = read_tlv(rsa_seq, j)   # exponent INTEGER
+    return int.from_bytes(mod_bytes, "big"), int.from_bytes(exp_bytes, "big")
+
+
+_RSA_N, _RSA_E = _parse_spki_rsa_pub(_RSA_PUB_B64)
+
+
+def kpl_rsa_encrypt(text: str) -> str:
+    """App 同款登录加密: PKCS#1 v1.5 加密 → Java Base64.encode(bytes,0)（76字符/行+换行）。
+    纯 Python 实现（modexp），无需 cryptography 依赖。"""
+    plain = text.encode("utf-8")
+    k = (_RSA_N.bit_length() + 7) // 8  # 256
+    if len(plain) > k - 11:
+        raise ValueError("plaintext too long for RSA block")
+    # PKCS#1 v1.5: 0x00 0x02 || PS(随机非零, >=8B) || 0x00 || msg
+    ps_len = k - len(plain) - 3
+    ps = bytearray()
+    while len(ps) < ps_len:
+        b = random.randbytes(ps_len - len(ps))
+        ps.extend(x for x in b if x != 0)
+    em = b"\x00\x02" + bytes(ps) + b"\x00" + plain
+    c = pow(int.from_bytes(em, "big"), _RSA_E, _RSA_N)
+    ct = c.to_bytes(k, "big")
+    return base64.encodebytes(ct).decode("ascii")  # 76字符/行+尾部换行，与App抓包一致
+
+
+def _kpl_check_code(device_id: str, phone: str) -> str:
+    """发验证码防刷校验（逆向 d7.a: md5 小写hex）"""
+    return hashlib.md5(f"{device_id}{phone}kaipanla".encode("utf-8")).hexdigest()
 
 
 # ============= 客户端 =============
@@ -78,14 +141,9 @@ class KplClient:
         return bool(uid and tok and str(uid) != "0") and not self._token_invalid
 
     def _common(self, authed: bool) -> Dict[str, str]:
-        import uuid
-        did = config.get("kpl_device_id")
-        if not did:
-            did = str(uuid.uuid4())
-            config.update({"kpl_device_id": did})  # 固定设备ID，与KPL服务端建立设备记忆
         common = dict(
             apiv="w48", VerSion="6.3.20.0", PhoneOSNew="1", Red="0",
-            DeviceID=did,
+            DeviceID=self._device_id(),
         )
         if authed:
             common["UserID"] = str(config.get("kpl_user_id") or "0")
@@ -99,7 +157,9 @@ class KplClient:
              biz: Optional[Dict[str, Any]] = None, authed: bool = True) -> Optional[Dict[str, Any]]:
         """统一请求入口。返回JSON dict，失败返回 None"""
         if authed and not self.is_logged_in():
-            return None
+            self._try_auto_relogin()
+            if not self.is_logged_in():
+                return None
         self._rate_wait()
         data = {**self._common(authed), "c": controller, "a": action}
         if biz:
@@ -150,6 +210,111 @@ class KplClient:
         self._token_invalid = False
         self.invalidate()
 
+    # ---------- 登录（逆向自 App 6.3.20.0：nv0/j00/ox0 字节码 + mitmproxy 抓包验证） ----------
+
+    def send_code(self, phone: str, stype: str = "1") -> Dict[str, Any]:
+        """发送短信验证码 c=Verify a=SendVerify。SType: 1=登录"""
+        phone = phone.strip()
+        if not phone:
+            return {"ok": False, "error": "手机号不能为空"}
+        did = self._device_id()
+        d = self.call(HOST_LHB, "Verify", "SendVerify", {
+            "Phone": kpl_rsa_encrypt(phone),
+            "CheckCode": _kpl_check_code(did, phone),
+            "SType": stype,
+        }, authed=False)
+        if d is None:
+            return {"ok": False, "error": "网络请求失败"}
+        err = str(d.get("errcode", "0"))
+        if err == "0" and d.get("Phone"):
+            return {"ok": True, "phone": d.get("Phone")}
+        return {"ok": False, "error": d.get("errmsg") or d.get("Msg") or f"发送失败(errcode={err})"}
+
+    def login_sms(self, phone: str, code: str, invite: str = "") -> Dict[str, Any]:
+        """短信验证码登录 c=Login a=LoginPhone（Phone RSA密文, Verify 明文）"""
+        phone = phone.strip()
+        code = code.strip()
+        if not phone or not code:
+            return {"ok": False, "error": "手机号和验证码不能为空"}
+        return self._finish_login(self.call(HOST_LHB, "Login", "LoginPhone", {
+            "Phone": kpl_rsa_encrypt(phone),
+            "Verify": code,
+            "InviteCode": invite or "",
+            "DeviceToken": hashlib.md5(self._device_id().encode()).hexdigest(),
+            "ClientID": "3",
+        }, authed=False), phone=phone)
+
+    def login_pwd(self, account: str, password: str) -> Dict[str, Any]:
+        """账号密码登录 c=Login2 a=LoginDo（Phone/Password 均 RSA密文, EncryptType=RSA）
+        密文超50字符的场景（App历史逻辑）直接原样传。"""
+        account = account.strip()
+        password = password.strip()
+        if not account or not password:
+            return {"ok": False, "error": "账号和密码不能为空"}
+        enc_pwd = password if len(password) > 50 else kpl_rsa_encrypt(password)
+        return self._finish_login(self.call(HOST_LHB, "Login2", "LoginDo", {
+            "Phone": kpl_rsa_encrypt(account),
+            "Password": enc_pwd,
+            "EncryptType": "RSA",
+        }, authed=False), phone=account)
+
+    def _finish_login(self, d: Optional[Dict[str, Any]], phone: str) -> Dict[str, Any]:
+        if d is None:
+            return {"ok": False, "error": "网络请求失败"}
+        uid = str(d.get("UserID") or "").strip()
+        tok = str(d.get("Token") or "").strip()
+        if uid and tok and uid != "0":
+            endtime = d.get("EndTime")
+            config.update({
+                "kpl_user_id": uid, "kpl_token": tok,
+                "kpl_token_endtime": str(endtime or ""),
+                "kpl_username": d.get("UserName") or d.get("Name") or "",
+                "kpl_phone": phone,
+            })
+            self._token_invalid = False
+            self.invalidate()
+            return {"ok": True, "user_id": uid, "username": d.get("UserName") or d.get("Name") or "",
+                    "endtime": endtime}
+        return {"ok": False, "error": d.get("errmsg") or d.get("Msg") or "登录失败（账号/验证码错误？）"}
+
+    def _device_id(self) -> str:
+        import uuid
+        did = config.get("kpl_device_id")
+        if not did:
+            did = str(uuid.uuid4())
+            config.update({"kpl_device_id": did})
+        return did
+
+    def _try_auto_relogin(self) -> bool:
+        """Token失效且存有账号密码时静默重登（密码明文存配置，同通达信先例）"""
+        phone = config.get("kpl_phone")
+        pwd = config.get("kpl_password")
+        if not (phone and pwd):
+            return False
+        now = time.time()
+        if now - getattr(self, "_last_relogin_ts", 0) < 60:
+            return False
+        self._last_relogin_ts = now
+        logger.info("KPL Token失效，尝试自动重登")
+        r = self.login_pwd(phone, pwd)
+        if r.get("ok"):
+            logger.info(f"KPL 自动重登成功 UserID={r.get('user_id')}")
+            return True
+        logger.warning(f"KPL 自动重登失败: {r.get('error')}")
+        return False
+
+    def logout(self) -> Dict[str, Any]:
+        """清除本地登录态（Token 服务端自然过期，不主动注销）"""
+        config.update({"kpl_user_id": "", "kpl_token": "", "kpl_token_endtime": "",
+                       "kpl_username": "", "kpl_phone": "", "kpl_password": ""})
+        self._token_invalid = False
+        self.invalidate()
+        return {"ok": True}
+
+    def save_credentials(self, phone: str, password: str):
+        """记住账号密码（用于Token失效自动重登）"""
+        config.update({"kpl_phone": phone.strip(), "kpl_password": password.strip()})
+
     def status(self) -> Dict[str, Any]:
         logged = self.is_logged_in()
         endtime = config.get("kpl_token_endtime")
@@ -162,12 +327,16 @@ class KplClient:
                         "kai_pan_b": d.get("KaiPanB")}
             elif d is None:
                 self._token_invalid = True
+        phone = str(config.get("kpl_phone") or "")
         return {
             "logged_in": logged and info is not None,
             "user_id": config.get("kpl_user_id") or "",
             "token_endtime": endtime,
             "user_info": info,
             "token_invalid": self._token_invalid,
+            "phone_masked": (phone[:3] + "****" + phone[-4:]) if len(phone) >= 7 else "",
+            "has_credentials": bool(phone and config.get("kpl_password")),
+            "can_relogin": bool(phone and config.get("kpl_password")),
         }
 
     # ---------- 自选股 ----------

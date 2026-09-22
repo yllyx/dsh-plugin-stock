@@ -1374,6 +1374,22 @@ class KplBind(BaseModel):
     token: str
 
 
+class KplSendCode(BaseModel):
+    phone: str
+
+
+class KplLoginSms(BaseModel):
+    phone: str
+    code: str
+    invite: str = ""
+
+
+class KplLoginPwd(BaseModel):
+    account: str
+    password: str
+    remember: bool = True
+
+
 class KplWatchChange(BaseModel):
     code: str
     combine_id: str = "0"
@@ -1383,6 +1399,33 @@ class KplWatchChange(BaseModel):
 async def kpl_status():
     """开盘啦登录态（绑定状态/用户信息）"""
     return await asyncio.to_thread(kpl_api.status)
+
+
+@app.post("/api/kpl/send-code")
+async def kpl_send_code(req: KplSendCode):
+    """发送短信验证码（App同款 RSA 加密 + CheckCode 防刷）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().send_code, req.phone)
+
+
+@app.post("/api/kpl/login-sms")
+async def kpl_login_sms(req: KplLoginSms):
+    """短信验证码登录"""
+    return await asyncio.to_thread(kpl_api.get_kpl().login_sms, req.phone, req.code, req.invite)
+
+
+@app.post("/api/kpl/login-pwd")
+async def kpl_login_pwd(req: KplLoginPwd):
+    """账号密码登录（账号=手机号/用户名）"""
+    r = await asyncio.to_thread(kpl_api.get_kpl().login_pwd, req.account, req.password)
+    if r.get("ok") and req.remember:
+        await asyncio.to_thread(kpl_api.get_kpl().save_credentials, req.account, req.password)
+    return r
+
+
+@app.post("/api/kpl/logout")
+async def kpl_logout():
+    """退出登录（清除本地登录态与记住的凭据）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().logout)
 
 
 @app.post("/api/kpl/bind")
