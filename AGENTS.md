@@ -154,7 +154,9 @@ git push origin main --tags
 - **题材名→801板块id 映射**：`Index/GetInfo`（apphwhq，**View 必须含 2,3,4,5**）响应的 `BaceFaceList`=[[题材名,涨幅,801xxx],...]（仅热门4条）；详情页个股行情 2501 匹配用
 - **插件端点**：`GET /api/kpl/tika`（题材库列表，热度降序+30s缓存）、`GET /api/kpl/tika/{id}?name=`（题材详情）
 - **题材详情 = HTTP `Theme/InfoGet`**（applhb，**需登录态**，ID 与 3009 同体系）一个接口全量：`Table`（小表格分类矩阵 Level1→Level2→Stocks，分类中文名/入选理由/IsZz主板标——3010 分类 id 的中文名就在此）、`StockList`（成分股+Tag）、`BriefIntro`/`Introduction`、`Create/UpdateTime`、`ZT`（涨停股 map）；个股实时涨幅经 BaceFaceList 映射板块后 2501 匹配（BaceFaceList 仅热门4条，多数题材无实时涨幅属数据现实）
-- **首页题材库 3 条**：3009 hotVal 降序前 3（与 App 同源同序；列表动态，盘中介入题材会进出）；`isHot(f5)`=红底"持续火爆"标签
+- **首页题材库 3 条**：3009 hotVal 降序前 3（与 App 同源同序）；`isHot(f5)`=红底"持续火爆"标签；**App 列表置顶的订阅题材**（如 AI硬件/地方国资，含子题材树 f13 concepts）来自用户订阅态，登录态 3009 也未见全量置顶逻辑——订阅接口（题材级，区别于股票级 Theme/InfoGR）待逆向；排名变化箭头=前端快照对比
+- **3009 列表是动态的**：服务器会盘后/盘前增删题材（昨日在榜的题材今晨可能被移出），快照只反映当下——与 App"显示昨日收盘缓存"存在天然时点差，盘中实时对比两侧一致
+- **首页性能**：home feed 7 模块并行拉取（ThreadPoolExecutor）+ **按域限速**（`_rate_wait(host)`：同域串行≥2.5s、跨域并行——App 即每域独立连接，原全局限速器会把并行请求重新串行化）；并行后首次 ~13s（apparticle 域 3 请求×2.5s 为下限）、缓存 5ms
 - **历史（已废弃）**：模拟器+frida 竞速签名网关（kanpan_spec/tools/kpl_gateway.py 归档）——壳进程结构（frida 视图真身名"开盘啦"/com.aiyu.kaipanla 为 ptrace 看护）、adb root 依赖等经验见 git 历史；模拟器 frida 抓包在 pm clear 后失效（App 看门狗杀注入进程）
 - **坑**：报 `errcode:9999 "class not exists mothod"` = **域名不对**（同一控制器类只存在于特定域）；`1020 参数出错`=参数缺失/为空
 - 模拟器 frida 运行时抓包在 pm clear 后失效（App 看门狗 2.8s 内杀被注入进程，status_hide 也压不住）；**静态 dex 逆向 + 多域探测**是当前有效路线
