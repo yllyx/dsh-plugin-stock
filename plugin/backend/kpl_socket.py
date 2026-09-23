@@ -331,6 +331,9 @@ def socket_signer_available() -> bool:
 
 # ============= Socket 会话 =============
 
+_last_good_server = None  # 上次鉴权成功的服务器（模块级, 进程内复用）
+
+
 class KplSocketSession:
     """长连接会话：TLS(mTLS) → 260挑战 → frida签名 → 610鉴权 → 心跳 → 业务RPC"""
 
@@ -374,6 +377,12 @@ class KplSocketSession:
                 if entry not in cands:
                     cands.append(entry)
             cands.sort(key=lambda hp: 0 if hp[1] == 8080 else 1)
+            # 上次鉴权成功的服务器优先（跳过逐台试错扫描）
+            if _last_good_server and _last_good_server in cands:
+                cands.remove(_last_good_server)
+                cands.insert(0, _last_good_server)
+            elif _last_good_server:
+                cands.insert(0, _last_good_server)
         except Exception as e:
             logger.debug(f"KPL getIPList 失败: {e}")
         for fallback in (("124.71.166.244", 8080), ("124.71.166.244", 80)):
@@ -383,6 +392,7 @@ class KplSocketSession:
 
     def connect(self) -> bool:
         """TLS 连接 + 挑战 + 白盒签名 + 鉴权。逐服务器尝试（仅部分端口会推 260 挑战）。"""
+        global _last_good_server
         from config import config
         cert_p, key_p = ensure_cert_pems(self.static_dir, self.data_dir)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -431,6 +441,8 @@ class KplSocketSession:
             # 启动心跳
             self._hb_thread = threading.Thread(target=self._heartbeat, daemon=True)
             self._hb_thread.start()
+            global _last_good_server
+            _last_good_server = (host, port)
             logger.info(f"KPL Socket: 已鉴权连接 {host}:{port}")
             return True
         return False
