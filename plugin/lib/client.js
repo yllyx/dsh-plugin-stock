@@ -1930,19 +1930,6 @@ window.__ModuleLoader__.load({
                             React.createElement("span", { key: i, className: "kpl-tuyere-pill" },
                                 w.KeyWord, React.createElement("b", null, " " + (w.num || "")))))),
 
-                // ===== 热搜股票（原有一期数据） =====
-                React.createElement("div", { className: "kpl-sec-title" }, "🔥 热搜股票"),
-                React.createElement("div", { className: "kpl-hot-grid" },
-                    ((ov && ov.hot_stocks) || []).slice(0, 10).map((h, i) =>
-                        React.createElement("div", { key: h.ID || i, className: "kpl-hot-item",
-                            onClick: () => go({ page: "stock", stock: { code: h.ID, name: h.Name || h.ID } }) },
-                            React.createElement("span", { className: "rank" }, i + 1),
-                            React.createElement("span", { className: "code" }, h.ID)))),
-                React.createElement("div", { className: "kpl-sec-title" }, "🔥 热搜词"),
-                React.createElement("div", { className: "kpl-hot-words" },
-                    ((ov && ov.hot_words) || []).slice(0, 12).map((w, i) =>
-                        React.createElement("span", { key: i, className: "kpl-hot-word" }, w))),
-
                 // ===== 推荐文章 =====
                 ((home && home.articles) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
@@ -2117,47 +2104,98 @@ window.__ModuleLoader__.load({
             const [sort, setSort] = useState("hot");
             const [data, setData] = useState(null);
             const [loading, setLoading] = useState(true);
-            const load = useCallback(async () => {
-                setLoading(true);
-                try { setData(await api("/api/kpl/tika")); } catch { setData({ items: [] }); }
+            const [kw, setKw] = useState("");
+            const [expanded, setExpanded] = useState({});
+            const prevRef = useRef({});   // 上次快照热度 -> 排名变化箭头
+            const load = useCallback(async (silent) => {
+                if (!silent) setLoading(true);
+                try {
+                    const d = await api("/api/kpl/tika" + (silent ? "" : "?force=1"));
+                    // 排名变化：与上次快照对比
+                    const prev = prevRef.current;
+                    const withDelta = (d.items || []).map(it => {
+                        const p = prev[it.name];
+                        it.delta = (p != null && it.hot != null) ? (it.hot - p) : null;
+                        return it;
+                    });
+                    if (Object.keys(prev).length) {
+                        withDelta.forEach(it => {
+                            const sortedHot = [...withDelta].sort((a, b) => (b.hot || 0) - (a.hot || 0));
+                            const nowRank = sortedHot.findIndex(x => x.name === it.name) + 1;
+                            const prevRank = prev[it.name + "#rank"];
+                            it.rankDelta = (prevRank != null && nowRank !== prevRank) ? (prevRank - nowRank) : null;
+                        });
+                    }
+                    // 记录本次快照供下次对比
+                    const next = {};
+                    const sortedNow = [...withDelta].sort((a, b) => (b.hot || 0) - (a.hot || 0));
+                    sortedNow.forEach((it, i) => { next[it.name] = it.hot; next[it.name + "#rank"] = i + 1; });
+                    prevRef.current = next;
+                    setData(d);
+                } catch { setData({ items: [] }); }
                 setLoading(false);
             }, []);
-            useEffect(() => { load(); }, [load]);
-            const items = (data && data.items) || [];
+            useEffect(() => { load(false); }, [load]);
+            // 自动刷新（App 下拉重新请求同效）：30 秒静默刷新
+            useEffect(() => {
+                const t = setInterval(() => load(true), 30000);
+                return () => clearInterval(t);
+            }, [load]);
+            const items = ((data && data.items) || []).filter(t => !kw.trim() || (t.name || "").includes(kw.trim()));
             const sorted = [...items].sort((a, b) =>
                 sort === "hot" ? (b.hot || 0) - (a.hot || 0) : (b.pct || 0) - (a.pct || 0));
             const rateCls = r => (Number(r) >= 0 ? "up" : "down");
             const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+            const rankCls = i => i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "";
+            const renderRow = (t, i) => {
+                const hasKids = (t.concepts || []).length > 0;
+                const open = expanded[t.id];
+                return React.createElement(React.Fragment, { key: t.id },
+                    React.createElement("div", { className: "kpl-tika2-row", onClick: () => go({ page: "tikaDetail", id: t.id, name: t.name }) },
+                        React.createElement("span", { className: `kpl-tika2-rank ${rankCls(i)}` }, (i + 1) + "."),
+                        React.createElement("span", { className: "kpl-tika2-name" },
+                            t.name,
+                            t.is_hot === 1 && React.createElement("span", { className: "kpl-hot-fire", style: { marginLeft: "6px" } }, "持续火爆"),
+                            hasKids && React.createElement("span", {
+                                className: "kpl-tika2-caret",
+                                onClick: e => { e.stopPropagation(); setExpanded(prev => ({ ...prev, [t.id]: !prev[t.id] })); },
+                            }, open ? "▾" : "▸")),
+                        (t.rankDelta != null && t.rankDelta !== 0) && React.createElement("span", {
+                            className: "kpl-tika2-delta " + (t.rankDelta > 0 ? "up" : "down"),
+                        }, Math.abs(t.rankDelta) + (t.rankDelta > 0 ? "↑" : "↓"))),
+                    hasKids && open && (t.concepts || []).map((c, ci) =>
+                        React.createElement("div", { key: ci, className: "kpl-tika2-child" },
+                            "└ " + (c["2"] || c.name || c["1"] || "子题材"))));
+            };
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement(KplPageHeader, {
                     title: "题材库", onBack: () => go({ page: "back" }),
                     onSearch: () => go({ page: "search" }),
                 }),
-                React.createElement("div", { className: "kpl-subtabs" },
-                    [["hot", "按热度"], ["pct", "按涨幅"]].map(([id, label]) =>
+                // 搜索框（App 同款）
+                React.createElement("div", { className: "kpl-tika2-search" },
+                    React.createElement("input", {
+                        placeholder: "请输入你想要搜索的题材关键词",
+                        value: kw, onChange: e => setKw(e.target.value),
+                    })),
+                // 排序表头
+                React.createElement("div", { className: "kpl-tika2-head" },
+                    React.createElement("span", { className: "lbl" }, "排序"),
+                    React.createElement("span", { className: "lbl" }, "题材名称"),
+                    React.createElement("span", { className: "sorts" },
                         React.createElement("span", {
-                            key: id,
-                            className: `kpl-subtab ${sort === id ? "on" : ""}`,
-                            onClick: () => setSort(id),
-                        }, label))),
-                data && data.error && React.createElement("div", { className: "kpl-empty" },
-                    "⚠ " + data.error),
+                            className: `s ${sort === "hot" ? "on" : ""}`,
+                            onClick: () => setSort("hot"),
+                        }, "按热度"),
+                        React.createElement("span", { className: "sep" }, "|"),
+                        React.createElement("span", {
+                            className: `s ${sort === "pct" ? "on" : ""}`,
+                            onClick: () => setSort("pct"),
+                        }, "按涨幅"))),
                 loading && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
-                sorted.map((t, i) =>
-                    React.createElement("div", {
-                        key: t.id, className: "kpl-tika-row",
-                        onClick: () => go({ page: "tikaDetail", id: t.id, name: t.name }),
-                    },
-                        React.createElement("span", { className: "rank" }, i + 1),
-                        React.createElement("span", { className: "name" }, "#" + t.name),
-                        sort === "hot"
-                            ? React.createElement("span", { className: "hot" }, "🔥 " + (t.hot || 0))
-                            : React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct)),
-                        sort === "hot"
-                            ? React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct))
-                            : React.createElement("span", { className: "hot" }, "🔥 " + (t.hot || 0)),
-                        React.createElement("span", { className: "zt" }, t.zt_num ? t.zt_num + "涨停" : ""))),
-                !loading && items.length === 0 && !data?.error && React.createElement("div", { className: "kpl-empty" }, "暂无数据"));
+                data && data.error && React.createElement("div", { className: "kpl-empty" }, "⚠ " + data.error),
+                sorted.map(renderRow),
+                !loading && sorted.length === 0 && !data?.error && React.createElement("div", { className: "kpl-empty" }, "暂无数据"));
         }
 
         function KplTikaDetailPage({ id, name, go }) {
@@ -3420,6 +3458,27 @@ window.__ModuleLoader__.load({
                 .kpl-tikad-cell:hover { border-color: #3b82f6; }
                 .kpl-tikad-cell.zz { color: #ef4444; font-weight: 600; }
                 .kpl-hot-fire { background: #ef4444; color: #fff; font-size: 11px; font-weight: 700; border-radius: 3px; padding: 2px 6px; white-space: nowrap; }
+                /* ---- 题材库列表页（App 同款布局） ---- */
+                .kpl-tika2-search { margin: 8px; }
+                .kpl-tika2-search input { width: 100%; padding: 10px 12px; background: var(--dsw-alias-bg-base); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; color: var(--dsw-alias-label-primary); font-size: 13px; outline: none; }
+                .kpl-tika2-head { display: flex; gap: 14px; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); font-size: 12px; color: var(--dsw-alias-label-secondary); }
+                .kpl-tika2-head .lbl { flex: 0 0 auto; }
+                .kpl-tika2-head .sorts { margin-left: auto; display: flex; gap: 6px; }
+                .kpl-tika2-head .s { cursor: pointer; }
+                .kpl-tika2-head .s.on { color: #ef4444; font-weight: 700; }
+                .kpl-tika2-head .sep { opacity: .5; }
+                .kpl-tika2-row { display: flex; align-items: center; gap: 8px; padding: 12px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); cursor: pointer; }
+                .kpl-tika2-row:hover { background: var(--dsw-alias-button-elevated-fill); }
+                .kpl-tika2-rank { width: 26px; font-weight: 800; font-size: 15px; color: var(--dsw-alias-label-primary); }
+                .kpl-tika2-rank.r1 { color: #ef4444; }
+                .kpl-tika2-rank.r2 { color: #f97316; }
+                .kpl-tika2-rank.r3 { color: #eab308; }
+                .kpl-tika2-name { flex: 1; font-size: 15px; font-weight: 600; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+                .kpl-tika2-caret { margin-left: 4px; color: var(--dsw-alias-label-secondary); font-size: 11px; padding: 2px 4px; }
+                .kpl-tika2-delta { font-size: 12px; font-weight: 700; min-width: 36px; text-align: right; }
+                .kpl-tika2-delta.up { color: #ef4444; }
+                .kpl-tika2-delta.down { color: #22c55e; }
+                .kpl-tika2-child { padding: 6px 12px 6px 44px; font-size: 13px; color: #3b82f6; border-left: 2px solid var(--dsw-alias-border-l2); margin: 2px 0 2px 26px; cursor: pointer; }
             `;
             document.head.appendChild(style);
         }

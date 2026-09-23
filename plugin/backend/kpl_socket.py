@@ -415,9 +415,12 @@ class KplSocketSession:
                 logger.warning("KPL Socket: 离线签名失败（需 Java 8+ 且 signer 部署物完整）")
                 return False
 
-            # 鉴权
+            # 鉴权（App 同款：登录态 UserID/Token，与 HTTP 数据面同一用户）
+            from config import config as _cfg
+            _uid = str(_cfg.get("kpl_user_id") or "0") or "0"
+            _tok = str(_cfg.get("kpl_token") or "0") or "0"
             req = (pb_str(1, self.device_id) + pb_uint(2, 1) + pb_str(3, "6.3.20.0")
-                   + pb_uint(4, 129) + pb_str(5, sig) + pb_str(6, "0") + pb_str(7, "0")
+                   + pb_uint(4, 129) + pb_str(5, sig) + pb_str(6, _uid) + pb_str(7, _tok)
                    + pb_uint(8, 99) + pb_str(10, "w48") + pb_uint(11, 0))
             self.sock.sendall(build_frame(610, req, kind=3, seq=self._next_seq(), flags=0))
             resp = self._wait_cmd(610, timeout_s=5)

@@ -114,7 +114,7 @@ class KplClient:
     def __init__(self):
         self._client: Optional[httpx.Client] = None
         self._lock = threading.Lock()
-        self._last_req: float = 0.0
+        self._last_req_by_host: Dict[str, float] = {}
         self._cache: Dict[str, Dict[str, Any]] = {}   # key -> {"data":..., "ts":...}
         self._token_invalid = False
         self._info_cache: Optional[Dict[str, Any]] = None   # GetInfo 结果（后台验活写入）
@@ -129,14 +129,15 @@ class KplClient:
                 limits=httpx.Limits(max_keepalive_connections=0))
         return self._client
 
-    def _rate_wait(self):
-        """全局限速：与上一请求保持最小间隔"""
+    def _rate_wait(self, host: str = ""):
+        """按域限速：同域请求保持最小间隔，跨域并行（App 即每域独立连接）"""
         with self._lock:
             now = time.time()
-            wait = self._last_req + MIN_INTERVAL - now
+            last = self._last_req_by_host.get(host, 0.0)
+            wait = last + MIN_INTERVAL - now
             if wait > 0:
                 time.sleep(wait)
-            self._last_req = time.time()
+            self._last_req_by_host[host] = time.time()
 
     def is_logged_in(self) -> bool:
         uid = config.get("kpl_user_id")
@@ -163,7 +164,7 @@ class KplClient:
             self._try_auto_relogin()
             if not self.is_logged_in():
                 return None
-        self._rate_wait()
+        self._rate_wait(host)
         data = {**self._common(authed), "c": controller, "a": action}
         if biz:
             for k, v in biz.items():
@@ -597,61 +598,67 @@ class KplClient:
         return self._cached_swr("homefeed", 20, self._fetch_home_feed)
 
     def _fetch_home_feed(self) -> Optional[Dict[str, Any]]:
+        from concurrent.futures import ThreadPoolExecutor
         out: Dict[str, Any] = {}
+        pool = ThreadPoolExecutor(max_workers=6)
+        futs = {}
         # 1. 大盘解读(Type=39) + 推荐文章 —— applhb UserInfo/AppNews
-        news = self.call(HOST_LHB, "UserInfo", "AppNews", {"st": "30", "Index": "0"}, authed=False)
-        items = (news or {}).get("List") or []
+        futs["news"] = pool.submit(self.call, HOST_LHB, "UserInfo", "AppNews", {"st": "30", "Index": "0"}, False)
+        # 2. AI快讯 —— apparticle PCNewsFlash/GetList
+        futs["flash"] = pool.submit(self.call, HOST_ART, "PCNewsFlash", "GetList",
+                          {"st": "20", "Type": "0", "Index": "0", "Date": ""}, False)
+        # 3. 最新主题 —— apparticle ThemeNews/GetList（与主题机会页同源，首页只取前2条）
+        futs["themes"] = pool.submit(self.call, HOST_ART, "ThemeNews", "GetList",
+                           {"st": "10", "Index": "0", "Type": "-1"}, False)
+        # 3.5 题材库热榜（Socket，后台已有缓存则即时）
+        futs["tika"] = pool.submit(self.get_themes_socket)
+        # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
+        futs["qd"] = pool.submit(self.call, HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, False)
+        # 5. 市场风口热词 —— apparticle ForumsTuyere/GetHotSearch
+        futs["tuyere"] = pool.submit(self.call, HOST_ART, "ForumsTuyere", "GetHotSearch", {}, False)
+        # 6. 市场情绪（今日/昨日 涨停家数/封板率/跌停数）—— 复用情绪历史前两条
+        futs["sent"] = pool.submit(self.get_sentiment_history)
+
+        items = ((futs["news"].result() or {}).get("List")) or []
         explain = next((it for it in items if str(it.get("Type")) == "39"), None)
         out["explain"] = self._norm_news(explain) if explain else None
         out["articles"] = [self._norm_news(it) for it in items if str(it.get("Type")) != "39"][:10]
-        # 2. AI快讯 —— apparticle PCNewsFlash/GetList
-        flash = self.call(HOST_ART, "PCNewsFlash", "GetList",
-                          {"st": "20", "Type": "0", "Index": "0", "Date": ""}, authed=False)
-        fl = (flash or {}).get("List") or []
+        fl = ((futs["flash"].result() or {}).get("List")) or []
         out["flash"] = [{
             "id": x.get("CID"), "time": x.get("Time"), "title": x.get("Title"),
             "content": x.get("Content"), "source": x.get("Source"),
             "stocks": [{"code": s[0], "name": s[1], "rate": s[2]}
                        for s in (x.get("Stocks") or []) if isinstance(s, list) and len(s) >= 3],
         } for x in fl]
-        # 3. 最新主题 —— apparticle ThemeNews/GetList（与主题机会页同源，首页只取前2条）
-        themes = self.call(HOST_ART, "ThemeNews", "GetList",
-                           {"st": "10", "Index": "0", "Type": "-1"}, authed=False)
-        tl = (themes or {}).get("List") or []
+        tl = ((futs["themes"].result() or {}).get("List")) or []
         out["themes"] = [{
             "id": x.get("CID"), "title": x.get("Title"), "theme": x.get("ZSName"),
             "time": x.get("TimeStamp"), "source": x.get("Source"),
             "stocks": [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate")}
                        for s in (x.get("Stocks") or []) if isinstance(s, dict)][:2],
         } for x in tl[:2]]
-        # 3.5 题材库热榜前3（Socket 网关, 网关未运行则空列表）
         try:
-            tk_items = (self.get_themes_socket() or {}).get("items") or []
+            tk_items = (futs["tika"].result() or {}).get("items") or []
             out["tika"] = tk_items[:3]
         except Exception:
             out["tika"] = []
-        # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
-        qd = self.call(HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, authed=False)
-        out["qiangdu"] = (qd or {}).get("List") or []
-        # 5. 市场风口热词 —— apparticle ForumsTuyere/GetHotSearch
-        tuyere = self.call(HOST_ART, "ForumsTuyere", "GetHotSearch", {}, authed=False)
-        out["tuyere_words"] = (tuyere or {}).get("List") or []
-        # 6. 市场情绪（今日/昨日 涨停家数/封板率/跌停数）—— 复用情绪历史前两条
-        sent = self.get_sentiment_history() or []
+        out["qiangdu"] = ((futs["qd"].result() or {}).get("List")) or []
+        out["tuyere_words"] = ((futs["tuyere"].result() or {}).get("List")) or []
+        sent = futs["sent"].result() or []
         out["sentiment"] = {
             "today": sent[0] if len(sent) > 0 else {},
             "yesterday": sent[1] if len(sent) > 1 else {},
         }
-        # 7. 近期活跃板块（题材库 socket 数据按涨幅取前6；网关不可用则置空）
+        # 7. 近期活跃板块（题材库 socket 数据按涨幅取前6）
         try:
-            tk = self.get_themes_socket()
-            tk_items = [t for t in (tk or {}).get("items") or []
+            tk_items = [t for t in ((futs["tika"].result() or {}).get("items")) or []
                         if isinstance(t.get("pct"), (int, float))]
             tk_items.sort(key=lambda t: t["pct"], reverse=True)
             out["active_plates"] = [{"name": t["name"], "rate": t["pct"], "id": t.get("id")}
                                     for t in tk_items[:6]]
         except Exception:
             out["active_plates"] = []
+        pool.shutdown(wait=False)
         return out
 
     # ---------- 主题机会页（复刻 App「更多→主题机会」，2026-09-22 mitmproxy 实测） ----------
@@ -721,6 +728,7 @@ class KplClient:
                 "pinyin": t.get("pinyin", ""), "hot": t.get("hot", 0),
                 "zt_num": t.get("zt_num", 0), "pct": t.get("pct", 0),
                 "is_hot": t.get("is_hot", 0), "up_num": t.get("up_num", 0),
+                "concepts": t.get("concepts") or [],
             } for t in raw]
             items.sort(key=lambda x: x.get("hot") or 0, reverse=True)
             return {"items": items}
