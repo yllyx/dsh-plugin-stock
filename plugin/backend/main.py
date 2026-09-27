@@ -162,10 +162,13 @@ async def lifespan(app: FastAPI):
     market_pool.start()
     kpl_api.start_snapshot_loop()
     # （复盘人气榜收盘捕获循环已删：复盘榜=3008 type13 实时序列，直拉即可，无需窗口捕获）
-    # 人气榜六视图预热（13/1/14/17/2/16 顺序拉取；后台 daemon，失败不影响启动）
+    # 人气榜六视图 + 题材库列表/Top5 详情预热（同一线程串行，共用 socket 会话锁）
     import threading as _ths
-    _ths.Thread(target=kpl_api.get_kpl().prewarm_poprank, daemon=True,
-                name="kpl-pop-prewarm").start()
+    def _kpl_prewarm():
+        k = kpl_api.get_kpl()
+        k.prewarm_poprank()
+        k.prewarm_themes()
+    _ths.Thread(target=_kpl_prewarm, daemon=True, name="kpl-prewarm").start()
 
     # 启动舆情监控
     sentiment_monitor = get_sentiment_monitor()

@@ -601,12 +601,15 @@ class KplClient:
                 # View 含 2,3,4,5 才返回 BaceFaceList（App 同款参数，缺 View 响应为空）
                 d = self.call(HOST_HQ2, "Index", "GetInfo",
                               {"View": "2,3,4,5,7,8,9,10,11"}, authed=False)
-                for row in (d or {}).get("BaceFaceList") or []:
+                rows = (d or {}).get("BaceFaceList") or []
+                for row in rows:
                     if isinstance(row, list) and len(row) >= 3:
                         self._theme_board_map[str(row[0])] = str(row[2])
                 self._theme_board_map_ts = time.time()
-            except Exception:
-                pass
+                if not rows:
+                    logger.info(f"themedet BaceFaceList 为空（映射表缺 {name} 的板块id）")
+            except Exception as e:
+                logger.info(f"themedet BaceFaceList 拉取异常: {type(e).__name__} {e}")
         if name in self._theme_board_map:
             return self._theme_board_map[name]
         # 模糊匹配：题材名与映射键双向包含（如 3009"国产芯片概念" ↔ BaceFace"芯片"），最长键优先
@@ -694,7 +697,9 @@ class KplClient:
         } for x in fl]
         tl = ((futs["themes"].result() or {}).get("List")) or []
         out["themes"] = [{
-            "id": x.get("CID"), "title": x.get("Title"), "theme": x.get("ZSName"),
+            "id": x.get("CID"), "title": x.get("Title"),
+            # ZSName 与 Kword 互补：响应里两者必有其一（App 同款显示），只取 ZSName 会缺名
+            "theme": x.get("ZSName") or x.get("Kword") or "",
             "time": x.get("TimeStamp"), "source": x.get("Source"),
             "stocks": [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate")}
                        for s in (x.get("Stocks") or []) if isinstance(s, dict)][:2],
@@ -750,7 +755,9 @@ class KplClient:
         lst = (d or {}).get("List") or []
         if tab == "themes":
             items = [{
-                "id": x.get("CID"), "title": x.get("Title"), "theme": x.get("ZSName"),
+                "id": x.get("CID"), "title": x.get("Title"),
+                # ZSName 与 Kword 互补（同 home feed，缺一用另一）
+                "theme": x.get("ZSName") or x.get("Kword") or "",
                 "time": x.get("TimeStamp"), "source": x.get("Source"),
                 "stocks": sorted(
                     [{"code": s.get("Code"), "name": s.get("Name"), "rate": s.get("Rate"),
@@ -938,6 +945,20 @@ class KplClient:
                 logger.debug(f"poprank 预热 type={t}: {e}")
             time.sleep(1)
 
+    def prewarm_themes(self) -> None:
+        """预热题材库列表 + 前 5 热门题材详情（用户最常点的题材，进详情页秒开）。
+        与 poprank 预热同线程串行调用（共用 socket 会话锁，避免并行竞争）。"""
+        try:
+            ths = self.get_themes_socket() or []
+            for t in ths[:5]:
+                try:
+                    self.get_theme_detail_socket(str(t.get("id")), t.get("name") or "")
+                except Exception as e:
+                    logger.debug(f"themedet 预热 {t.get('id')}: {e}")
+                time.sleep(0.5)
+        except Exception as e:
+            logger.debug(f"themedet 预热失败: {e}")
+
     def get_pop_replay(self) -> Dict[str, Any]:
         """复盘人气榜 = type=13（App 复盘 tab 默认视图·热度排名）。
         2026-09-26 证伪旧结论：复盘榜并非"收盘结算瞬态推送、错过后拿不到"，
@@ -1047,19 +1068,125 @@ class KplClient:
             self._cache[key] = {"data": data, "ts": time.time()}
         return data
 
-    def get_theme_detail_socket(self, theme_id: str, name: str = "") -> Dict[str, Any]:
+    # ---- 题材详情 SWR 陈旧缓存（内存+磁盘双层；与 poprank 同模式）----
+    # 痛点：详情链路含 2501/3010 socket 调用，会话死时内联重连要 40-80s（"等半天"根因）。
+    # 策略：①陈旧秒回+后台刷新 ②socket 死时短路跳过行情（标 quotes_pending 后台补全）
+    _themedet_stale: dict = {}
+    _themedet_refreshing: set = set()
+    _themedet_disk_loaded = False
+    _themedet_disk_last: float = 0.0
+
+    @staticmethod
+    def _themedet_disk_path():
+        from storage import storage as _st
+        return _st.data_dir / "kpl_theme_cache.json"
+
+    def _load_themedet_disk(self) -> None:
+        if self._themedet_disk_loaded:
+            return
+        self._themedet_disk_loaded = True
+        try:
+            d = json.loads(self._themedet_disk_path().read_text(encoding="utf-8"))
+            for k, v in (d or {}).items():
+                old = self._themedet_stale.get(k)
+                if not old or v.get("ts", 0) > old.get("ts", 0):
+                    self._themedet_stale[k] = v
+        except Exception:
+            pass
+
+    def _save_themedet_disk(self, key: str, data: Dict[str, Any]) -> None:
+        # 高频写盘触发杀软扫描挂起进程（见 poprank 同款注释），防抖 5 分钟+原子写
+        try:
+            now = time.time()
+            if now - self._themedet_disk_last < 300:
+                return
+            self._themedet_disk_last = now
+            p = self._themedet_disk_path()
+            try:
+                cur = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                cur = {}
+            cur[key] = {"data": data, "ts": now}
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, p)
+        except Exception as e:
+            logger.debug(f"themedet 磁盘缓存写入失败: {e}")
+
+    def _themedet_quotes_alive(self) -> bool:
+        import kpl_socket as _ks
+        try:
+            return _ks.get_kpl_socket().session_alive()
+        except Exception:
+            return False
+
+    def _themedet_refresh_bg(self, tid: str, name: str) -> None:
+        """后台补全题材详情（socket 死时的 quotes/stat pending 由本线程重拉填充缓存）"""
+        import time as _t
+        _t0 = _t.time()
+        try:
+            # 会话未就绪（预热建连中/重连中）时等待，最多 90s——否则 bg 空转写 pending
+            # 版缓存，启动窗口内用户永远拿到无行情数据（2026-09-27 实测）
+            waited = False
+            while not self._themedet_quotes_alive() and _t.time() - _t0 < 90:
+                time.sleep(3)
+                waited = True
+            d = self.get_theme_detail_socket(tid, name, use_cache=False)
+            # 3010 服务端实算 ~9-15s，在此单独补全（不阻塞首响应），结果直接写缓存
+            if not d.get("error"):
+                try:
+                    import kpl_socket as _ks
+                    stat = _ks.get_kpl_socket().get_theme_stat(int(tid))
+                    if stat:
+                        d["stat"] = {"stock_num": stat.get("stock_num"),
+                                     "up_num": stat.get("up_num"),
+                                     "down_num": stat.get("down_num"),
+                                     "avg_pct": stat.get("avg_ratio")}
+                        d.pop("stat_pending", None)
+                        key2 = f"themedet:{tid}"
+                        now = time.time()
+                        self._cache[key2] = {"data": d, "ts": now}
+                        self._themedet_stale[key2] = {"data": d, "ts": now}
+                        self._save_themedet_disk(key2, d)
+                except Exception as e:
+                    logger.info(f"themedet 3010 补全异常 {tid}: {type(e).__name__} {e}")
+            logger.info(f"themedet 后台刷新 {tid}({name}) 完成 {round(_t.time()-_t0,1)}s "
+                        f"(waited={waited}) stat={'Y' if d.get('stat') else 'N'} "
+                        f"quotes={d.get('quotes_source') or '-'} "
+                        f"pending={d.get('quotes_pending') or d.get('stat_pending')}")
+        except Exception as e:
+            logger.info(f"themedet 后台刷新 {tid} 异常: {type(e).__name__} {e}")
+        finally:
+            self._themedet_refreshing.discard(f"themedet:{tid}")
+
+    def get_theme_detail_socket(self, theme_id: str, name: str = "",
+                                use_cache: bool = True) -> Dict[str, Any]:
         """题材详情（App 同源）：HTTP Theme/InfoGet 一个接口包含全部数据——
-        Table（小表格分类矩阵：Level1一级分类→Level2二级分类→Stocks成分股，含中文名/入选理由/主板标记）、
-        StockList（成分股平铺）、BriefIntro（简介）、Introduction（新闻HTML）、Create/UpdateTime、ZT（涨停股）。
-        个股行情涨幅：经 _theme_board_map 映射板块后用 socket 2501 实时行情按代码匹配（无映射则缺涨幅）。"""
+        Table（小表格分类矩阵）、StockList（成分股平铺）、BriefIntro、Introduction、ZT（涨停股）。
+        个股实时涨幅：socket 2501 池按代码匹配；统计条：socket 3010。
+        ⚡ 性能：SWR 陈旧缓存秒回；socket 死时短路跳过行情（标 quotes_pending/stat_pending，
+        后台线程补全进缓存）——响应绝不被 socket 重连阻塞。"""
         tid = str(theme_id)
-        hit = self._cache.get(f"themedet:{tid}")
-        if hit and time.time() - hit["ts"] < 30:
+        key = f"themedet:{tid}"
+        hit = self._cache.get(key)
+        if use_cache and hit and time.time() - hit["ts"] < 30:
             return hit["data"]
+        self._load_themedet_disk()
+        stale = self._themedet_stale.get(key)
+        if use_cache and stale and time.time() - stale.get("ts", 0) < 7 * 86400:
+            if key not in self._themedet_refreshing:
+                self._themedet_refreshing.add(key)
+                threading.Thread(target=self._themedet_refresh_bg, args=(tid, name),
+                                 daemon=True, name=f"themedet-bg-{tid}").start()
+            return {**stale["data"], "stale": True}
+
         out: Dict[str, Any] = {"id": tid, "name": name}
 
         d = self.call(HOST_LHB, "Theme", "InfoGet", {"ID": tid, "id": tid}, authed=True)
         if not d or str(d.get("errcode", "0")) != "0":
+            logger.info(f"themedet InfoGet 失败 {tid}({name}) err={str(d)[:120] if d else 'None'}")
+            if stale:
+                return {**stale["data"], "stale": True}
             return {"error": "题材详情获取失败", "id": tid}
 
         out["name"] = self._remember_name("themes", tid, d.get("Name") or name)
@@ -1108,9 +1235,11 @@ class KplClient:
             fixed = self._remember_name("stocks", s["code"], s.get("name") or "")
             if fixed and not s.get("name"):
                 s["name"] = fixed
-        # 实时数值列（socket 2501 题材股票池，App 同款接口；quotas: q1=现价 q2=涨跌% q3=成交额 q4=换手率）
-        # plateId 需 BaceFaceList(Index/GetInfo) 名字映射；池按市值序分页拉全（count 上限 500），
-        # 未命中题材数值列为空（如实显示 --）。qmap 带 30s 池级缓存（详情页反复打开不重拉）。
+        # 实时数值列（socket 2501 题材股票池）+ 统计条（socket 3010）。
+        # ⚡ socket 短路：会话死亡时内联拉取会触发 40-80s 重连扫描（"等半天"根因）——
+        # 死会话直接跳过，标 *_pending 起后台线程补全进缓存；响应永不阻塞。
+        alive = self._themedet_quotes_alive()
+        pending = False
         bid = self._theme_board_id(out["name"])
         merged = 0
         if bid:
@@ -1120,6 +1249,10 @@ class KplClient:
                 pc = self._pool_qmap_cache.get(bid)
                 if pc and now - pc["ts"] < 30:
                     qmap = pc["qmap"]
+                elif not alive:
+                    out["quotes_pending"] = True
+                    pending = True
+                    qmap = None
                 else:
                     # quotaType=1 市值序（题材核心股靠前）；单页 500（服务端拒 start 分页/count>500，
                     # 中小市值尾部个股暂无行情，前端显示 --，记录待后续补全量通道）
@@ -1131,31 +1264,35 @@ class KplClient:
                         # 池里带股票名(f2)：登记到名称缓存，供缺名兜底
                         self._remember_name("stocks", code, str(it.get(2) or ""))
                     self._pool_qmap_cache[bid] = {"ts": now, "qmap": qmap}
-                for s in stock_list:
-                    if not s.get("name"):
-                        s["name"] = self._remember_name("stocks", str(s["code"]), "")
-                    q = qmap.get(str(s["code"]))
-                    if q and len(q) > 4:
-                        s["price"], s["pct"] = q[1], q[2]
-                        s["amount"], s["turnover"] = q[3], q[4]
-                        merged += 1
-                self._flush_names()
+                if qmap:
+                    for s in stock_list:
+                        if not s.get("name"):
+                            s["name"] = self._remember_name("stocks", str(s["code"]), "")
+                        q = qmap.get(str(s["code"]))
+                        if q and len(q) > 4:
+                            s["price"], s["pct"] = q[1], q[2]
+                            s["amount"], s["turnover"] = q[3], q[4]
+                            merged += 1
+                    self._flush_names()
             except Exception as e:
                 logger.debug(f"题材详情 2501 行情失败({out['name']}): {e}")
         out["stocks"] = stock_list
         out["quotes_source"] = f"socket2501:{merged}" if merged else ""
 
-        # 统计条（App 个股行情顶部：股票数量/上涨/下跌/平均涨幅 = socket 3010）
-        try:
-            stat = kpl_socket.get_kpl_socket().get_theme_stat(int(tid))
-            if stat:
-                out["stat"] = {"stock_num": stat.get("stock_num"),
-                               "up_num": stat.get("up_num"), "down_num": stat.get("down_num"),
-                               "avg_pct": stat.get("avg_ratio")}
-        except Exception as e:
-            logger.debug(f"题材详情 3010 统计失败({tid}): {e}")
+        # 统计条（3010）：服务端实时计算实测 ~9s（周日/盘后更慢），不进关键路径——
+        # 首响应标 stat_pending 立回，由 _themedet_refresh_bg 单独拉取并写缓存，
+        # 前端收到 stat_pending 后自动重拉拿到
+        out["stat_pending"] = True
+        pending = True
+        if pending and key not in self._themedet_refreshing:
+            self._themedet_refreshing.add(key)
+            threading.Thread(target=self._themedet_refresh_bg, args=(tid, name),
+                             daemon=True, name=f"themedet-bg-{tid}").start()
         if stock_list or table:
-            self._cache[f"themedet:{tid}"] = {"data": out, "ts": time.time()}
+            now = time.time()
+            self._cache[key] = {"data": out, "ts": now}
+            self._themedet_stale[key] = {"data": out, "ts": now}
+            self._save_themedet_disk(key, out)
         return out
 
     @staticmethod

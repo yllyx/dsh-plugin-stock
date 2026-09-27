@@ -387,6 +387,14 @@ class KplSocketSession:
         self._hb_thread: Optional[threading.Thread] = None
         self._alive = False
         self._lock = threading.Lock()
+        # 发送专用锁：心跳线程与 RPC 线程并发 sendall 同一 socket 会造成帧交错
+        # 损坏 → 服务端解析失败断线（会话 20-100s 随机死亡的根因，2026-09-27）
+        self._send_lock = threading.Lock()
+        # 接收互斥锁（RLock 可重入：rpc 外层持有、_wait_cmd 内层再取）：
+        # "发送请求→收响应"必须原子，否则 drain 线程会在间隙把响应帧当推送吃掉
+        # （RPC 永远超时→会话被复位重连，比不加锁死得更快，2026-09-27 首版教训）；
+        # 3008/3009/3001 是订阅式，服务端持续推送，无人读时接收缓冲堆满 → 服务端踢线
+        self._recv_lock = threading.RLock()
 
     @property
     def alive(self) -> bool:
@@ -475,9 +483,11 @@ class KplSocketSession:
                 self.close()
                 logger.debug(f"KPL {host}:{port} 鉴权无响应，换下一台")
                 continue
-            # 启动心跳
+            # 启动心跳 + 推送清理线程
             self._hb_thread = threading.Thread(target=self._heartbeat, daemon=True)
             self._hb_thread.start()
+            threading.Thread(target=self._drain_loop, daemon=True,
+                             name="kpl-drain").start()
             global _last_good_server
             _last_good_server = (host, port)
             logger.info(f"KPL Socket: 已鉴权连接 {host}:{port}")
@@ -526,51 +536,96 @@ class KplSocketSession:
         tail_s = 0.8
         matched = bytearray()
         tail_end = None
-        while time.time() < end:
-            if tail_end is not None and time.time() >= tail_end:
-                break
-            try:
-                d = self.sock.recv(65536)
-                if not d:
+        with self._recv_lock:
+            while time.time() < end:
+                if tail_end is not None and time.time() >= tail_end:
                     break
-                buf += d
-            except socket.timeout:
-                if tail_end is not None:
+                try:
+                    d = self.sock.recv(65536)
+                    if not d:
+                        break
+                    buf += d
+                except socket.timeout:
+                    if tail_end is not None:
+                        break
+                    continue
+                except Exception:
+                    self._alive = False
                     break
-                continue
-            except Exception:
-                self._alive = False
-                break
-            pos = 0
-            while pos < len(buf):
-                f, consumed = try_parse_frame(buf[pos:])
-                if f is None:
-                    break
-                pos += consumed
-                if f["cmd"] == 110:
-                    for fno, wt, v in pb_flat(f["body"]):
-                        if fno == 1:
-                            logger.warning(f"KPL Socket 错误响应 code={v}")
-                    if cmd != 110:
-                        return None
-                if f["cmd"] == cmd and (seq is None or f.get("seq") == seq):
-                    matched.extend(f["body"])
-                    tail_end = time.time() + tail_s
-            buf = buf[pos:]
+                pos = 0
+                while pos < len(buf):
+                    f, consumed = try_parse_frame(buf[pos:])
+                    if f is None:
+                        break
+                    pos += consumed
+                    if f["cmd"] == 110:
+                        for fno, wt, v in pb_flat(f["body"]):
+                            if fno == 1:
+                                logger.warning(f"KPL Socket 错误响应 code={v}")
+                        if cmd != 110:
+                            return None
+                    if f["cmd"] == cmd and (seq is None or f.get("seq") == seq):
+                        matched.extend(f["body"])
+                        tail_end = time.time() + tail_s
+                buf = buf[pos:]
         if matched:
             return bytes(matched)
         return None
 
+    def _drain_loop(self):
+        """推送清理线程：订阅式 cmd（3008/3009/3001）的服务端推送无人读时会在内核
+        接收缓冲堆积 → 服务端踢线。定期与 RPC 接收互斥地清空缓冲（帧直接丢弃）。"""
+        t0 = time.time()
+        while self._alive:
+            time.sleep(1.5)
+            if not self._alive or self.sock is None:
+                break
+            got = self._recv_lock.acquire(timeout=0.3)
+            if not got:
+                continue  # RPC 正在收响应，本轮跳过
+            try:
+                self.sock.settimeout(0.15)
+                drained = 0
+                while self._alive:
+                    try:
+                        d = self.sock.recv(262144)
+                        if not d:
+                            logger.info(f"KPL 会话被服务端断开(存活{int(time.time()-t0)}s, "
+                                        f"本次清理已收{drained}B) → 将按需重连")
+                            self._alive = False
+                            break
+                        drained += len(d)
+                        if drained > 8 * 1024 * 1024:
+                            break
+                    except socket.timeout:
+                        break
+                    except Exception as e:
+                        logger.info(f"KPL drain 读异常(存活{int(time.time()-t0)}s): {type(e).__name__}")
+                        self._alive = False
+                        break
+            finally:
+                try:
+                    self.sock.settimeout(3)
+                except Exception:
+                    pass
+                self._recv_lock.release()
+
     def _heartbeat(self):
+        t0 = time.time()
         while self._alive:
             time.sleep(7)
             if not self._alive:
                 break
             try:
-                self.sock.sendall(build_frame(13, b"", kind=1))
-            except Exception:
+                with self._send_lock:
+                    if not self._alive or self.sock is None:
+                        break
+                    self.sock.sendall(build_frame(13, b"", kind=1))
+            except Exception as e:
+                logger.info(f"KPL 心跳发送失败(存活{int(time.time()-t0)}s): {type(e).__name__}")
                 self._alive = False
                 break
+        logger.info(f"KPL 心跳线程退出(存活{int(time.time()-t0)}s)")
 
     def rpc(self, cmd: int, body: bytes, timeout_s: float = 6) -> Optional[bytes]:
         """业务 RPC（kind=4）。失败返回 None"""
@@ -578,12 +633,15 @@ class KplSocketSession:
             return None
         with self._lock:
             try:
-                self.sock.sendall(build_frame(cmd, body, kind=4, seq=self._next_seq()))
+                # 发送+接收持同一 _recv_lock 原子完成：防 drain 在间隙吃掉响应帧
+                with self._recv_lock:
+                    with self._send_lock:
+                        self.sock.sendall(build_frame(cmd, body, kind=4, seq=self._next_seq()))
+                    return self._wait_cmd(cmd, timeout_s=timeout_s)
             except Exception as e:
                 logger.warning(f"KPL Socket 发送失败: {e}")
                 self._alive = False
                 return None
-            return self._wait_cmd(cmd, timeout_s=timeout_s)
 
     def close(self):
         self._alive = False
@@ -607,6 +665,14 @@ class KplSocketAPI:
         self._session: Optional[KplSocketSession] = None
         self._lock = threading.Lock()
 
+    def session_alive(self) -> bool:
+        """当前会话是否已鉴权且存活（供调用方短路决策：死会话时跳过内联 socket 拉取，
+        避免触发 40s+ 重连扫描阻塞响应——题材详情"等半天"的修复之一）。
+        ⚠️ 本方法属于 KplSocketAPI（读 _session 引用）；曾误加到 Session 类导致
+        AttributeError 被 except 吞掉、alive 恒 False、题材详情永远 pending。"""
+        s = self._session
+        return bool(s and s.alive)
+
     def _session_rpc(self, cmd: int, body: bytes, timeout_s: float = 6) -> Optional[bytes]:
         with self._lock:
             for attempt in (1, 2):
@@ -618,7 +684,15 @@ class KplSocketAPI:
                         return resp
                 except Exception as e:
                     logger.debug(f"KPL Socket RPC {cmd} 尝试{attempt}: {e}")
-                self._session = None  # 强制重建会话
+                # ⚠️ 重建前必须 close 旧会话：直接置 None 会遗留旧心跳/drain 线程在
+                # 死连接上继续发心跳 → 服务端视为同 device 双活连接互相踢 →
+                # 新会话 17-80s 内必死循环（2026-09-27 题材详情排查实锤）
+                if self._session:
+                    try:
+                        self._session.close()
+                    except Exception:
+                        pass
+                self._session = None
         return None
 
     # ---- 板块详情：股票池（龙一排序+全字段行情） ----
@@ -804,12 +878,20 @@ class KplSocketAPI:
         return themes
 
     def get_theme_stat(self, theme_id: int) -> Optional[Dict[str, Any]]:
-        """cmd 3010: 题材个股统计"""
-        resp = self._session_rpc(3010, pb_uint(1, theme_id))
+        """cmd 3010: 题材个股统计。响应带 ASCII 前缀（global|.../3010-0/{id}）须剥离；
+        服务端实时计算较慢（实测 ~9s），timeout 须 ≥15s，调用方勿放关键路径。"""
+        body = pb_uint(1, theme_id)
+        resp = self._session_rpc(3010, body, timeout_s=15)
         if resp is None:
+            logger.info(f"themedet 3010 RPC 返回None (题材{theme_id})")
             return None
+        import re as _re
+        m = _re.search(rb"3010-0/\d+", resp)
+        if not m:
+            logger.info(f"themedet 3010 前缀未匹配 len={len(resp)} head={resp[:40]!r}")
+        start = m.end() if m else 0
         out: Dict[str, Any] = {"id": theme_id, "classes": []}
-        for fno, wt, v in pb_flat(resp):
+        for fno, wt, v in pb_flat(resp[start:]):
             if fno == 2:
                 out["stock_num"] = v
             elif fno == 3:

@@ -2314,11 +2314,21 @@ window.__ModuleLoader__.load({
             const [sortDir, setSortDir] = useState("desc");      // 默认降序
             useEffect(() => {
                 let alive = true;
-                api(`/api/kpl/tika/${id}?name=${encodeURIComponent(name || "")}`).then(x => {
-                    if (!alive) return;
-                    if (x.error) setErr(x.error); else setD(x);
-                }).catch(e => { if (alive) setErr(e.message || "加载失败"); });
-                return () => { alive = false; };
+                let timer = null;
+                // quotes/stat_pending = 后端 socket 会话死时短路返回（秒开但行情列--），
+                // 后台线程补全进缓存后前端自动重拉补上（App 同款：先出列表后出行情）
+                const load = (retries) => {
+                    api(`/api/kpl/tika/${id}?name=${encodeURIComponent(name || "")}`).then(x => {
+                        if (!alive) return;
+                        if (x.error) { setErr(x.error); return; }
+                        setD(x);
+                        if ((x.quotes_pending || x.stat_pending) && retries > 0) {
+                            timer = setTimeout(() => load(retries - 1), 3000);
+                        }
+                    }).catch(e => { if (alive) setErr(e.message || "加载失败"); });
+                };
+                load(2);
+                return () => { alive = false; if (timer) clearTimeout(timer); };
             }, [id, name]);
             const rateCls = r => (Number(r) >= 0 ? "up" : "down");
             const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
