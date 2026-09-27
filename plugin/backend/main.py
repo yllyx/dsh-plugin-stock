@@ -115,15 +115,20 @@ async def connection_keepalive_loop():
     """
     后台维持通达信连接：启动时不阻塞端口监听（旧版在 lifespan 里同步 connect，
     网络差时串行探测多台服务器可达几十秒，导致健康检查15秒超时被杀）。
-    未连接时每 30s 重试；连接由各 API 的 ensure_connected 兜底。
+    ⭐ 仅交易时段重试（30s/次）——非交易时段 pytdx 服务器大多不可达，每次全量
+    扫描都是 10-50s 的 CPU/GIL 风暴、会冻结事件循环，曾致前端请求批量
+    "加载失败"（2026-09-27）；非交易时段 5 分钟一试。连接由各 API 的 ensure_connected 兜底。
     """
     while True:
+        _trading = False
         try:
-            if not data_source.connected:
+            n = time.localtime()
+            _trading = n.tm_wday < 5 and 555 <= n.tm_hour * 60 + n.tm_min <= 930
+            if not data_source.connected and _trading:
                 await asyncio.to_thread(data_source.connect)
         except Exception as e:
             logger.debug(f"连接维持失败: {e}")
-        await asyncio.sleep(30)
+        await asyncio.sleep(30 if _trading else 300)
 
 
 async def sentiment_refresh_loop():
@@ -156,7 +161,12 @@ async def lifespan(app: FastAPI):
     sentiment_task = asyncio.create_task(sentiment_refresh_loop())
     market_pool.start()
     kpl_api.start_snapshot_loop()
-    
+    # （复盘人气榜收盘捕获循环已删：复盘榜=3008 type13 实时序列，直拉即可，无需窗口捕获）
+    # 人气榜六视图预热（13/1/14/17/2/16 顺序拉取；后台 daemon，失败不影响启动）
+    import threading as _ths
+    _ths.Thread(target=kpl_api.get_kpl().prewarm_poprank, daemon=True,
+                name="kpl-pop-prewarm").start()
+
     # 启动舆情监控
     sentiment_monitor = get_sentiment_monitor()
     sentiment_monitor.start(interval=300)  # 5分钟监控一次
@@ -1468,7 +1478,8 @@ async def kpl_theme_detail(news_id: str):
 
 @app.get("/api/kpl/tika")
 async def kpl_tika(force: bool = Query(False)):
-    """题材库全列表（Socket 3009 经网关, 实时热度/涨停数/涨幅, 已按热度降序）"""
+    """题材库全列表（Socket 3009, 实时热度/涨停数/涨幅, 服务端 raw 序=热度降序）。
+    App 同款数据源：置顶题材(如AI硬件)由服务端动态入榜，无需客户端合并"""
     return await asyncio.to_thread(kpl_api.get_kpl().get_themes_socket, force)
 
 
@@ -1476,6 +1487,28 @@ async def kpl_tika(force: bool = Query(False)):
 async def kpl_tika_detail(theme_id: str, name: str = Query("")):
     """题材详情：3010统计(小表格) + 东财桥接个股行情"""
     return await asyncio.to_thread(kpl_api.get_kpl().get_theme_detail_socket, theme_id, name)
+
+
+@app.get("/api/kpl/poprank")
+async def kpl_poprank(
+    type: int = Query(1), order: int = Query(1),
+    start: int = Query(0), count: int = Query(50),
+):
+    """人气榜（socket 3008，App 同源）。type=「tab+排序」联合编码（透传）：
+    盘中三排序=1/2/16，复盘三排序=13/14/17；均为服务端实时序列，直拉即与 App 一致。"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_pop_rank, type, order, start, count)
+
+
+@app.get("/api/kpl/qiangdu")
+async def kpl_qiangdu():
+    """最强风口（App 同源 QiangDu_Article，盘中实时；盘后回退当日快照）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_qiangdu)
+
+
+@app.get("/api/kpl/yidong")
+async def kpl_yidong():
+    """严重异动提醒（App 同源 StockBidYiDong/GetPianLiZhi_Index，涨幅偏离值监控）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_yidong_alert)
 
 
 @app.get("/api/kpl/watchlist")

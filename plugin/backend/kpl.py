@@ -20,8 +20,12 @@
 import base64
 import hashlib
 import json
+import os
+import pathlib
 import random
+import re
 import threading
+import datetime
 import time
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +33,7 @@ import httpx
 from loguru import logger
 
 from config import config
+from storage import storage
 
 # ============= 常量 =============
 
@@ -119,6 +124,46 @@ class KplClient:
         self._token_invalid = False
         self._info_cache: Optional[Dict[str, Any]] = None   # GetInfo 结果（后台验活写入）
         self._last_verify_ts: float = 0.0                    # 上次后台验活时间
+        self._names_lock = threading.Lock()
+        self._names_dirty = False
+        # 名称持久缓存（复刻 App KPL_CACHE.STOCK 表机制：socket 响应只带 id 时
+        # 用本地库补名，解析到新名字回写落盘；服务端对已同步设备可能下发增量响应）
+        self._names: Dict[str, Dict[str, str]] = {"themes": {}, "stocks": {}}
+        try:
+            p = storage.data_dir / "kpl_names_cache.json"
+            if p.exists():
+                self._names.update(json.loads(p.read_text(encoding="utf-8")))
+        except Exception as e:
+            logger.debug(f"名称缓存加载失败(空表起): {e}")
+
+    def _remember_name(self, kind: str, key: str, name: str) -> str:
+        """登记名称并返回最终名称：新名字回写缓存（防抖落盘），缺失时用缓存补。"""
+        key, name = str(key or ""), str(name or "")
+        if not key:
+            return name
+        table = self._names[kind]
+        if name:
+            if table.get(key) != name:
+                table[key] = name
+                self._names_dirty = True
+            return name
+        return table.get(key, "")
+
+    def _flush_names(self):
+        """名称缓存落盘（同一数据目录，升级不丢）。名称变更后由调用方择机触发。"""
+        if not self._names_dirty:
+            return
+        with self._names_lock:
+            if not self._names_dirty:
+                return
+            try:
+                p = storage.data_dir / "kpl_names_cache.json"
+                tmp = p.with_suffix(".tmp")
+                tmp.write_text(json.dumps(self._names, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(p)
+                self._names_dirty = False
+            except Exception as e:
+                logger.debug(f"名称缓存落盘失败: {e}")
 
     # ---------- 基础 ----------
 
@@ -544,6 +589,7 @@ class KplClient:
         return self._cached_swr("indexq", 10, fetch)
 
     _theme_board_map: Dict[str, str] = {}
+    _pool_qmap_cache: Dict[str, Dict[str, Any]] = {}
     _theme_board_map_ts: float = 0.0
 
     def _theme_board_id(self, name: str) -> str:
@@ -552,14 +598,23 @@ class KplClient:
             return ""
         if not self._theme_board_map or time.time() - self._theme_board_map_ts > 600:
             try:
-                d = self.call(HOST_HQ2, "Index", "GetInfo", authed=False)
+                # View 含 2,3,4,5 才返回 BaceFaceList（App 同款参数，缺 View 响应为空）
+                d = self.call(HOST_HQ2, "Index", "GetInfo",
+                              {"View": "2,3,4,5,7,8,9,10,11"}, authed=False)
                 for row in (d or {}).get("BaceFaceList") or []:
                     if isinstance(row, list) and len(row) >= 3:
                         self._theme_board_map[str(row[0])] = str(row[2])
                 self._theme_board_map_ts = time.time()
             except Exception:
                 pass
-        return self._theme_board_map.get(name, "")
+        if name in self._theme_board_map:
+            return self._theme_board_map[name]
+        # 模糊匹配：题材名与映射键双向包含（如 3009"国产芯片概念" ↔ BaceFace"芯片"），最长键优先
+        best = ""
+        for key, plate in self._theme_board_map.items():
+            if key and (key in name or name in key) and len(key) > len(best):
+                best = key
+        return self._theme_board_map.get(best, "")
 
     def get_sentiment_history(self) -> Optional[List[Dict[str, Any]]]:
         def fetch():
@@ -612,6 +667,13 @@ class KplClient:
                            {"st": "10", "Index": "0", "Type": "-1"}, False)
         # 3.5 题材库热榜（Socket，后台已有缓存则即时）
         futs["tika"] = pool.submit(self.get_themes_socket)
+        # 3.6 人气榜（socket 3008，App 首页同源：盘中时段=盘中榜 type1，其余=复盘榜 type13）
+        _now = time.localtime()
+        _trading = (_now.tm_wday < 5 and (555 <= _now.tm_hour * 60 + _now.tm_min <= 690
+                                          or 780 <= _now.tm_hour * 60 + _now.tm_min <= 900))
+        futs["poprank"] = pool.submit(self.get_pop_rank, 1 if _trading else 13, 1, 0, 5)
+        # 3.7 严重异动提醒（StockBidYiDong/GetPianLiZhi_Index，偏离值监控）
+        futs["yidong"] = pool.submit(self.get_yidong_alert)
         # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
         futs["qd"] = pool.submit(self.call, HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, False)
         # 5. 市场风口热词 —— apparticle ForumsTuyere/GetHotSearch
@@ -642,6 +704,21 @@ class KplClient:
             out["tika"] = tk_items[:3]
         except Exception:
             out["tika"] = []
+        # 人气榜前5 + 5分钟急升条（3008）
+        try:
+            pr = futs["poprank"].result() or {}
+            out["poprank"] = pr.get("items") or []
+            out["poprank_hot"] = pr.get("five_minute_items") or []
+        except Exception:
+            out["poprank"] = []
+            out["poprank_hot"] = []
+        # 严重异动提醒（偏离值监控列表）
+        try:
+            yd = futs["yidong"].result() or {}
+            out["yidong"] = yd.get("items") or []
+            out["yidong_day"] = yd.get("day")
+        except Exception:
+            out["yidong"] = []
         out["qiangdu"] = ((futs["qd"].result() or {}).get("List")) or []
         out["tuyere_words"] = ((futs["tuyere"].result() or {}).get("List")) or []
         sent = futs["sent"].result() or []
@@ -730,12 +807,244 @@ class KplClient:
                 "is_hot": t.get("is_hot", 0), "up_num": t.get("up_num", 0),
                 "concepts": t.get("concepts") or [],
             } for t in raw]
+            # 名称缓存合并：新名登记，缺名用本地缓存补（App KPL_CACHE 同机制）
+            for it in items:
+                fixed = self._remember_name("themes", it.get("id"), it.get("name") or "")
+                if fixed and not it.get("name"):
+                    it["name"] = fixed
             items.sort(key=lambda x: x.get("hot") or 0, reverse=True)
+            self._flush_names()
             return {"items": items}
 
         data = _fetch()
         if data.get("items"):
             self._cache["themesock"] = {"data": data, "ts": time.time()}
+        return data
+
+    # ---- 人气榜（cmd 3008；实现见下方 get_pop_rank，含 SWR 陈旧缓存）----
+
+    # SWR 陈旧缓存：socket 会话被互踢/重连时单次拉取可达 40s+，绝不能让前端干等
+    # （2026-09-26 "盘中/飙升视图无数据"反馈的根因就是拉取太慢）。内存 + 磁盘双层：
+    # 磁盘层让后端重启后依然能秒回六个视图的最近一次成功数据。
+    _pop_stale: dict = {}
+    _pop_refreshing: set = set()
+    _pop_disk_loaded = False
+
+    @staticmethod
+    def _pop_disk_path():
+        from storage import storage as _st
+        return _st.data_dir / "kpl_pop_cache.json"
+
+    def _load_pop_disk(self) -> None:
+        """启动后首次使用时加载磁盘陈旧缓存（内存里已有的以较新者为准）"""
+        if self._pop_disk_loaded:
+            return
+        self._pop_disk_loaded = True
+        try:
+            d = json.loads(self._pop_disk_path().read_text(encoding="utf-8"))
+            for k, v in (d or {}).items():
+                old = self._pop_stale.get(k)
+                if not old or v.get("ts", 0) > old.get("ts", 0):
+                    self._pop_stale[k] = v
+        except Exception:
+            pass
+
+    def _save_pop_disk(self, key: str, data: Dict[str, Any]) -> None:
+        # ⚠️ 高频写盘会触发杀软实时扫描挂起整个进程（2026-09-27 实测每 30-60s 一波
+        # 10-40s 的全后端冻结，与写盘频率吻合）——磁盘层仅作崩溃恢复，防抖 5 分钟一写
+        try:
+            now = time.time()
+            if now - getattr(self, "_pop_disk_last", 0.0) < 300:
+                return
+            self._pop_disk_last = now
+            p = self._pop_disk_path()
+            try:
+                cur = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                cur = {}
+            cur[key] = {"data": data, "ts": now}
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(cur, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, p)
+        except Exception as e:
+            logger.debug(f"poprank 磁盘缓存写入失败: {e}")
+
+    def get_pop_rank(self, type_: int = 1, order: int = 1, start: int = 0,
+                     count: int = 50, use_cache: bool = True) -> Dict[str, Any]:
+        """人气榜（cmd 3008，App 同源）。
+        ⭐ type 是「tab+排序」联合编码（2026-09-26 字节码实锤 IntradayPopularityListFragment.Jg/Kg）：
+          盘中 tab 三排序 = 1/2/16，复盘 tab 三排序 = 13/14/17（默认视图=1/13）。
+          13/14/17 为服务端实时序列，盘后仍成组更新（分钟级），短连接直拉即与 App 一致。
+        order：App 初始进页传 2、点排序胶囊后传 1，实测两者返回内容一致，固定用 1。
+        type<=3 响应才带 five_minute_items（5分钟急升条），13/14/17 亦携带但 App 不解析。
+        缓存：30s 新鲜 + SWR 陈旧兜底（内存+磁盘；有旧值立即返回并后台刷新，标 stale=true，
+        7 天内有效——超过 7 天视为过期数据不再返回）。
+        返回 {items, five_minute_items, day, timestamp}。"""
+        key = f"poprank:{type_}:{order}:{start}:{count}"
+        hit = self._cache.get(key)
+        if use_cache and hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+
+        def _fetch():
+            import kpl_socket
+            raw = kpl_socket.get_kpl_socket().get_pop_rank(type_, order, start, count)
+            if raw is None:
+                return {"error": "人气榜获取失败（socket 通道不可用）", "items": [], "five_minute_items": []}
+            for it in (raw.get("items") or []) + (raw.get("five_minute_items") or []):
+                fixed = self._remember_name("stocks", it.get("code"), it.get("name") or "")
+                if fixed and not it.get("name"):
+                    it["name"] = fixed
+            self._flush_names()
+            return raw
+
+        self._load_pop_disk()
+        stale = self._pop_stale.get(key)
+        if use_cache and stale and time.time() - stale.get("ts", 0) < 7 * 86400:
+            if key not in self._pop_refreshing:
+                self._pop_refreshing.add(key)
+                threading.Thread(target=self._pop_refresh_bg,
+                                 args=(key, type_, order, start, count),
+                                 daemon=True, name=f"kpl-pop-swr-{type_}").start()
+            return {**stale["data"], "stale": True}
+
+        data = _fetch()
+        if data.get("items"):
+            self._cache_set(key, data)
+        elif stale:
+            return {**stale["data"], "stale": True}
+        return data
+
+    def _cache_set(self, key: str, data: Dict[str, Any]) -> None:
+        now = time.time()
+        self._cache[key] = {"data": data, "ts": now}
+        self._pop_stale[key] = {"data": data, "ts": now}
+        self._save_pop_disk(key, data)
+
+    def _pop_refresh_bg(self, key: str, type_: int, order: int, start: int, count: int) -> None:
+        try:
+            self.get_pop_rank(type_, order, start, count, use_cache=False)
+        except Exception as e:
+            logger.debug(f"poprank SWR 后台刷新失败 {key}: {e}")
+        finally:
+            self._pop_refreshing.discard(key)
+
+    def prewarm_poprank(self) -> None:
+        """启动预热人气榜全部视图（默认视图优先），顺序执行共用一条 socket 会话。
+        预热后前端任意 tab/排序首点即命中缓存秒开。"""
+        for t in (13, 1, 14, 17, 2, 16):
+            try:
+                self.get_pop_rank(t, 1, 0, 50)
+            except Exception as e:
+                logger.debug(f"poprank 预热 type={t}: {e}")
+            time.sleep(1)
+
+    def get_pop_replay(self) -> Dict[str, Any]:
+        """复盘人气榜 = type=13（App 复盘 tab 默认视图·热度排名）。
+        2026-09-26 证伪旧结论：复盘榜并非"收盘结算瞬态推送、错过后拿不到"，
+        而是服务端持续维护的实时序列（ts 成组刷新），当年扫参数只试了 type 1-10
+        而漏掉 13-17 才对不上；捕获循环/当日缓存机制已删除。"""
+        return self.get_pop_rank(13, 1, 0, 50)
+
+    def get_yidong_alert(self) -> Dict[str, Any]:
+        """严重异动提醒（App 同源 StockBidYiDong/GetPianLiZhi_Index）：
+        涨幅偏离值监控列表——距触发交易所"严重异动"的进度。
+        List 项字段：[0]code [1]name [2]口径(1盘中/0收盘) [3]规则 [4]当日涨幅 [5]已交易天数
+        [6]累计偏离值% [7]触发提示 [8]触发所需涨幅 [11]现价 [12]状态。同股盘中/收盘两种口径取盘中。"""
+        key = "yidong"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Index", {}, False)
+            items: Dict[str, Dict[str, Any]] = {}
+            order: list = []
+            for row in (d or {}).get("List") or []:
+                if not isinstance(row, list) or len(row) < 13:
+                    continue
+                code = str(row[0])
+                it = {"code": code, "name": row[1], "kind": row[2], "rule": row[3],
+                      "day_pct": row[4], "days": row[5], "dev": row[6], "tip": row[7],
+                      "need": row[8], "price": row[11], "status": row[12]}
+                if code not in items:            # 保持首次出现顺序
+                    items[code] = it
+                    order.append(code)
+                elif it["kind"] == 1:            # 盘中口径覆盖收盘口径
+                    items[code] = it
+            lst = [items[c] for c in order]
+            for it in lst:
+                fixed = self._remember_name("stocks", it["code"], it.get("name") or "")
+                if fixed and not it.get("name"):
+                    it["name"] = fixed
+                # App 派生字段：触发价=昨收×(1+触发涨幅)；当日偏离值空间=触发涨幅-当日涨幅
+                try:
+                    day_pct = float(it.get("day_pct") or 0)
+                    need = float(it.get("need") or 0)
+                    price = float(it.get("price") or 0)
+                    prev_close = price / (1 + day_pct / 100) if day_pct > -100 else 0
+                    it["prev_close"] = round(prev_close, 2)
+                    it["trigger_price"] = round(prev_close * (1 + need / 100), 2)
+                    it["space"] = round(need - day_pct, 2)
+                except Exception:
+                    pass
+                # 规则简称（"连续10个交易日内涨幅偏离值累计达到 100%" -> "10日100%"）
+                try:
+                    import re as _re
+                    m = _re.match(r"连续(\d+)个交易日.*?达到\s*([\d.]+)%", it.get("rule") or "")
+                    if m:
+                        it["rule_short"] = f"{m.group(1)}日{m.group(2)}%"
+                except Exception:
+                    pass
+            self._flush_names()
+            return {"day": (d or {}).get("Day"), "items": lst}
+
+        data = _fetch()
+        if data.get("items"):
+            self._cache[key] = {"data": data, "ts": time.time()}
+        return data
+
+    def get_qiangdu(self) -> Dict[str, Any]:
+        """最强风口（App 同源 ZhiShuRanking/QiangDu_Article，盘中数据）。
+        盘后/拉空时回退当日快照（复刻 App 盘后仍显示当日数据的行为）。"""
+        key = "qiangdu"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        today = time.strftime("%Y-%m-%d")
+        snap_path = storage.data_dir / "kpl_qd_snapshot.json"
+
+        def _load_snap():
+            try:
+                snap = json.loads(snap_path.read_text(encoding="utf-8"))
+                if snap.get("day") == today:
+                    return snap.get("list") or []
+            except Exception:
+                pass
+            return []
+
+        def _save_snap(lst):
+            try:
+                snap_path.write_text(json.dumps({"day": today, "list": lst}, ensure_ascii=False),
+                                     encoding="utf-8")
+            except Exception as e:
+                logger.debug(f"最强风口快照落盘失败: {e}")
+
+        def _fetch():
+            d = self.call(HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, False)
+            lst = (d or {}).get("List") or []
+            sent = self.get_sentiment_history() or []
+            sentiment = {
+                "today": sent[0] if len(sent) > 0 else {},
+                "yesterday": sent[1] if len(sent) > 1 else {},
+            }
+            if lst:
+                _save_snap(lst)
+                return {"list": lst, "cached": False, "day": today, "sentiment": sentiment}
+            return {"list": _load_snap(), "cached": True, "day": today, "sentiment": sentiment}
+
+        data = _fetch()
+        if data.get("list"):
+            self._cache[key] = {"data": data, "ts": time.time()}
         return data
 
     def get_theme_detail_socket(self, theme_id: str, name: str = "") -> Dict[str, Any]:
@@ -753,7 +1062,7 @@ class KplClient:
         if not d or str(d.get("errcode", "0")) != "0":
             return {"error": "题材详情获取失败", "id": tid}
 
-        out["name"] = d.get("Name") or name
+        out["name"] = self._remember_name("themes", tid, d.get("Name") or name)
         out["brief"] = d.get("BriefIntro") or ""
         out["introduction"] = d.get("Introduction") or ""
         out["create_time"] = d.get("CreateTime")
@@ -769,7 +1078,8 @@ class KplClient:
         except Exception:
             pass
 
-        # 小表格矩阵：Level1 → Level2 → Stocks
+        # 小表格矩阵：Level1 → Level2 → Stocks（is_zt = ZT map 涨停标记，App 红色高亮同款）
+        zt = d.get("ZT") or {}
         table = []
         for lv1 in d.get("Table") or []:
             l1 = lv1.get("Level1") or {}
@@ -780,42 +1090,70 @@ class KplClient:
                     "stocks": [{
                         "code": s.get("StockID"), "name": s.get("prod_name"),
                         "hot": s.get("Hot"), "is_zz": s.get("IsZz"), "is_hot": s.get("IsHot"),
-                        "reason": s.get("Reason"),
+                        "reason": s.get("Reason"), "is_zt": str(s.get("StockID")) in zt,
                     } for s in lv2.get("Stocks") or []],
                 })
             table.append(row1)
         out["table"] = table
 
-        # 成分股平铺 + 实时行情匹配（2501 经映射板块，内置 socket 客户端）
+        # 成分股平铺（InfoGet StockList：代码/名称/人气值/板块标签，App 详情页同接口）
         stock_list = [{
             "code": s.get("StockID"), "name": s.get("prod_name"),
             "hot": s.get("HotNum"),
+            "is_zt": str(s.get("StockID")) in zt,
             "tags": [{"id": t.get("ID"), "name": t.get("Name"), "reason": t.get("Reason")}
                      for t in s.get("Tag") or []],
         } for s in d.get("StockList") or []]
-        quotes = {}
+        for s in stock_list:
+            fixed = self._remember_name("stocks", s["code"], s.get("name") or "")
+            if fixed and not s.get("name"):
+                s["name"] = fixed
+        # 实时数值列（socket 2501 题材股票池，App 同款接口；quotas: q1=现价 q2=涨跌% q3=成交额 q4=换手率）
+        # plateId 需 BaceFaceList(Index/GetInfo) 名字映射；池按市值序分页拉全（count 上限 500），
+        # 未命中题材数值列为空（如实显示 --）。qmap 带 30s 池级缓存（详情页反复打开不重拉）。
         bid = self._theme_board_id(out["name"])
+        merged = 0
         if bid:
             try:
-                import kpl_socket
-                pool = kpl_socket.get_kpl_socket().get_sector_pool(bid, quota_type=2, count=200)
-                if pool:
-                    for it in pool.get("items") or []:
-                        q = it.get("quotas") or []
-                        quotes[str(it.get("1", ""))] = {
-                            "pct": (q[2] if len(q) > 2 else ""),
-                            "price": (q[1] if len(q) > 1 else ""),
-                            "amount": (q[3] if len(q) > 3 else ""),
-                            "turnover": (q[4] if len(q) > 4 else ""),
-                        }
+                import kpl_socket as _ks
+                now = time.time()
+                pc = self._pool_qmap_cache.get(bid)
+                if pc and now - pc["ts"] < 30:
+                    qmap = pc["qmap"]
+                else:
+                    # quotaType=1 市值序（题材核心股靠前）；单页 500（服务端拒 start 分页/count>500，
+                    # 中小市值尾部个股暂无行情，前端显示 --，记录待后续补全量通道）
+                    pool = _ks.get_kpl_socket().get_sector_pool(bid, quota_type=1, count=500)
+                    qmap = {}
+                    for it in (pool or {}).get("items") or []:
+                        code = str(it.get(1, ""))
+                        qmap[code] = it.get("quotas") or []
+                        # 池里带股票名(f2)：登记到名称缓存，供缺名兜底
+                        self._remember_name("stocks", code, str(it.get(2) or ""))
+                    self._pool_qmap_cache[bid] = {"ts": now, "qmap": qmap}
+                for s in stock_list:
+                    if not s.get("name"):
+                        s["name"] = self._remember_name("stocks", str(s["code"]), "")
+                    q = qmap.get(str(s["code"]))
+                    if q and len(q) > 4:
+                        s["price"], s["pct"] = q[1], q[2]
+                        s["amount"], s["turnover"] = q[3], q[4]
+                        merged += 1
+                self._flush_names()
             except Exception as e:
                 logger.debug(f"题材详情 2501 行情失败({out['name']}): {e}")
-        for s in stock_list:
-            q = quotes.get(s["code"])
-            if q:
-                s.update(q)
         out["stocks"] = stock_list
-        out["quotes_source"] = "socket2501" if quotes else ""
+        out["quotes_source"] = f"socket2501:{merged}" if merged else ""
+
+        # 统计条（App 个股行情顶部：股票数量/上涨/下跌/平均涨幅 = socket 3010）
+        try:
+            stat = kpl_socket.get_kpl_socket().get_theme_stat(int(tid))
+            if stat:
+                out["stat"] = {"stock_num": stat.get("stock_num"),
+                               "up_num": stat.get("up_num"), "down_num": stat.get("down_num"),
+                               "avg_pct": stat.get("avg_ratio")}
+        except Exception as e:
+            logger.debug(f"题材详情 3010 统计失败({tid}): {e}")
         if stock_list or table:
             self._cache[f"themedet:{tid}"] = {"data": out, "ts": time.time()}
         return out

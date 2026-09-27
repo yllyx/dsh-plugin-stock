@@ -428,6 +428,22 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
         ctx.logger?.error?.(`[dsh-plugin-stock] 后端启动异常: ${e.message}`);
     }));
 
+    // 健康看门狗：后端意外死亡（冷启动超时被杀/崩溃）时自动重新拉起。
+    // 否则后端一死，前端系统 Tab 的设置接口全部 Failed to fetch，
+    // 页面上的"重启后端"按钮也渲染不出来——死循环只能靠重启 DSH 解。
+    ctx.effect(() => {
+        const timer = setInterval(async () => {
+            if (b.state === "running" || b.state === "starting") return;
+            try {
+                const r = await fetch(`http://127.0.0.1:${b.port}/health`);
+                if (r.ok) return; // 端口上有活着的后端（start() 会复用它）
+            } catch { /* 不可达，需要拉起 */ }
+            ctx.logger?.info?.("[dsh-plugin-stock] 看门狗：后端不可达，重新拉起");
+            b.start().catch(() => { });
+        }, 20000);
+        return () => clearInterval(timer);
+    });
+
     // 卸载时关闭后端
     ctx.effect(() => () => b.stop());
 

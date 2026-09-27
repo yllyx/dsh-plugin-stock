@@ -150,6 +150,7 @@ git push origin main --tags
 - **build_frame 的 total 字段 = len(inner)（不含 kind1B+total4B 头）**——App 同款；多算 5B 服务器会静默丢弃帧（鉴权"无响应"假象，曾误导为签名被毒化，实际是帧格式 bug）
 - **服务器端口特性**：getIPList 下发多台多端口，**只有部分端口（如 124.71.166.244:8080）主动推 260 挑战**，80/14000 端口 TLS 可连但无挑战 → connect 对每台完整走"挑战→签名→鉴权"，失败换下一台
 - **签名含时间成分**：同挑战不同时刻输出不同（勿做签名缓存对照），服务器均接受；挑战与连接绑定且时效数秒
+- **⭐ 帧头真实布局（2026-09-23 字节级对账实锤，修大 bug）**：kind2(挑战)=`[kind1][total4][cmd2][保留3]` body@10；kind4(业务)=`[kind1][total4][seq2][cmd2][flags1][extCount1]` body@11，3009 响应 body=`1b 03 00 18`mini头(00 18=ASCII前缀长24)+"global|..."前缀+protobuf。旧 try_parse_frame 把 extCount 按 2 字节读，3009 帧把 extCount(00)+body首字节(1b) 拼成 0x001b=27 → 按"每TLV跳4字节"错跳 135B → **body 最前的置顶题材(AI硬件/地方国资)被整段吞掉**，题材库恒比 App 少两条。consumed 必须返回 5+total（帧实际长度）。置顶题材带 f10="1" 标记 + f11=入榜时间戳 + 内联概念子记录（f1/f2/f3 重复出现=概念，f4 float=概念涨幅）
 - **已验证 cmd**：3009 题材库全列表（~248题材：id/名称/拼音/热度/涨停数/涨幅/isHot/upNum/isNew，ASCII头剥除用偏移扫描找 field10 密集区）；3010 题材统计（**只认题材id，801开头板块id无响应**）；2501 板块股票池（plateId=801xxx 有效、题材id无效；quotas=[细分标签,现价,涨跌%,成交额,换手率,...]）
 - **题材名→801板块id 映射**：`Index/GetInfo`（apphwhq，**View 必须含 2,3,4,5**）响应的 `BaceFaceList`=[[题材名,涨幅,801xxx],...]（仅热门4条）；详情页个股行情 2501 匹配用
 - **插件端点**：`GET /api/kpl/tika`（题材库列表，热度降序+30s缓存）、`GET /api/kpl/tika/{id}?name=`（题材详情）
@@ -161,9 +162,7 @@ git push origin main --tags
 - **坑**：报 `errcode:9999 "class not exists mothod"` = **域名不对**（同一控制器类只存在于特定域）；`1020 参数出错`=参数缺失/为空
 - 模拟器 frida 运行时抓包在 pm clear 后失效（App 看门狗 2.8s 内杀被注入进程，status_hide 也压不住）；**静态 dex 逆向 + 多域探测**是当前有效路线
 
-## 关键经验（踩过的坑，勿再犯）
-
-1. **AI 工具 `output.render` 必须返回 `[{type:"text", text:"..."}]` content block 数组**——返回字符串/字符串数组会报 `content.some is not a function`（DSH Agent 按 pi-ai 内容块处理）
+## 关键经验（踩过的坑，勿再犯）1. **AI 工具 `output.render` 必须返回 `[{type:"text", text:"..."}]` content block 数组**——返回字符串/字符串数组会报 `content.some is not a function`（DSH Agent 按 pi-ai 内容块处理）
 2. **`/health` 及所有被宿主健康检查调用的端点绝不能持有重锁**——曾在锁内构建 5247 个 DataFrame 导致健康检查超时、后端被 SIGTERM 误杀（DSH 重启必现）
 3. **pytdx 陷阱**：`hq_hosts` 条目是元组（`host["ip"]` 必抛 TypeError）；列表前几台是"僵尸站"（TCP 通但无数据），连接必须实际拉一条行情验证（探测式连接）+ 粘性主机；`get_security_bars` 个股K线解析已损坏（约27%乱码），个股K线走东财→腾讯回退，指数K线走 `get_index_bars`（干净）+ 单次800根上限需分页；行情不含 name/change_percent 字段（涨跌幅从昨收算）
 4. **东财限流**：push2his（历史K线）最敏感，触发后按 IP 封数小时，编号镜像子域共享限流桶；规避=减少请求量（本地源+SQLite缓存+双源轮换），不是换 UA
@@ -187,18 +186,88 @@ git push origin main --tags
 22. **升级EPERM的另一个元凶：自重启拉起的分离后端**——`/api/system/restart` 用 DETACHED_PROCESS 起 uvicorn（cwd在插件目录），DSH退出后它仍存活并锁 node_modules；升级前先杀 8765 的 python 进程，再用 `mv 目录名 __probe && mv back` 探测是否解锁，解锁了就无需退出DSH可直接 pnpm install（DSH本体只经子进程占目录）
 23. **DSH 新版删除了 `@deepseek-ai/dsh-client-runtime` 包**——第三方皮肤 `dsh-client-ui-aqua@1.3.1` peer依赖它，新版启动必报 `missed the module table ... build-time externals drift`（连带 bundle 全部插件 "Failed to load plugins"，殃及股票插件但非其问题）。解法：web profile 的 package.json 移除 aqua 依赖+bundle条目、pnpm-workspace.yaml 删其 patchedDependencies 与 minimumReleaseAgeExclude 条目、删 patches/*.patch 后重装。新版自带官方皮肤。
 23. **DSH 更新器安装插件报 `Invalid time value` 崩溃**：崩溃发生在 `detectMinReleaseAgeViolation`（pnpm 11.8 supply-chain 时间校验，`new Date(undefined).toISOString()`）。**已实锤的机制链**：npmjs 的精简元数据（abbreviated，pnpm resolve 实际用的格式）**不含 time 字段**（npmmirror 的含），DSH 更新器上下文中 resolve 到无 time 元数据即崩；exclude 白名单救不了（time 读取在校验函数内）。**复现要点**：CLI 传 `--config.minimum-release-age` 无效（被静默忽略，导致复现实验全假），必须写进 `.npmrc` 或 `pnpm-workspace.yaml` 才生效。**解法（实测可靠）：退出 DSH 或直接在 web profile 手动 `"D:\Program Files\nodejs\pnpm.cmd" install 包名@版本`**（系统 pnpm 11.7 不崩），把更新器想装的目标版本手动装到位后，DSH 重启时无事可做即不再触发该路径。装新包（目录不存在）时甚至无需退 DSH。另：官方源解析 DSH 自家包（@deepseek-ai/*）常报 NO_MATCHING_VERSION，DSH 生态装包务必走 npmmirror
+24. **冷开机后插件后端被健康检查误杀**（2026-09-23）：重启电脑后首次启动 DSH，后端光 import 就要 ~25s（冷文件缓存+杀软扫描刚热改写入的 .py），HEALTH_TIMEOUT_MS=30s 的窗口在 uvicorn 即将 bind 端口前就把进程 SIGTERM（日志特征：lifespan 各子系统日志齐全但 8765 无监听 → `failed - 健康检查超时` → `SIGTERM`）。已把 backend-manager.js 窗口提到 90s；热改 .py/lib 后若赶着重启 DSH，可先让杀软扫完或手动跑一次 import 预热缓存
+   - **配套修复（同日）**：index.js 加健康看门狗（每20s探 /health，不在 running/starting 且不可达就 b.start() 重新拉起）——否则后端一死，系统Tab接口全 `Failed to fetch`、「重启后端」按钮跟着 status 卡片一起消失，形成只能重启DSH的死循环；系统Tab 后端不可达时显示降级说明卡。另：分离拉起的后端 DSH 重启时会经 isAlreadyRunning「直接复用」
+25. **⭐ 事件循环阻塞=后端"批量加载失败"的真凶（2026-09-27 py-spy 实锤，勿再犯）**：三处把**同步阻塞调用跑在 asyncio 事件循环上**，pytdx 断连时（周末/夜间必现）每次触发串行扫描全部服务器（10-50s/次，每 30-60s 一波），整个后端冻结、所有请求超时——前端表现为各页面间歇性"加载失败"。三处已全修（asyncio.to_thread / connected 短路）：① `alert_engine.check_holdings/check_custom_alerts` 的 `get_security_quotes`（**主根因**，run_loop 是 asyncio 定时任务）② `ws_manager._run` 广播循环 ③ keepalive 循环另加"仅交易时段重试 pytdx"。**排查手法**：间歇冻结但单发难复现时，用 `py-spy dump --pid <8765进程>` 在冻结瞬间抓主线程栈，一次定位（`pip install py-spy`）。"周期性冻结"特征=async def 里裸调同步网络/磁盘 IO
 
-## 开盘啦(KPL)集成状态（2026-09-22）
+## 开盘啦(KPL)集成状态（2026-09-23）
 
-### 一期完成（纯HTTP，0.4.1 dev）
-- kpl.py: KplClient单例（限速2.5s/Token/缓存/失效检测）
-- 全部已验证接口：自选CRUD(GetAllUserSelStock/AddStock/DelStock)、个股详情+十档(GetStockPanKou)、板块详情(GetPlate_Info_QJ/SonPlate_Info/GetGPCPHBTS_Tag/GetTrendIncremental/GetVolTurIncremental)、总览(HomeDingPan/ModuleVersatile/Index/GetInfo/IndexPlate/GetIndexList/HisHomeDingPan/ChangeStatistics/GlobalIndex/GetSearchList/Search/TodayTopList/HisLimitResumption/GetHotSearch)、本地搜索(market_pool._names)
-- 前端🚀开盘啦Tab: 总览(登录绑定卡/精选板块强度/热搜)/板块详情(强度指标/爆发原因/分时canvas/K线切换/细分chips/VIP筛选chips)/个股详情(大字报价/九宫格/涨停原因/十档梯/龙虎榜二期占位/加自选)/自选股(分组/实时/增删)/搜索(本地联想+热搜)
-- 凭据: config.json kpl_user_id/kpl_token(用户抓包App后填入，约2个月长效)
+### 已完成（独立运行，无模拟器/无网关/无frida依赖）
+- **Socket 通道已复活并内置**（kanpan_spec 探索 + unidbg 离线签名）：kpl_socket.py 直连服务器（多服务器轮换，8080/80/14000/443 探测挑战），TLS1.3 mTLS（kgT.p12），cmd260 挑战 → cmd610 登录态鉴权（UserID/Token 同 HTTP 面）→ 心跳 kind1 cmd13；签名 = backend/signer/ 内 Java(unidbg) 离线模拟 libauthSign.so（warm 进程，subprocess JSON 协议，需 Java 8+）
+- **帧格式（2026-09-23 字节级对账修正）**：`[kind<<4|sub:1B][totalLen:4B][seq:2B 仅kind3/4/5][cmd:2B]` 之后**各 kind 头长不同**（kind2 挑战帧再 3 字节保留、kind4 业务帧再 flags1+extCount1，extCount 是 **1 字节**）；totalLen=inner 长度不含 5B 头，**consumed 必须返回 5+totalLen**；业务 RPC kind4，鉴权 kind3
+- **已验证 cmd**：3009 题材库全列表(pb.Empty 请求；响应=ASCII前缀`global|...`+protobuf，f10 每项=一题材{id1,name2,pinyin4,isHot5,hot6,zt7,up8,f10?,f11会话meta,f12 pct,f13 概念{id1,name2,pinyin3,pct4}})、3010 题材个股统计、2501 板块股票池、3001 组合行情、3002 主指数
+- **题材库数据已与 App 逐项对齐**（2026-09-23 同时对比实测：AI硬件3板/持续火爆/└CPU、地方国资7板、财经媒体1板、云计算2板25↑、端侧AI 11↑、地产链5板 全一致；250 题材=248 普通+2 置顶）
+- **⭐ 置顶题材是常驻的**：AI硬件/地方国资带 f10="1" 置顶标记 + f11=入榜时间戳，**始终在 3009 响应 body 最前面**。曾误判为"分钟级动态轮换/时点快照差异"——已证伪，"时有时无"的真凶是下方帧解析 bug 吞掉了 body 前段。勿再为"缺题材"找替代源或客户端合并方案（kpl_focus 置顶补数据已移除）。插件 30s 缓存已对齐 App 下拉刷新
+- kpl.py: get_themes_socket(3009)/get_theme_detail_socket(InfoGet+腾讯行情+3010)；main.py /api/kpl/tika
+- 前端 KplTikaPage：App 同款布局（搜索框/排序表头 按热度|按涨幅/名次三色1红2橙3黄/涨停chip/持续火爆徽标/上涨家数↑/概念子行CPU）；30s 静默刷新；首页题材库3条+概念子行
+- 首页提速：overview+home 并行拉取 + 模块级 SWR 缓存（秒开旧数据后台刷新）；后端 _cached_swr(20s)+启动预热
 
-### 二期未完成（需 frida + 模拟器 + 逆向）
-- Socket通道: 原协议(8080端口+kgT.p12+260挑战+610白盒签名)已失效（服务器更新了协议/端口/证书）。原端口(8080)从ipList移除、新端口(80/14000)TLS握手成功但服务器断开不发挑战。App实际连接 103.143.17.166:443。需要新一轮逆向。
-- 登录RSA分段格式: Phone=密文(256B=2块RSA)解密为乱码（非标准PKCS#1填充，App加密前有额外变换）。需frida hook加密函数
-- 板块详情股票池列表(龙一/龙二/人气值/排名变化): 走Socket通道
-- 板块强度总排行: 走Socket通道
-- kanpan_spec目录有完整分析资料：开盘啦Socket复刻报告.md(旧协议已复刻但服务端已更新)、kpl_pool_theme_client.py(旧版可运行参考)、frida_sign.js(签名桥)、protos/(protobuf定义)
+### 凭据与设备
+- config.json: kpl_user_id/kpl_token/kpl_device_id=**插件自有自动生成 ID（2026-09-27 起，勿再用模拟器的 cff05554）**。曾克隆模拟器设备号以"与 App 同设备"，但同 device_id 的模拟器 App 与后端 socket 会**持续互踢**（拉取 20-45s、表现为各视图"无数据"），2026-09-27 应用户要求改回 `_device_id()` 自动生成并固定；Token 是账号绑定而非设备绑定——换设备后用 config 里的账号密码重登一次即拿到同样 Token（`/api/kpl/login-pwd`），socket 610 鉴权正常。改 device_id 的正确姿势：**先杀 8765 后端进程再清空 config.json 的 kpl_device_id**（顺序反了会被运行中进程的 config 整体回写覆盖），重启后 `_device_id()` 自动生成并持久化
+
+### ⭐ Socket 帧解析问题排查 SOP（2026-09-23 题材库破案实战总结，后续帧解析问题按此处理）
+背景：题材库恒比 App 少置顶两条，数轮误判（订阅假说/设备假说/时点快照假说）全被推翻，最终靠**字节级对账**破案（帧解析器吞 body 前段 135B）。标准手段：
+1. **同时对比定性**：同一时刻 `adb exec-out screencap -p` 截 App 界面 + `curl DSH接口` 拉数据，逐行对比数值（含上涨家数等细粒度字段）。数值全同仅缺行 → 解析层丢数据；数值不同 → 才是数据源/时点问题。**切勿错时对比**（App 手点 vs 我们拉取差几分钟，盘中数据一直在变，会误判）。
+2. **模拟人操作驱动 App**（反调试不感知系统级输入）：`adb shell input tap/swipe` 导航、下拉刷新；冷启动 ANR 弹窗点 Wait、营销弹窗逐个关；webview 卡住点重新加载。**全程不 attach 进程**，App 无感。
+3. **原始字节落盘，绕开自己的解析器**：新建裸 socket 会话（TLS 后 sendall 请求帧 + 循环 recv 到超时），把**全部原始字节**写 .bin，再独立分析。若裸收的数据完整而走 KplSocketSession.rpc 的不完整 → 就是自家解析器 bug（本案实锤）。回归测试也用历史 .bin 喂 try_parse_frame。
+4. **字节级对账定布局**（核心）：a) 帧头 total 声明 vs 实收字节数对账（差 0 = 单帧完整）；b) 找**锚点**反推 body 真实起点——ASCII 前缀（"global|"）、pb 字段合法性（`08` 开头=field1 varint）、数值合理性（serverTime=当天秒级时间戳、涨停数与 App 界面一致）；c) **不同 kind 帧分别抓样本**（本案 kind2 与 kind4 头长不同），勿假设统一布局；d) 对每种候选起点验证"pb 恰好干净消费到帧尾 + 关键字段值合理"。
+5. **警惕并发会话互踢**：同 device_id 第二条 socket 连接会被服务端拒（所有端口"无挑战"）。测试脚本连不上时，先确认 8765 后端的会话是否活着（可 /api/system/restart 释放），勿误判为服务端故障。服务端对短时间频繁建连也限流（同样表现为"无挑战"），歇几分钟再试。**模拟器里常驻的开盘啦 App 同样会持续互踢后端会话**（2026-09-26 实证：单次拉取被拖到 40s+，插件端表现为各视图"无数据"），联调/对比完记得 `adb shell am force-stop com.aiyu.kaipanla`。
+6. **修完必须双验证**：历史抓包 .bin 回归 + 线上接口（/api/kpl/tika）实测与 App 同时刻对比。
+
+### ⭐ App 功能复刻标准 SOP（2026-09-25 人气榜/最强风口/严重异动复刻实战总结，后续复刻任何 App 功能按此流程）
+五步流程，从 UI 到数据到落地：
+1. **UI 探索（adb 系统级驱动 + 截屏）**：`adb shell input tap/swipe` 模拟人操作导航到目标页面（首页模块→更多→下钻页→各 tab/排序逐个点开），每步 `adb exec-out screencap -p > x.png` 截屏并**亲眼读图**记录：模块结构、行布局、字段、颜色、徽标、tab/排序项。App 页面路径线索：首页模块在"我的版面"（左缘把手 tap 75,720）各版面页里，或功能宫格第二/三屏（横向滑动）。注意冷启动 ANR 点 Wait、新手引导遮罩按提示操作、营销弹窗逐个关。
+2. **接口定位（三条线并行）**：a) **反编译 dex_strings.txt** 搜界面文案（如"人气榜"）定位所属控制器/Action（api_registry.json 查 `控制器/Action` → ox0/j00 方法引用）；b) **cmd_table.md / proto_fields.txt** 查 socket cmd 与 proto 消息字段（`grep -an "消息名" dex_strings.txt` 后 sed 打行号区间 od -t x1z 看 descriptor，字段号+类型直接可读，如 `18 01 20 01 28 0d` = f1 int32）；c) **activity/presenter 字节码 dump**：`py tools/dump_class.py unpacked2/classesN.dex "类名" out.txt`（androguard 走 py 启动器；先 grep -qa 定位类在哪个 dex），从 Fragment 的 Bundle 常量（如 type=1/2→tab）、Presenter 的请求构造（newBuilder→setType/setOrder）读出参数枚举。
+3. **协议实测（自带客户端直发）**：用插件 kpl_socket 直发目标 cmd，扫参数枚举——⚠️ **枚举空间必须先从字节码读全，切勿拍脑袋设范围**（人气榜血案：真实 type 是 tab+排序联合编码 1/2/16/13/14/17，当年拍脑袋只扫 1-10×order 0-6，把拉取式实时序列误判成"瞬态推送"，白造了一套收盘捕获循环）。每组合解析 items 并用 **App 截屏数值做锚点**（App 第 N 名的名字+热度值精确匹配哪个组合）。响应解析统一 regex 定位 `3008-0/\d+:\d+` 式 ASCII 前缀尾（与生产 get_pop_rank 同款），勿裸 pb_flat 全 body。订阅式 cmd（响应只有 ASCII 前缀 ack）需**保持连接长时收推送**，盘后/非交易时段可能无推送（如 3001）。
+4. **数据机制判定**：区分拉取式/订阅推送式/瞬态（⚠️ 复盘人气榜曾被误判为"收盘瞬态推送、需收盘窗口捕获循环"，实为拉取式——参数盲区+错时对比双重误导，见人气榜条目）。对照 App 数值**持续监测**（盘前/盘中/盘后/次日各拉一次），数值会衰减/变化的序列须判定服务端算法。缺名/缺字段先查 App 本地 KPL_CACHE 库（STOCK 表=全市场名称，DYNAMIC_QUOTA_BEAN=动态列配置）与名称持久缓存合并层（kpl_names_cache.json）。
+5. **插件落地 + 三重验证**：
+   - 工具路径速查：adb=`C:\Users\mark\AppData\Local\Android\Sdk\platform-tools\adb.exe`（Git Bash 下写 `/c/Users/mark/...`，命令含 `/sdcard` 等路径时必须 `export MSYS_NO_PATHCONV=1`，本地路径又要保留 Windows 形式）；模拟器启动=`emulator -avd kpl_analysis -no-snapshot -no-boot-anim -gpu auto [-writable-system]`（writable-system 用于装系统 CA；装 CA 流程=root→disable-verity→reboot→remount→push `~/.mitmproxy/mitmproxy-ca-cert.pem` 到 `/system/etc/security/cacerts/c8750f0d.0`→chmod 644；多次强杀 qemu 会损坏镜像致 boot 挂起，须耐心等 fsck 或普通模式启动）；mitmdump 启动=`python -c "from mitmproxy.tools.main import mitmdump; mitmdump()"` + sys.argv 法传参（`-p 8888 --set block_global=false --ignore-hosts '^\d+\.\d+\.\d+\.\d+$'` = IP 直连的 socket 流量透传、域名 HTTP 解密）；guest 代理指向宿主用 `10.0.2.2:8888`；frida 勿用（反调试+版本坑多）
+   - 插件落地 + 三重验证：后端（kpl_socket 业务封装 → kpl.py 合并名称缓存+TTL 缓存 → main.py 端点）→ 前端（独立页 KplXxxPage + 首页模块 + go({page}) 路由 + CSS 唯一前缀显式白底）→ `node --check` + `node test_apply.js` + 热改部署 + /api/system/restart + 接口实测 + **与 App 同时刻逐项核对**。UI 复刻以实拍截图为准（我们早期版本与 App 行为有差异时，用户会指出，须回到第 1 步重新实拍）。
+
+### ⭐ 人气榜复刻全案例复盘（2026-09-24~27 四天全记录，方法论模板——后续复刻/排查任何功能先通读此节）
+
+数据面最终形态：cmd 3008 六视图全部与 App 逐项一致（2026-09-27 用户确认"终于解决了人气榜所有问题"）。详细字段/type 语义见上方"人气榜"条目，此处只沉淀**方法与教训**。
+
+**一、复刻流程实录（SOP 五步的真实执行版本）**
+1. UI 探索：adb input 逐层导航（首页模块→更多→下钻页→双 tab×三排序逐个点），每步 screencap 亲眼读图。坑：①元素坐标用 `uiautomator dump /sdcard/ud.xml` 查 bounds（"更多"按钮凭目测 tap 落空过）；②**横幅/弹窗会挤压布局使固定坐标失效**——盘中榜切出来"停止更新"横幅把排序胶囊从 y=421 挤到 y=558，按旧坐标点全是空点，切视图前必须重新截图确认布局。
+2. 接口定位（胜负手=字节码 dump）：dex_strings 搜"复盘人气榜"→ 定位 `StockPopularityListFragment`/`IntradayPopularityListFragment`/`IntradayPopularityListPresenter` 三个类 → `dump_class.py` 逐个 dump → 容器 Fragment：Bundle type 1/2=tab（两 tab **共用同一子 Fragment 类**——UI 两个页签，协议上是同一 cmd 的不同 type 编码）；子 Fragment `Jg()/Kg()`：tab→请求编码 L（盘中 1/2/16、复盘 13/14/17）；Presenter `j()`：`StockPopRankReq{(L), (order), startIndex, count}`，初始 (L,2)、点胶囊 `N(L,1)`，实测 order 1/2 等价。**教训：请求参数的真实枚举必须从字节码读，猜出来的范围必有盲区**。
+3. 协议实测：kpl_socket 直发 3008 逐 type 验证，App 截屏当锚点；UI 细节同步核对（排名飙升视图名次方块=原排名、热度飙升=飙升后新位次——num 字段天然正确无需处理；热度飙升右列显示 hot_change+↑）。
+4. 数据机制判定：复盘榜=拉取式实时序列（盘后/节假日仍分钟级成组更新），f5 timestamp=最后刷新时刻。曾被误判"收盘瞬态推送"并造了捕获循环——**判定机制前先确认参数空间读全+同刻对比**（见坑 1/2）。
+5. 落地+三重验证：同刻对比要逐项核（数值/排名/涨跌幅/排名变化箭头/名次方块/提示条），六个视图各自对比，勿只验默认视图。
+
+**二、问题定位工具箱（症状→第一动作）**
+- 数据与 App 对不上 → **同刻对比**：同一时刻 `adb exec-out screencap` + `curl DSH接口`，逐行比数值。⚠️ 错时对比=头号陷阱：这序列分钟级在变，曾把"错时对不上"误判为"该序列不存在"。
+- 某参数怎么都对不上 → 先怀疑**编码空间没读全**（字节码再读一遍），其次才是机制假说。每提出一个假说先找反例（本案"瞬态推送"假说与"App 随时打开都有数据"矛盾，却无人质疑，拖了三天）。
+- 前端"加载失败/无数据" → **第一动作：看后端访问日志里实际收到的 URL 与状态码**。`type=undefined`+422=前端组装参数 bug；无请求=前端没发；请求 200 但 items 空=数据层问题。
+- 后端间歇性整体超时/冻结 → **`py-spy dump --pid <8765进程>`** 在冻结瞬间抓主线程栈，一次定位（本案主线程挂在 pytdx connect：async def 里裸调同步网络 IO）。装法 `pip install py-spy`。
+- 接口只在重启后正常、之后永远旧数据 → 查后台刷新链路（签名器 readline 无超时坑，见性能铁律条），"无日志的永久挂起"=同步 IO 卡死特征。
+- socket 拉取突然全部变慢 20-45s → 查同 device_id 并发互踢（模拟器里的开盘啦 App，见 SOP 第 5 条）。
+
+**三、坑清单（本轮全部实锤，按发现顺序）**
+1. **参数盲区**：type 联合编码只扫 1-10 → 误判复盘榜机制 → 白造捕获循环（已删）。教训已写进 SOP 第 3 条。
+2. **错时对比**：序列分钟级在变，所有"数值对不上"的结论必须同刻复核。
+3. **device_id 互踢**：模拟器 App 与后端同 device_id 持续互踢 → 拉取 20-45s → 前端"无数据"。插件已改自有自动生成 ID（见凭据与设备条）；联调完 `adb shell am force-stop com.aiyu.kaipanla`。
+4. **签名器 readline 无超时**：Java 子进程卡死 → connect 永久挂起且持锁 → 全部拉取饿死、零日志（详见性能铁律条）。通用教训：**子进程行协议必须带读超时+写单飞锁**。
+5. **事件循环阻塞**（py-spy 实锤，详见经验 #25）：alert_engine/broadcaster 在 async 里裸调同步 pytdx → 断连时每波冻结 10-50s → 前端批量"加载失败"。三处全改 to_thread/短路。
+6. **磁盘高频写盘触发杀软扫描**：SWR 缓存每 30-60s 落盘 132KB → 每 60s 一波进程挂起。改 5 分钟防抖+tmp+rename 原子写。教训：**高频数据落盘必须防抖**，本机杀软对写入敏感（同经验 #24）。
+7. **React 对象 state 引用失配**：组件每次渲染重建常量数组，useState 存对象 + indexOf 按引用查 → 切换后 `types[-1]=undefined` → 请求 `type=undefined` 422。**规则：交互型 state 只存 id 字符串，派生对象 find/findIndex 按值查**。此坑"进页正常、一切换就坏"，极难直觉定位，靠日志定案。
+8. **uvicorn 事件循环停顿的连带**：前端 fetch 无超时会挂满；已在前端加 3 次重试+递增退避兜底。
+
+**四、性能模式（复刻高频实时数据页照抄）**
+后端：30s 新鲜缓存 → SWR 陈旧兜底（内存+磁盘双层，stale=true 标记）秒回 + 后台刷新线程（_pop_refreshing 去重）→ 启动预热全部视图（冷 socket 首连要扫 6 台服务器 ~40s，被预热+磁盘缓存完全掩盖）。前端：进入页即拉、失败自动重试、服务端序直出勿本地重排。效果：任意视图任意时刻 100-200ms 且有数据。
+
+### 二期未完成
+- 我的订阅（App"我的订阅"页）：走用户真实订阅接口，勿用 kpl_focus 硬编码
+- App 反调试实证（2026-09-23）：守卫子进程 ptrace 主进程+主进程 waitpid 守卫 → 杀守卫后主进程毫秒级自杀，frida attach 竞速窗口 <1s 基本不可行；frida 会话保持期间 App 存活，**一旦 detach 秒死**；spawn 模式启动期即被检出。**探索 App 的正确姿势 = 系统级手段**：adb input 模拟人操作 + 截屏/UI dump 对比（本题材库破案即靠此）+ mitmproxy(HTTP) / tcpdump(SNI) / DEX 静态分析，勿再恋战 frida
+- kanpan_spec 目录：抓包(flows*.jsonl)、cmd_table.md、proto_fields.txt、工具(tools/)
+- **⭐ 题材详情个股行情数据通道（2026-09-23）**：数值列 = socket 2501 板块股票池（App 同款），quotas(f100 repeated string) 锚定映射：q0=板块标签文本、q1=现价、q2=涨跌%、q3=成交额、q4=换手率（q16≈涨速、q17≈振幅待验证）。plateId 来自 BaceFaceList(Index/GetInfo，**必须带 View=2,3,4,5..** 否则空) 名字映射+双向包含模糊匹配，覆盖窄（当日精选板块），未命中题材数值列显示 --。2501 响应 f11=total 在 items 前、count 上限 500、**start>0 分页被服务端断连**（市值序 quotaType=1 单页 500 覆盖约 83/159，含全部活跃股）
+- **3001 GroupStockQuotas 是订阅式**（proto 实测字段：quotaType1/sortType2/start3/count4/addPrices5/stockIds10(repeated string)）：请求后只回 ASCII 前缀确认帧，全量数据靠服务端推送——**盘中**订阅推全量快照（r3001.bin 9.7KB），**盘后无推送**（不可用）；带额外字段会回 cmd110"连接错误：1002"
+- **_wait_cmd 分帧拼接（关键修复）**：大响应（2501 23KB/3009 13KB）流式多帧到达，旧逻辑收到首帧即返回导致数据截断；现改为"首帧命中后再收 0.8s 静默窗口，同 cmd 帧按序拼接"。get_sector_pool 剥前缀改为 f22 密集起点扫描（旧 marker-2 切法在拼接体上失效）
+- **⭐ App 数据缓存机制（2026-09-23 从模拟器 /data/data/com.aiyu.kaipanla/databases/ 实证）**：App 用 **KPL_CACHE 库**做本地合并层——`STOCK` 表 13824 行=全市场代码→名称库（socket 响应只带 id 时从表查名，TYPE 列区分市场）；`DYNAMIC_QUOTA_BEAN` 表=服务端下发的动态列配置（FUNCTION 区分页面，0x7FFFFFFF=通用 21 列：涨幅/价格/主力净额/涨速/成交额/总市值/流通市值/板块/换手率/量比…含 CLICKABLE/SERVER_TYPE/COLOR_STYLE，UI 按 ARRAY_POSITION 渲染——**列不是硬编码的**）。已实测当前 3009/2501/InfoGet 响应零缺名（"硅"为单字题材名非缺失）；缺名场景=服务端对已同步设备下发增量响应时省略字段。
+- **⭐ 插件名称持久缓存合并层（复刻上述机制）**：kpl.py KplClient 增加 `_remember_name/_flush_names` + 数据目录 `kpl_names_cache.json`（themes/stocks 两表）。三处接入：3009 题材名、InfoGet StockList/详情股票名、2501 池股票名——新名登记防抖落盘、缺名用缓存补。按需积累（每个拉过的题材/股票都进缓存），与 App KPL_CACHE 等效
+- **⭐ 人气榜（2026-09-24 复刻并按用户实测反馈修正，cmd 3008 AppGlobal.SubStockPopRank）**：请求 `StockPopRankReq{type1,order2,startIndex3,count4}`；响应 `StockPopRankResp{...items10(f10), fiveMinuteItems11(f11), f5=timestamp(uint64最后更新秒), f6=day(string 排名基准日)...}`，Item 字段=stockId1/stockName2/ratio3(float涨幅)/rankChange4(uint64,>2^63 为负下溢)/num5(当前排名)/isPop6/isContinuous7/ztReason8/lbStatus9(连板状态)/desc10/fullText11/tag12/tagList13{value1,color2}/hotChange14/hotVal15(人气值)/tagListV2_16。早期插件曾用 type=3 当主榜（App 真实编码里没有 3，已弃）。**App 下钻页实拍（2026-09-24 17:0x）**：页面=「盘中人气榜(默认)/复盘人气榜」双 tab + 「热度排名/排名飙升/热度飙升」三排序胶囊（红框选中）；行卡片=名次方块(1红2橙3黄)+名称+代码+涨幅大字+🔥人气值 / 第二行=排名变化↑↓+橙色chip(ztReason/lbStatus)+蓝色描边chip(tagList) / 第三行(可选)=desc 消息折叠(点击展开)；底部提示条="排名上升 XX ｜ 5分钟人气上升 N 位"(fiveMinuteItems)。**热度飙升=服务端按 hot_change 降序**（09-24 实测 新华传媒16524↑>新华文轩14324↑>大亚圣象13948↑）。盘中榜非交易时段提示"当前时段停止更新，最后更新时间为 xxx"（timestamp）。**⭐⭐ type 语义彻底破解（2026-09-26 字节码实锤+同刻实测，推翻 09-25"复盘榜未破解"结论）**：盘中/复盘共用同一 Fragment——容器 StockPopularityListFragment 传 Bundle type 1=盘中 tab / 2=复盘 tab（复盘 tab 仅非交易时段且 jm1.n().l(32) 开关为真时添加），两 tab 都实例化 IntradayPopularityListFragment；Fragment 把 Bundle type 映射为请求参数 L：**盘中→1/2/16、复盘→13/14/17**（对应 热度排名/排名飙升/热度飙升 三胶囊）；Presenter 构造 (L, order)——初始 (L,2)、点胶囊后 N(L,1)，实测 order 1/2 返回内容一致，插件固定用 1。**type<=3 响应才带 fiveMinuteItems**（复盘榜无急升条的根因）。**复盘榜 13/14/17 = 服务端实时序列**：盘后/节假日仍成组更新（分钟级，f5 timestamp=最后成组刷新时刻），短连接 RPC 直拉即与 App 完全一致——2026-09-26 22:41 同刻对比 13/14/17 三视图数值+排名+排名变化箭头逐项全同。**旧结论证伪教训（勿重蹈）**："复盘榜=收盘结算瞬态推送、错过后拿不到、需收盘窗口捕获循环"是错的——真因：①当年扫参数只试 type 1-10×order 0-6，13-17 是盲区；②"衰减序列不存在"叠加了错时对比（违反 SOP 第1条，序列分钟级在变）。收盘捕获循环/kpl_pop_replay.json/captured 兜底/前端 captured 提示条已全部删除。App 首页人气榜模块与下钻页同源同序列（首页快照可能滞后——App 首页不即时刷新，下钻页/重进即最新）。插件实现：/api/kpl/poprank type 透传（盘中 1/2/16、复盘 13/14/17，30s 缓存）；KplPopRankPage 双 tab+三排序胶囊=切换请求 type、服务端序直出勿本地重排；热度飙升视图右列显示 hot_change+↑（App 同款）；首页 home feed poprank 交易时段 type=1 / 其余 type=13（急升条仅盘中 type<=3 有）；名称入 kpl_names_cache。**09-26 晚六视图与 App 全部逐项核验一致**（盘中·排名飙升=type2：粤传媒原排名39↑482/吉鑫47↑364/雷科18↑267；盘中·热度飙升=type16：内蒙新华hotchg19918↑/新华传媒18638↑，名次方块=飙升后新位次；排名飙升视图名次方块=原排名，热度飙升视图名次方块=新位次）。**前端交互（App 同款）**：下钻页默认 tab 按交易时段（盘中→盘中榜、非交易→复盘榜·热度排名），首页徽标同样动态。**性能铁律（2026-09-26/27 实战）**：socket 会话被同 device_id 连接互踢/重连时单次拉取 20-45s，前端表现即"无数据"——已加 SWR 陈旧缓存（30s 新鲜窗+陈旧兜底秒回+后台刷新线程，**另落盘 `kpl_pop_cache.json` 后端重启不丢**，7 天有效期）+ main.py 启动预热六视图（13/1/14/17/2/16 顺序拉取）。**冷连接成本**：新进程 connect 按序扫 6 台服务器（每台 dial 8s+挑战 6s），只有部分端口（8080）发挑战，首连固定 ~40s，`_last_good_server` 缓存后走快路。**⭐ 签名器致命坑（2026-09-27 修复）**：`_WarmSigner.sign()` 的 `stdout.readline()` 原本**无超时**（传参 timeout_s 未被使用）——Java 子进程偶发卡死时 connect 永久挂起且持有 socket 锁，全部拉取饿死、零日志（后端"永远只有 stale 数据"的根因）；已改为读线程+queue 超时（超时 kill 暖进程回退单次调用），并加 `_sign_lock` 单飞（行协议非线程安全，并发会串包）。排查"人气榜只有 stale 不更新"先看日志有无"已鉴权连接"。响应解析起点=regex 定位 `3008-0/{type}:{order}` 前缀尾
+- **⭐ 严重异动提醒（2026-09-24 复刻，App 同源 `StockBidYiDong/GetPianLiZhi_Index`@apphwshhq）**：涨幅偏离值监控列表——距触发交易所"严重异动"的进度。List 项（数组）：[0]code [1]name [2]口径(1盘中/0收盘，同股双条取盘中) [3]规则(如"连续10个交易日内涨幅偏离值累计达到 100%") [4]当日涨幅 [5]已交易天数 [6]累计偏离值% [7]触发提示("涨幅达到5.25%将触发严重异动") [8]触发所需涨幅 [11]现价 [12]状态。App 首页模块 UI（2026-09-24 实拍对齐）=标题+日期徽标(09-24)+更多›；4 列表：股票名称(代码+板块chip) | 涨幅%+现价 | 触发异动涨幅%(橙)+触发价 | 当日触发异动偏离值空间%+规则简称；派生字段：触发价=昨收×(1+触发涨幅)、偏离空间=触发涨幅-当日涨幅、规则简称="10日100%"式。前端首页模块（人气榜下方）按此 4 列表格复刻（kpl-yd2 显式白底）；/api/kpl/yidong 端点（60s缓存）；home_feed.yidong 带 8 条+yidong_day。GetBidYiDong(竞价异动列表)同控制器可用（盘中数据）
+- **⭐ 最强风口页（2026-09-24 复刻，App"我的版面"打板页·风向标同源）**：数据=HTTP `ZhiShuRanking/QiangDu_Article`（无参数，**盘中才有 List**，项为数组[?,名称,强度,涨幅,板块]）；盘后回退当日快照 `kpl_qd_snapshot.json`（复刻 App 盘后仍显示当日数据的行为）。页面=情绪指标条(涨停板/封板率/跌停股 今日/昨日，来自 get_sentiment_history) + 名称/强度/涨幅/板块 列表；/api/kpl/qiangdu 端点（30s缓存）；首页"最强风口"模块加"更多›"入口。**注意**：App 风向标 socket 2103 DaBanStockList 盘后同样无数据（订阅式）；proto=pidType1/orderType2/sortType3/index4/count5+市场开关6-10
+- 题材详情页深色主题黑字黑底踩坑（2026-09-24）：kpl-tikad2 白底卡片设计配硬编码 #111 深色文字，容器背景透明继承深色主题 → 名称隐身。修复=整个详情内容区显式 background:#fff 卡片化（App 本就白底），涨跌/边框/hover 全部显式色。**经验：复刻 App 白底组件时容器必须显式白底，禁用主题变量兜底**（经验 #7 的反向变体）
+- 题材详情 UI v2（kpl-tikad2-* 前缀）：小表格=红色边框表格（红头条/左列一级分类/二级分类+股票流式/涨停股红色高亮 ZT map/免责声明）；描述区 2 行截断+"查看全文▼"弹窗（kpl-explain 模式渲染 Introduction HTML，反编译证实 App 同款 ThemeDescDialogFragment(Content)）；个股行情=统计条(3010 或前端现算)+"隐藏简介"开关+右侧数值列(价格/涨幅/人气值/成交额/换手率)点击排序（默认人气值降序）+左块 sticky 固定/整体横滑+涨停行红色
+- frida 17 的坑：`script.on_message = fn` 无效必须 `script.on("message", fn)`；Java bridge 需 frida≤16（设备端 fs16=16.7.19）；Module.enumerateExports 静态方法已删，用模块实例 .enumerateExports()；Java TLS 走 libjavacrypto.so 静态 BoringSSL，hook libssl.so 的 SSL_write 抓不到 conscrypt 流量

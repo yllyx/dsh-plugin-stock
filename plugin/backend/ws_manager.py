@@ -101,12 +101,18 @@ class QuoteBroadcaster:
                     await asyncio.sleep(interval)
                     continue
 
+                if not data_source.connected:
+                    # pytdx 断连时 get_security_quotes 会触发串行服务器扫描（可达几十秒），
+                    # 绝不能在事件循环上跑——曾把整个后端冻住、前端全部请求"加载失败"
+                    await asyncio.sleep(interval)
+                    continue
+
                 market_codes = []
                 for code in all_codes:
                     market, sec_code = normalize_stock_code(code)
                     market_codes.append((market, sec_code))
 
-                quotes = data_source.get_security_quotes(market_codes)
+                quotes = await asyncio.to_thread(data_source.get_security_quotes, market_codes)
                 if quotes:
                     await self.ws.broadcast({
                         "type": "quotes",

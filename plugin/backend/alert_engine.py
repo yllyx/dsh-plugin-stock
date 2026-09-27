@@ -176,7 +176,9 @@ class AlertEngine:
 
         codes = list(self.holdings.keys())
         market_codes = [normalize_stock_code(c) for c in codes]
-        quotes = data_source.get_security_quotes(market_codes)
+        # ⚠️ 必须 to_thread：断连时 pytdx 会串行扫描全部服务器（10-50s），
+        # 在事件循环上跑会冻结整个后端（py-spy 实锤，2026-09-27）
+        quotes = await asyncio.to_thread(data_source.get_security_quotes, market_codes)
         if not quotes:
             return []
 
@@ -316,7 +318,7 @@ class AlertEngine:
         if not market_codes:
             return []
 
-        quotes = data_source.get_security_quotes(market_codes)
+        quotes = await asyncio.to_thread(data_source.get_security_quotes, market_codes)
         for q in quotes:
             code = q["code"]
             for alert in self.alerts:

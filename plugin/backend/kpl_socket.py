@@ -14,6 +14,8 @@
 """
 import json
 import os
+import queue
+import re
 import subprocess
 import socket
 import ssl
@@ -47,14 +49,15 @@ def build_frame(cmd: int, body: bytes = b"", kind: int = 1, subtype: int = 0,
 
 
 def try_parse_frame(data: bytes) -> Tuple[Optional[Dict[str, Any]], int]:
-    if len(data) < 7:
+    if len(data) < 12:
         return None, 0
     b0 = data[0]
     kind = b0 >> 4
     if kind < 1 or kind > 6:
         return None, 0
     total = struct.unpack(">I", data[1:5])[0]
-    if total < 5 or total > 32 * 1024 * 1024 or len(data) < total:
+    # 帧实际长度 = 5(kind1+total4) + total(inner)
+    if total < 5 or total > 32 * 1024 * 1024 or len(data) < 5 + total:
         return None, 0
     off = 5
     remaining = total - 5
@@ -67,34 +70,51 @@ def try_parse_frame(data: bytes) -> Tuple[Optional[Dict[str, Any]], int]:
     off += 2
     remaining -= 2
     flags = data[off]
-    off += 2 + 1  # flags + extCount(跳过TLV解析，业务用不到)
-    remaining -= 3
-    ext_count = struct.unpack(">H", data[off - 2:off])[0]
-    for _ in range(ext_count):
-        if remaining < 1:
-            return None, 0
-        key = data[off]
+    off += 1
+    remaining -= 1
+    # ⚠ 帧头布局字节级对账结论（2026-09-23，3009+260 双帧实测）：
+    #   kind2(挑战帧):   [kind1][total4][cmd2][rsv3]  body@10 —— body 首字节
+    #     `08` = pb field1 varint serverTime(秒级) ✓
+    #   kind4(数据帧):   [kind1][total4][seq2][cmd2][flags1][ext1]  body@11
+    #     —— 3009 响应 body = `1b 03 00 18` mini头 + "global|..." ASCII 前缀
+    #     (00 18 = 前缀长 24)，随后 protobuf。旧代码一律按"flags 后 2 字节
+    #     extCount"读：3009 帧把 extCount(00)+body首字节(1b) 拼成 0x001b=27，
+    #     再按"每 TLV 跳 4 字节"错跳 135B，把 body 最前面的置顶题材
+    #     (AI硬件/地方国资)整段吞掉 → 题材库恒比 App 少两条
+    if kind == 2:
+        off += 2
+        remaining -= 2
+    else:
+        ext_count = data[off]
         off += 1
         remaining -= 1
-        if key == 2:
-            slen = struct.unpack(">H", data[off:off + 2])[0]
-            off += 2
-            remaining -= 2 + slen
-            off += slen
-        elif key == 3:
-            off += 2
-            remaining -= 2
-        elif key == 4:
-            off += 8
-            remaining -= 8
-        else:
-            off += 4
-            remaining -= 4
-        if remaining < 0:
+        if ext_count > 8:  # 正常帧无扩展或极少；异常值视为布局漂移，拒绝解析
             return None, 0
+        for _ in range(ext_count):
+            if remaining < 1:
+                return None, 0
+            key = data[off]
+            off += 1
+            remaining -= 1
+            if key == 2:
+                slen = struct.unpack(">H", data[off:off + 2])[0]
+                off += 2
+                remaining -= 2 + slen
+                off += slen
+            elif key == 3:
+                off += 2
+                remaining -= 2
+            elif key == 4:
+                off += 8
+                remaining -= 8
+            else:
+                off += 4
+                remaining -= 4
+            if remaining < 0:
+                return None, 0
     f = {"kind": kind, "seq": seq, "cmd": cmd, "flags": flags,
          "body": data[off:off + remaining]}
-    return f, total
+    return f, 5 + total
 
 
 # ============= protobuf helpers =============
@@ -236,10 +256,19 @@ def _find_java() -> Optional[str]:
     return p
 
 
+_sign_lock = threading.Lock()  # 暖签名器 stdin/stdout 行协议非线程安全，单飞串行
+
+
 def sign_local(challenge: str, device_id: str, conn_type: str, server_time: str,
                timeout_s: float = 120) -> Optional[str]:
     """白盒签名。优先常驻暖进程（JVM 只启一次, 后续签名 ~50ms）；
-    暖进程失败回退单次调用。"""
+    暖进程失败回退单次调用。多线程并发调用必须串行（行协议会串包）。"""
+    with _sign_lock:
+        return _sign_local_impl(challenge, device_id, conn_type, server_time, timeout_s)
+
+
+def _sign_local_impl(challenge: str, device_id: str, conn_type: str, server_time: str,
+                     timeout_s: float) -> Optional[str]:
     global _warm_signer
     java = _find_java()
     if not java:
@@ -313,9 +342,17 @@ class _WarmSigner:
             pass
 
     def sign(self, req_line: str, timeout_s: float = 60) -> Optional[str]:
+        # readline 无超时且 Java 子进程偶发卡死会永久阻塞（持锁饿死全部 socket 拉取），
+        # 必须用读线程+队列实现真超时（2026-09-27 后端"永远拉不到新数据"的根因）
         self.proc.stdin.write((req_line + "\n").encode())
         self.proc.stdin.flush()
-        line = self.proc.stdout.readline().decode("utf-8", "replace").strip()
+        q: "queue.Queue[str]" = queue.Queue()
+        threading.Thread(target=lambda: q.put(self.proc.stdout.readline()), daemon=True).start()
+        try:
+            line = q.get(timeout=max(5.0, timeout_s)).decode("utf-8", "replace").strip()
+        except queue.Empty:
+            self.kill()
+            raise RuntimeError(f"signer timeout after {timeout_s}s")
         if line.startswith('{"sig"'):
             d = json.loads(line)
             sig = d.get("sig")
@@ -483,13 +520,23 @@ class KplSocketSession:
     def _wait_cmd(self, cmd: int, timeout_s: float, seq: Optional[int] = None) -> Optional[bytes]:
         buf = b""
         end = time.time() + timeout_s
+        # 大响应（2501/3009 可达 20KB+）会拆成多帧流式下发：收到首个匹配帧后
+        # 再收 tail_s 静默窗口，把同 cmd 的后续帧 body 顺序拼接（2026-09-23
+        # 2501 实测 23KB 分 4 帧到达，旧逻辑只回第一帧导致行情列大量缺失）
+        tail_s = 0.8
+        matched = bytearray()
+        tail_end = None
         while time.time() < end:
+            if tail_end is not None and time.time() >= tail_end:
+                break
             try:
                 d = self.sock.recv(65536)
                 if not d:
                     break
                 buf += d
             except socket.timeout:
+                if tail_end is not None:
+                    break
                 continue
             except Exception:
                 self._alive = False
@@ -507,8 +554,11 @@ class KplSocketSession:
                     if cmd != 110:
                         return None
                 if f["cmd"] == cmd and (seq is None or f.get("seq") == seq):
-                    return f["body"]
+                    matched.extend(f["body"])
+                    tail_end = time.time() + tail_s
             buf = buf[pos:]
+        if matched:
+            return bytes(matched)
         return None
 
     def _heartbeat(self):
@@ -573,21 +623,28 @@ class KplSocketAPI:
 
     # ---- 板块详情：股票池（龙一排序+全字段行情） ----
 
-    def get_sector_pool(self, plate_id: str, quota_type: int = 2, count: int = 50) -> Optional[Dict[str, Any]]:
+    def get_sector_pool(self, plate_id: str, quota_type: int = 2, count: int = 50,
+                        start: int = 0) -> Optional[Dict[str, Any]]:
         """cmd 2501: 板块股票池。quotaType=2 涨幅降序（即App默认龙一排序）"""
-        body = (pb_str(1, plate_id) + pb_uint(2, quota_type) + pb_uint(3, 0)
+        body = (pb_str(1, plate_id) + pb_uint(2, quota_type) + pb_uint(3, start)
                 + pb_uint(4, 0) + pb_uint(5, 0) + pb_uint(6, 0) + pb_uint(7, count)
                 + pb_uint(8, 0) + pb_uint(9, 0) + pb_uint(10, 0) + pb_bool(11, False))
         resp = self._session_rpc(2501, body)
         if resp is None:
             return None
-        # 剥主题头：定位 plateId 字符串后开始 protobuf 解析
-        marker = plate_id.encode()
-        j = resp.find(marker)
-        if j >= 0:
-            resp = resp[max(0, j - 2):]
-        out: Dict[str, Any] = {"items": []}
-        for fno, wt, v in pb_flat(resp):
+        # 剥 ASCII 前缀：mini头+`hqList|.../801401:2:0:...`后才是 protobuf，
+        # 扫描找 items(f22) 密集区起点（多帧拼接后前缀长度不定）
+        out: Dict[str, Any] = {"items": [], "total": None}
+        start = 0
+        for off in range(0, min(120, len(resp))):
+            try:
+                ff = pb_flat(resp[off:])
+                if sum(1 for f, w, v in ff if f == 22 and isinstance(v, bytes)) >= 3:
+                    start = off
+                    break
+            except Exception:
+                continue
+        for fno, wt, v in pb_flat(resp[start:]):
             if fno == 11:
                 out["total"] = v
             elif fno == 22:
@@ -626,6 +683,74 @@ class KplSocketAPI:
                         row[f2] = v2
                 items.append(row)
         return items
+
+    # ---- 人气榜 ----
+
+    @staticmethod
+    def _pop_item(v: bytes) -> Dict[str, Any]:
+        """StockPopRankResp.Item: stockId1 name2 ratio3(float) rankChange4(uint64下溢负) num5
+        isPop6 isContinuous7 ztReason8 lbStatus9 desc10 fullText11 tag12 tagList13 hotChange14 hotVal15 tagListV2(16)"""
+        it: Dict[str, Any] = {"tags": []}
+        for f2, wt2, v2 in pb_flat(v):
+            if f2 == 1 and isinstance(v2, bytes):
+                it["code"] = v2.decode("utf8", "replace")
+            elif f2 == 2 and isinstance(v2, bytes):
+                it["name"] = v2.decode("utf8", "replace")
+            elif f2 == 3 and wt2 == 5:
+                it["pct"] = round(v2, 2)
+            elif f2 == 4 and wt2 == 0:
+                it["rank_change"] = v2 - (1 << 64) if v2 >= (1 << 63) else v2
+            elif f2 == 5 and wt2 == 0:
+                it["num"] = v2
+            elif f2 == 8 and isinstance(v2, bytes):
+                it["zt_reason"] = v2.decode("utf8", "replace")
+            elif f2 == 9 and isinstance(v2, bytes):
+                it["lb_status"] = v2.decode("utf8", "replace")
+            elif f2 == 10 and isinstance(v2, bytes):
+                it["desc"] = v2.decode("utf8", "replace")
+            elif f2 == 11 and isinstance(v2, bytes):
+                it["full_text"] = v2.decode("utf8", "replace")
+            elif f2 in (13, 16) and isinstance(v2, bytes):
+                try:
+                    tv = {}
+                    for f4, w4, v4 in pb_flat(v2):
+                        if f4 == 1 and isinstance(v4, bytes):
+                            tv["value"] = v4.decode("utf8", "replace")
+                        elif f4 == 2 and w4 == 0:
+                            tv["color"] = v4
+                    if tv.get("value") and f2 == 13:
+                        it["tags"].append(tv)
+                except Exception:
+                    pass
+            elif f2 == 14 and wt2 == 0:
+                it["hot_change"] = v2
+            elif f2 == 15 and wt2 == 0:
+                it["hot_val"] = v2
+        return it
+
+    def get_pop_rank(self, type_: int = 1, order: int = 1, start: int = 0,
+                     count: int = 50) -> Optional[Dict[str, Any]]:
+        """cmd 3008: 股票人气排行（App 同源）。type=1 复盘人气榜（默认，最近完整交易日收盘排名），
+        type=2 盘中人气榜（交易时段实时推送，盘后冻结）。order=服务端排序（三种排序由前端本地切换）。
+        返回 {items, five_minute_items, day, timestamp(最后更新时间, 秒)}。"""
+        body = pb_uint(1, type_) + pb_uint(2, order) + pb_uint(3, start) + pb_uint(4, count)
+        resp = self._session_rpc(3008, body, timeout_s=12)
+        if resp is None:
+            return None
+        out: Dict[str, Any] = {"items": [], "five_minute_items": [], "day": None, "timestamp": None}
+        # ASCII 前缀形如 "global|26:20020/3008-0/{type}:{order}"，其后即 protobuf（f1 type 回显 0x08 起）
+        m = re.search(rb"3008-0/\d+:\d+", resp)
+        start_off = m.end() if m else 0
+        for fno, wt, v in pb_flat(resp[start_off:]):
+            if fno == 10 and isinstance(v, bytes):
+                out["items"].append(self._pop_item(v))
+            elif fno == 11 and isinstance(v, bytes):
+                out["five_minute_items"].append(self._pop_item(v))
+            elif fno == 5 and wt == 0:
+                out["timestamp"] = v
+            elif fno == 6 and isinstance(v, bytes):
+                out["day"] = v.decode("utf8", "replace")
+        return out
 
     # ---- 题材库 ----
 

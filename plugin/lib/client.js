@@ -1324,7 +1324,7 @@ window.__ModuleLoader__.load({
             const [error, setError] = useState(null);
 
             const loadStatus = useCallback(async () => {
-                try { setStatus(await api("/api/system/status")); } catch (e) { setError(e.message); }
+                try { setStatus(await api("/api/system/status")); setError(null); } catch (e) { setError(e.message); }
             }, []);
             usePolling(loadStatus, 10000, []);
 
@@ -1345,7 +1345,6 @@ window.__ModuleLoader__.load({
                 } catch (e) { setError(e.message); }
             }, []);
             useEffect(() => { loadCfg(); }, []);
-
             const loadLogs = useCallback(async () => {
                 try {
                     const d = await api(`/api/system/logs?level=${logLevel}&limit=200`);
@@ -1417,6 +1416,19 @@ window.__ModuleLoader__.load({
                 React.createElement(TabHead, { title: "⚙️ 系统管理", onRefresh: loadStatus, refreshing: false }),
                 React.createElement(ErrorBox, { error }),
                 restarting && React.createElement("div", { className: "dsh-stock-error-box" }, "⟳ 后端重启中，约3-5秒后自动恢复…"),
+
+                // 后端不可达时的降级卡：设置项虽然拉不到，但要告诉用户会自动恢复，
+                // 且不再让"重启后端"按钮跟着 status 卡片一起消失（死循环）
+                !status && React.createElement("div", { className: "dsh-stock-card" },
+                    React.createElement("div", { className: "dsh-stock-card-title" }, "🚑 后端未运行"),
+                    React.createElement("div", { className: "dsh-stock-detail" },
+                        "后端进程当前不可达（可能冷开机首次启动超时被杀，或刚崩溃）。",
+                        React.createElement("br"),
+                        "插件宿主每 20 秒自动探测并重新拉起，通常 1 分钟内自愈，无需重启 DSH；",
+                        React.createElement("br"),
+                        "恢复后本页设置会自动出现。若超过 3 分钟仍未恢复，请重启 DSH 或手动在终端执行：",
+                        React.createElement("br"),
+                        React.createElement("code", null, "python -m uvicorn main:app --port 8765（cwd=插件 backend 目录）"))),
 
                 status && React.createElement("div", { className: "dsh-stock-card" },
                     React.createElement("div", { className: "dsh-stock-card-title" }, "📊 运行状态"),
@@ -1769,13 +1781,21 @@ window.__ModuleLoader__.load({
 
         /* ---- 首页 ---- */
 
+        // 首页数据 SWR 缓存（模块级）：切回开盘啦 Tab 秒显旧数据，后台静默刷新
+        const _kplHomeCache = { ov: null, home: null };
+
         function KplHomePage({ go, status, reloadStatus }) {
-            const [ov, setOv] = useState(null);
-            const [home, setHome] = useState(null);
+            const [ov, setOv] = useState(() => _kplHomeCache.ov);
+            const [home, setHome] = useState(() => _kplHomeCache.home);
             const [explainOpen, setExplainOpen] = useState(false);
             const load = useCallback(async () => {
-                try { setOv(await api("/api/kpl/overview")); } catch { /* */ }
-                try { setHome(await api("/api/kpl/home")); } catch { /* */ }
+                // 并行拉取（原先串行 await 拖慢首屏）
+                const [o, h] = await Promise.all([
+                    api("/api/kpl/overview").catch(() => null),
+                    api("/api/kpl/home").catch(() => null),
+                ]);
+                if (o) { _kplHomeCache.ov = o; setOv(o); }
+                if (h) { _kplHomeCache.home = h; setHome(h); }
             }, []);
             usePolling(load, 30000, []);
             const statusLoaded = !!status;
@@ -1857,8 +1877,9 @@ window.__ModuleLoader__.load({
                 React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "最强风口"),
-                        React.createElement("span", { className: "date" },
-                            qdRows.length ? "盘中" : "收盘后暂无数据")),
+                        React.createElement("span", {
+                            className: "more", onClick: () => go({ page: "qiangdu" }),
+                        }, qdRows.length ? "更多 ›" : "进入 ›")),
                     qdRows.length > 0 && React.createElement("div", null, qdRows),
                     qdRows.length === 0 && React.createElement("div", { className: "kpl-empty" }, "盘中数据，收盘后清空")),
 
@@ -1896,16 +1917,94 @@ window.__ModuleLoader__.load({
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "题材库"),
                         React.createElement("span", { className: "more", onClick: () => go({ page: "tika" }) }, "更多 ›")),
-                    home.tika.map(t =>
+                    home.tika.map(t => React.createElement(React.Fragment, { key: t.id },
                         React.createElement("div", {
-                            key: t.id, className: "kpl-tika-row",
+                            className: "kpl-tika-row",
                             onClick: () => go({ page: "tikaDetail", id: t.id, name: t.name }),
                         },
                             React.createElement("span", { className: "rank hot-rank" }, "热"),
                             React.createElement("span", { className: "name" }, t.name),
-                            React.createElement("span", { className: "zt" }, (t.zt_num || 0) + "涨停"),
+                            (t.zt_num || 0) > 0 && React.createElement("span", { className: "zt" }, t.zt_num + "涨停"),
                             t.is_hot === 1 && React.createElement("span", { className: "kpl-hot-fire" }, "持续火爆"),
-                            React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct))))),
+                            React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct))),
+                        (t.concepts || []).length > 0 && React.createElement("div", { className: "kpl-tika2-child" },
+                            "└ " + (t.concepts[0]["2"] || "子题材"))))),
+
+                // ===== 人气榜（Socket 3008 实时, 前5名 + 急升提示 + 更多进人气榜页） =====
+                ((home && home.poprank) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
+                    React.createElement("div", { className: "kpl-sec-head" },
+                        React.createElement("span", { className: "t" }, "开盘啦人气榜",
+                            React.createElement("span", { className: "kpl-pop2-badge" },
+                                (() => {
+                                    const n = new Date();
+                                    const wk = n.getDay() >= 1 && n.getDay() <= 5;
+                                    const m = n.getHours() * 60 + n.getMinutes();
+                                    const trading = wk && ((m >= 555 && m <= 690) || (m >= 780 && m <= 900));
+                                    return trading ? "盘中" : "复盘";
+                                })())),
+                        React.createElement("span", { className: "more", onClick: () => go({ page: "poprank" }) }, "更多 ›")),
+                    ((home && home.poprank_hot) || []).length > 0 && React.createElement("div", { className: "kpl-pop2-hot5" },
+                        React.createElement("span", { className: "lab" }, "急升"),
+                        (home.poprank_hot || []).slice(0, 3).map((s, i) =>
+                            React.createElement("span", { key: s.code, className: "it" },
+                                s.name,
+                                React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct)),
+                                i < Math.min(home.poprank_hot.length, 3) - 1 && React.createElement("i", { className: "sep" }, "·")))),
+                    home.poprank.slice(0, 5).map((s, i) =>
+                        React.createElement("div", {
+                            key: s.code, className: "kpl-pop2-row",
+                            onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                        },
+                            React.createElement("span", { className: `rk ${i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : ""}` }, s.num || i + 1),
+                            React.createElement("div", { className: "main" },
+                                React.createElement("div", { className: "nm" },
+                                    s.name,
+                                    s.lb_status && React.createElement("i", { className: "lb" }, s.lb_status),
+                                    s.rank_change ? React.createElement("span", {
+                                        className: `kpl-pop2-rc ${s.rank_change > 0 ? "up" : "down"}`,
+                                    }, (s.rank_change > 0 ? "↑" : "↓") + Math.abs(s.rank_change)) : null),
+                                (s.zt_reason || (s.tags || []).length > 0) && React.createElement("div", { className: "cd" },
+                                    s.zt_reason && React.createElement("i", { className: "zr" }, s.zt_reason),
+                                    (s.tags || []).slice(0, 1).map(t => React.createElement("i", { key: t.value, className: "tg" }, t.value)))),
+                            React.createElement("div", { className: "vals" },
+                                React.createElement("div", { className: "hot" },
+                                    React.createElement("b", null, (s.hot_val || 0).toLocaleString()),
+                                    React.createElement("span", { className: "lbl" }, "人气值")),
+                                s.rank_change != null && s.rank_change !== 0 && React.createElement("span", {
+                                    className: `rc ${s.rank_change > 0 ? "up" : "down"}`,
+                                }, Math.abs(s.rank_change) + (s.rank_change > 0 ? "↑" : "↓")),
+                                React.createElement("b", { className: `pct ${rateCls(s.pct)}` }, fmtRate(s.pct)))))),
+
+                // ===== 严重异动提醒（偏离值监控，App 同款表格 UI） =====
+                ((home && home.yidong) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
+                    React.createElement("div", { className: "kpl-sec-head" },
+                        React.createElement("span", { className: "t" }, "严重异动提醒"),
+                        React.createElement("span", { className: "date" }, home.yidong_day || "")),
+                    React.createElement("div", { className: "kpl-yd2" },
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", { className: "c1" }, "股票名称"),
+                            React.createElement("span", { className: "c2" }, "涨幅"),
+                            React.createElement("span", { className: "c3" }, "触发异动涨幅/股价"),
+                            React.createElement("span", { className: "c4" }, "当日偏离空间")),
+                        home.yidong.slice(0, 5).map(s =>
+                            React.createElement("div", {
+                                key: s.code, className: "kpl-yd2-row",
+                                onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                            },
+                                React.createElement("div", { className: "c1" },
+                                    React.createElement("div", { className: "nm" }, s.name),
+                                    React.createElement("div", { className: "cd" },
+                                        s.code,
+                                        s.rule_short && React.createElement("i", null, s.rule_short))),
+                                React.createElement("div", { className: "c2" },
+                                    React.createElement("b", { className: rateCls(s.day_pct) }, fmtRate(s.day_pct)),
+                                    React.createElement("span", null, s.price)),
+                                React.createElement("div", { className: "c3" },
+                                    React.createElement("b", { className: "org" }, fmtRate(s.need)),
+                                    React.createElement("span", null, s.trigger_price)),
+                                React.createElement("div", { className: "c4" },
+                                    React.createElement("b", { className: Number(s.space) >= 0 ? "up" : "down" }, fmtRate(s.space)),
+                                    React.createElement("span", null, s.rule_short || "")))))),
 
                 // ===== 近期活跃板块 =====
                 ((home && home.active_plates) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
@@ -2150,19 +2249,26 @@ window.__ModuleLoader__.load({
             const renderRow = (t, i) => {
                 const hasKids = (t.concepts || []).length > 0;
                 const open = expanded[t.id];
+                // App 行结构：名次 | 名称+涨停chip | 右侧=持续火爆徽标/上涨家数↑/涨幅
+                const rightSlot = t.is_hot === 1
+                    ? React.createElement("span", { className: "kpl-hot-fire" }, "持续火爆")
+                    : sort === "hot" && (t.up_num || 0) > 0
+                        ? React.createElement("span", { className: "kpl-tika2-up up" }, t.up_num + "↑")
+                        : React.createElement("b", { className: rateCls(t.pct) }, fmtRate(t.pct));
                 return React.createElement(React.Fragment, { key: t.id },
                     React.createElement("div", { className: "kpl-tika2-row", onClick: () => go({ page: "tikaDetail", id: t.id, name: t.name }) },
                         React.createElement("span", { className: `kpl-tika2-rank ${rankCls(i)}` }, (i + 1) + "."),
                         React.createElement("span", { className: "kpl-tika2-name" },
                             t.name,
-                            t.is_hot === 1 && React.createElement("span", { className: "kpl-hot-fire", style: { marginLeft: "6px" } }, "持续火爆"),
+                            (t.zt_num || 0) > 0 && React.createElement("span", { className: "kpl-tika2-zt" }, t.zt_num + "个涨停"),
                             hasKids && React.createElement("span", {
                                 className: "kpl-tika2-caret",
                                 onClick: e => { e.stopPropagation(); setExpanded(prev => ({ ...prev, [t.id]: !prev[t.id] })); },
                             }, open ? "▾" : "▸")),
                         (t.rankDelta != null && t.rankDelta !== 0) && React.createElement("span", {
                             className: "kpl-tika2-delta " + (t.rankDelta > 0 ? "up" : "down"),
-                        }, Math.abs(t.rankDelta) + (t.rankDelta > 0 ? "↑" : "↓"))),
+                        }, Math.abs(t.rankDelta) + (t.rankDelta > 0 ? "↑" : "↓")),
+                        rightSlot),
                     hasKids && open && (t.concepts || []).map((c, ci) =>
                         React.createElement("div", { key: ci, className: "kpl-tika2-child" },
                             "└ " + (c["2"] || c.name || c["1"] || "子题材"))));
@@ -2202,6 +2308,10 @@ window.__ModuleLoader__.load({
             const [view, setView] = useState("table");
             const [d, setD] = useState(null);
             const [err, setErr] = useState(null);
+            const [introOpen, setIntroOpen] = useState(false);   // 查看全文弹窗（App ThemeDescDialog 同款）
+            const [hideBrief, setHideBrief] = useState(false);   // 个股行情"隐藏简介"开关
+            const [sortKey, setSortKey] = useState("hot");       // 默认人气值
+            const [sortDir, setSortDir] = useState("desc");      // 默认降序
             useEffect(() => {
                 let alive = true;
                 api(`/api/kpl/tika/${id}?name=${encodeURIComponent(name || "")}`).then(x => {
@@ -2219,6 +2329,34 @@ window.__ModuleLoader__.load({
             };
             const dateFmt = ts => ts ? new Date(ts * 1000).toLocaleDateString("zh-CN",
                 { year: "2-digit", month: "2-digit", day: "2-digit" }).replace(/\//g, "-") : "";
+            // 个股行情右侧数值列（App classes 顺序；涨速/2分钟成交额/市值暂无数据源不展示）
+            const cols = [
+                { key: "price", label: "价格", fmt: v => v || "--" },
+                { key: "pct", label: "涨幅", fmt: v => v != null && v !== "" ? fmtRate(v) : "--" },
+                { key: "hot", label: "人气值", fmt: v => v != null && v !== "" ? String(v) : "--" },
+                { key: "amount", label: "成交额", fmt: amountFmt },
+                { key: "turnover", label: "换手率", fmt: v => v ? v + "%" : "--" },
+            ];
+            const stocks = React.useMemo(() => {
+                const list = [...(d && d.stocks) || []];
+                const num = v => { const n = Number(v); return isFinite(n) ? n : -Infinity; };
+                list.sort((a, b) => sortDir === "desc" ? num(b[sortKey]) - num(a[sortKey]) : num(a[sortKey]) - num(b[sortKey]));
+                return list;
+            }, [d, sortKey, sortDir]);
+            const stat = (d && d.stat) || null;
+            const statNums = React.useMemo(() => {
+                if (stat && stat.stock_num != null) return stat;
+                const withPct = ((d && d.stocks) || []).filter(s => s.pct != null && s.pct !== "");
+                const up = withPct.filter(s => Number(s.pct) > 0).length;
+                const down = withPct.filter(s => Number(s.pct) < 0).length;
+                const avg = withPct.length ? withPct.reduce((a, s) => a + Number(s.pct), 0) / withPct.length : null;
+                return { stock_num: (d && d.stocks || []).length, up_num: up, down_num: down, avg_pct: avg };
+            }, [d, stat]);
+            const clickSort = key => {
+                if (sortKey === key) setSortDir(dir => dir === "desc" ? "asc" : "desc");
+                else { setSortKey(key); setSortDir("desc"); }
+            };
+            const ztCodes = (d && d.zt) || {};
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement(KplPageHeader, {
                     title: d ? (d.name || name) : (name || "题材"),
@@ -2235,47 +2373,206 @@ window.__ModuleLoader__.load({
                         }, label))),
                 err && React.createElement("div", { className: "kpl-empty" }, "⚠ " + err),
                 !d && !err && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
-                // ===== 简介 + 日期（App 小表格顶部同款） =====
-                d && (d.brief || d.update_time) && React.createElement("div", { className: "kpl-tikad-intro" },
-                    d.brief && React.createElement("div", { className: "kpl-tikad-brief" }, d.brief),
-                    (d.create_time || d.update_time) && React.createElement("div", { className: "kpl-tikad-dates" },
-                        d.create_time ? `25-${dateFmt(d.create_time).slice(3)}创建` : "",
-                        d.update_time ? `${dateFmt(d.update_time)}更新` : "")),
-                // ===== 小表格视图：分类矩阵（App 同款 Level1→Level2→股票名网格） =====
-                d && view === "table" && React.createElement("div", { className: "kpl-tikad-table" },
-                    (d.table || []).length > 0 ? d.table.map(lv1 =>
-                        React.createElement("div", { key: lv1.id, className: "kpl-tikad-l1" },
-                            React.createElement("div", { className: "kpl-tikad-l1name" }, lv1.name),
-                            (lv1.groups || []).map(g =>
-                                React.createElement("div", { key: g.id, className: "kpl-tikad-l2" },
-                                    React.createElement("div", { className: "kpl-tikad-l2name" }, g.name),
-                                    React.createElement("div", { className: "kpl-tikad-grid" },
-                                        (g.stocks || []).map(s =>
-                                            React.createElement("span", {
-                                                key: s.code,
-                                                className: "kpl-tikad-cell" + (s.is_zz === "2" ? " zz" : ""),
-                                                onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
-                                            }, s.name)))))))
+                // ===== 题材描述 + 查看全文 + 日期（App 小表格顶部同款） =====
+                d && (d.brief || d.introduction || d.update_time) && React.createElement("div", { className: "kpl-tikad2-desc" },
+                    React.createElement("div", { className: "kpl-tikad2-descrow" },
+                        React.createElement("div", { className: "txt" }, d.brief || ""),
+                        (d.introduction || d.brief) && React.createElement("span", {
+                            className: "more", onClick: () => setIntroOpen(true),
+                        }, "查看全文 ▼")),
+                    (d.create_time || d.update_time) && React.createElement("div", { className: "kpl-tikad2-dates" },
+                        React.createElement("span", null, d.create_time ? dateFmt(d.create_time) + "创建" : ""),
+                        React.createElement("span", null, d.update_time ? dateFmt(d.update_time) + "更新" : ""))),
+                // ===== 小表格视图：红色边框表格（App 同款 一级分类左列 + 二级分类/股票区） =====
+                d && view === "table" && React.createElement("div", { className: "kpl-tikad2-wrap" },
+                    (d.table || []).length > 0 ? React.createElement("div", { className: "kpl-tikad2-table" },
+                        React.createElement("div", { className: "head" },
+                            React.createElement("span", { className: "t" }, d.name || name || ""),
+                            React.createElement("span", { className: "logo" }, "开盘啦")),
+                        (d.table || []).map(lv1 =>
+                            React.createElement("div", { key: lv1.id, className: "row" },
+                                React.createElement("div", { className: "l1" }, lv1.name || "-"),
+                                React.createElement("div", { className: "r" },
+                                    (lv1.groups || []).map(g =>
+                                        React.createElement("div", { key: g.id, className: "grp" },
+                                            React.createElement("span", { className: "gname" }, g.name),
+                                            React.createElement("span", { className: "stocks" },
+                                                (g.stocks || []).map(s =>
+                                                    React.createElement("a", {
+                                                        key: s.code,
+                                                        className: "stk" + (s.is_zt || ztCodes[s.code] ? " zt" : ""),
+                                                        title: s.reason || undefined,
+                                                        onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                                                    }, s.name)))))))),
+                        React.createElement("div", { className: "disc" },
+                            "免责声明:本文涉及资讯、数据等内容来自网络公共信息，仅供参考，不构成投资建议。"))
                         : React.createElement("div", { className: "kpl-empty" }, "暂无小表格数据")),
-                // ===== 个股行情视图 =====
-                d && view === "stocks" && React.createElement("div", { className: "kpl-tikad-stocks" },
-                    (d.stocks || []).length > 0 && React.createElement("div", { className: "kpl-tikad-sthead" },
-                        `共 ${(d.stocks || []).length} 只`),
-                    (d.stocks || []).map(s =>
+                // ===== 个股行情视图：统计条 + 表头排序 + 左固定/右横滑列表 =====
+                d && view === "stocks" && React.createElement("div", { className: "kpl-tikad2-stocks" },
+                    React.createElement("div", { className: "kpl-tikad2-stat" },
+                        React.createElement("span", null, "股票数量：", React.createElement("b", null, statNums.stock_num != null ? statNums.stock_num : "-")),
+                        React.createElement("span", null, "上涨：", React.createElement("b", { className: "up" }, statNums.up_num != null ? statNums.up_num : "-")),
+                        React.createElement("span", null, "下跌：", React.createElement("b", { className: "down" }, statNums.down_num != null ? statNums.down_num : "-")),
+                        React.createElement("span", null, "平均涨幅：", React.createElement("b", { className: rateCls(statNums.avg_pct || 0) },
+                            statNums.avg_pct != null ? fmtRate(statNums.avg_pct) : "-"))),
+                    (stocks.length > 0 || true) && React.createElement("div", { className: "kpl-tikad2-scroll" },
+                        React.createElement("div", { className: "kpl-tikad2-thead" },
+                            React.createElement("div", { className: "left" },
+                                React.createElement("span", {
+                                    className: "hidesw" + (hideBrief ? " off" : ""),
+                                    onClick: () => setHideBrief(v => !v),
+                                }, "隐藏简介"),
+                                !hideBrief && React.createElement("span", { className: "hidesw-ic" }, "📋")),
+                            cols.map(c =>
+                                React.createElement("span", {
+                                    key: c.key,
+                                    className: "cell sortable" + (sortKey === c.key ? " on" : ""),
+                                    onClick: () => clickSort(c.key),
+                                }, c.label,
+                                    sortKey === c.key && React.createElement("i", null, sortDir === "desc" ? "▼" : "▲")))),
+                        stocks.map(s =>
+                            React.createElement("div", {
+                                key: s.code,
+                                className: "kpl-tikad2-srow" + (s.is_zt || ztCodes[s.code] ? " zt" : ""),
+                                onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                            },
+                                React.createElement("div", { className: "left" },
+                                    React.createElement("div", { className: "nm" },
+                                        s.name,
+                                        (s.is_zt || ztCodes[s.code]) && React.createElement("span", { className: "ztb" }, "涨停")),
+                                    React.createElement("div", { className: "cd" },
+                                        s.code,
+                                        (s.tags || []).slice(0, 2).map(t =>
+                                            React.createElement("i", { key: t.id, title: t.reason }, t.name))),
+                                    !hideBrief && (s.tags || []).length > 0 && React.createElement("div", { className: "brief" },
+                                        (s.tags[0].name + "：" + (s.tags[0].reason || "")).slice(0, 60))),
+                                cols.map(c =>
+                                    React.createElement("span", { key: c.key, className: "cell" },
+                                        c.key === "pct" && s[c.key] != null && s[c.key] !== ""
+                                            ? React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct))
+                                            : c.fmt(s[c.key])))))),
+                    d && stocks.length === 0 && React.createElement("div", { className: "kpl-empty" }, "暂无个股数据")),
+                // ===== 查看全文弹窗（App ThemeDescDialog 同款：正文全文） =====
+                introOpen && d && React.createElement("div", { className: "kpl-explain-mask", onClick: () => setIntroOpen(false) },
+                    React.createElement("div", { className: "kpl-explain", onClick: e => e.stopPropagation() },
+                        React.createElement("div", { className: "kpl-explain-head" },
+                            React.createElement("span", { className: "t" }, "题材介绍"),
+                            React.createElement("span", { className: "x", onClick: () => setIntroOpen(false) }, "✕")),
                         React.createElement("div", {
-                            key: s.code, className: "kpl-tikad-srow",
-                            onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
-                        },
-                            React.createElement("div", { className: "row" },
-                                React.createElement("span", { className: "name" }, s.name),
-                                React.createElement("span", { className: "code" }, s.code),
-                                s.pct != null && s.pct !== "" && React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct))),
-                            React.createElement("div", { className: "meta" },
-                                (s.tags || []).map(t => React.createElement("span", { key: t.id, title: t.reason }, t.name)),
-                                s.price && React.createElement("span", null, "价 " + s.price),
-                                s.amount && React.createElement("span", null, "额 " + amountFmt(s.amount)),
-                                s.turnover && React.createElement("span", null, "换手 " + s.turnover + "%")))),
-                    d && (d.stocks || []).length === 0 && React.createElement("div", { className: "kpl-empty" }, "暂无个股数据")));
+                            className: "kpl-explain-body kpl-tikad2-introfull",
+                            dangerouslySetInnerHTML: { __html: d.introduction || d.brief || "" },
+                        }),
+                        React.createElement("button", { className: "kpl-explain-more", onClick: () => setIntroOpen(false) }, "知道了"))));
+        }
+
+        /* ---- 人气榜页（cmd 3008，App 同源双榜：复盘/盘中 × 热度排名/排名飙升/热度飙升） ---- */
+
+        function KplPopRankPage({ go }) {
+            // App 字节码实锤（2026-09-26）：盘中/复盘共用同一 Fragment，type=「tab+排序」联合编码
+            // 盘中三排序=type 1/2/16，复盘三排序=type 13/14/17；服务端返回即目标序（勿本地重排）
+            const TABS = [
+                { id: "live", label: "盘中人气榜", types: [1, 2, 16] },
+                { id: "replay", label: "复盘人气榜", types: [13, 14, 17] },
+            ];
+            const SORTS = [
+                { id: "hot", label: "热度排名" },
+                { id: "rc", label: "排名飙升" },
+                { id: "hc", label: "热度飙升" },
+            ];
+            // App 同款：首页徽标非交易时段=复盘，进页默认复盘榜；交易时段=盘中榜
+            const inTradingHours = (() => {
+                const n = new Date();
+                if (n.getDay() === 0 || n.getDay() === 6) return false;
+                const m = n.getHours() * 60 + n.getMinutes();
+                return (m >= 555 && m <= 690) || (m >= 780 && m <= 900);
+            })();
+            // ⚠️ state 只存 id 字符串：组件每次渲染重建 TABS/SORTS 数组，若存对象，
+            // indexOf 按引用查找会失配 → type=undefined → 422"加载失败"（2026-09-27 实证）
+            const [tabId, setTabId] = useState(inTradingHours ? "live" : "replay");
+            const [sortId, setSortId] = useState("hot");
+            const [data, setData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const tab = TABS.find(t => t.id === tabId) || TABS[0];
+            const sortIdx = Math.max(0, SORTS.findIndex(s => s.id === sortId));
+            const sort = SORTS[sortIdx];
+            const load = useCallback(async (t, sIdx) => {
+                setLoading(true);
+                let failed = false;
+                // 后端偶发事件循环停顿（数十秒级）会导致单次 fetch 失败，自动重试 2 次吞掉抖动
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        setData(await api(`/api/kpl/poprank?type=${t.types[sIdx]}&order=1&start=0&count=50`));
+                        failed = false;
+                        break;
+                    } catch {
+                        failed = true;
+                        await new Promise(r => setTimeout(r, 1500 * (i + 1)));
+                    }
+                }
+                if (failed) setData({ items: [], error: "加载失败" });
+                setLoading(false);
+            }, []);
+            useEffect(() => { load(tab, sortIdx); }, [tabId, sortId, load]);
+            const rateCls = r => (Number(r) >= 0 ? "up" : "down");
+            const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+            const rankCls = n => n === 1 ? "r1" : n === 2 ? "r2" : n === 3 ? "r3" : "";
+            const items = (data && data.items) || [];
+            const ts = data && data.timestamp;
+            const lastUp = ts ? new Date(ts * 1000).toLocaleString("zh-CN",
+                { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+            const five = (data && data.five_minute_items) || [];
+            const [descOpen, setDescOpen] = useState({});
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "开盘啦人气榜", onBack: () => go({ page: "back" }) }),
+                React.createElement("div", { className: "kpl-pop2-tabs" },
+                    TABS.map(t =>
+                        React.createElement("span", {
+                            key: t.id, className: `kpl-pop2-tab ${tab.id === t.id ? "on" : ""}`,
+                            onClick: () => setTabId(t.id),
+                        }, t.label))),
+                // 盘中榜：非交易时段提示停止更新（App 同款）
+                tab.id === "live" && !inTradingHours && React.createElement("div", { className: "kpl-pop2-stale" },
+                    `当前时段停止更新${lastUp ? `，最后更新时间为 ${lastUp}` : ""}`,
+                    React.createElement("span", { className: "x", onClick: e => e.currentTarget.parentNode.remove() }, "✕")),
+                React.createElement("div", { className: "kpl-pop2-sorts" },
+                    SORTS.map(so =>
+                        React.createElement("span", {
+                            key: so.id, className: `pill ${sort.id === so.id ? "on" : ""}`,
+                            onClick: () => setSortId(so.id),
+                        }, so.label))),
+                loading && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
+                !loading && data && data.error && React.createElement("div", { className: "kpl-empty", onClick: () => load(tab, sortIdx), style: { cursor: "pointer" } },
+                    "加载失败，点击重试"),
+                !loading && !data?.error && items.length === 0 && React.createElement("div", { className: "kpl-empty" }, "暂无数据"),
+                items.map(s =>
+                    React.createElement("div", { key: s.code, className: "kpl-pop2-card" },
+                        React.createElement("div", { className: "r1" },
+                            React.createElement("span", { className: `rk ${rankCls(s.num)}` }, s.num || "-"),
+                            React.createElement("span", { className: "nm" }, s.name),
+                            React.createElement("span", { className: "code" }, s.code),
+                            React.createElement("b", { className: `pct ${rateCls(s.pct)}` }, fmtRate(s.pct)),
+                            // App 同款：热度飙升视图右列显示"热度变化值↑"，其余视图显示🔥热度值
+                            sort.id === "hc"
+                                ? React.createElement("span", { className: "hv" }, React.createElement("b", null, (s.hot_change || 0).toLocaleString()), "↑")
+                                : React.createElement("span", { className: "hv" }, "🔥", React.createElement("b", null, (s.hot_val || 0).toLocaleString()))),
+                        (s.rank_change || (s.tags || []).length > 0 || s.zt_reason || s.lb_status) && React.createElement("div", { className: "r2" },
+                            s.rank_change ? React.createElement("span", { className: `rcup ${s.rank_change > 0 ? "up" : "down"}` },
+                                (s.rank_change > 0 ? "↑" : "↓") + Math.abs(s.rank_change)) : null,
+                            s.zt_reason && React.createElement("i", { className: "chip-o" }, s.zt_reason),
+                            s.lb_status && React.createElement("i", { className: "chip-o" }, s.lb_status),
+                            (s.tags || []).map(t =>
+                                React.createElement("i", { key: t.value, className: "chip-b" }, t.value))),
+                        s.desc && React.createElement("div", {
+                            className: "desc" + (descOpen[s.code] ? " open" : ""),
+                            onClick: e => { e.stopPropagation(); setDescOpen(p => ({ ...p, [s.code]: !p[s.code] })); },
+                        }, (s.desc || "").slice(0, descOpen[s.code] ? 999 : 60),
+                            React.createElement("span", { className: "arr" }, descOpen[s.code] ? " ∧" : " >")))),
+                // 底部 5 分钟人气提示条（fiveMinuteItems，App 同款）
+                five.length > 0 && React.createElement("div", { className: "kpl-pop2-five" },
+                    React.createElement("span", { className: "t" }, "排名", React.createElement("b", null, "上升")),
+                    five.slice(0, 1).map(s =>
+                        React.createElement("span", { key: s.code, className: "it" },
+                            s.name, " ｜ 5分钟人气上升 ", s.num || 0, " 位"))));
         }
 
         /* ---- 行情页（子Tab: 板块/个股/...） ---- */
@@ -2640,6 +2937,8 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "themeDetail") content = React.createElement(KplThemeDetailPage, { id: drill.id, go });
                 else if (drill.page === "tika") content = React.createElement(KplTikaPage, { go });
                 else if (drill.page === "tikaDetail") content = React.createElement(KplTikaDetailPage, { id: drill.id, name: drill.name, go });
+                else if (drill.page === "poprank") content = React.createElement(KplPopRankPage, { go });
+                else if (drill.page === "qiangdu") content = React.createElement(KplQiangduPage, { go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
                 content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
@@ -3478,6 +3777,148 @@ window.__ModuleLoader__.load({
                 .kpl-tika2-delta { font-size: 12px; font-weight: 700; min-width: 36px; text-align: right; }
                 .kpl-tika2-delta.up { color: #ef4444; }
                 .kpl-tika2-delta.down { color: #22c55e; }
+                .kpl-tika2-zt { color: #ef4444; font-size: 11px; border: 1px solid rgba(239,68,68,.45); border-radius: 4px; padding: 1px 6px; font-weight: 600; white-space: nowrap; }
+                .kpl-tika2-up { font-size: 14px; font-weight: 700; min-width: 44px; text-align: right; }
+                /* ---- 题材详情页 v2（App 同款：描述/小表格/个股行情宽表） ---- */
+                .kpl-tikad2-desc { background: #efefef; color: #111; border-radius: 6px; padding: 10px 12px 6px; margin: 6px 8px; }
+                .kpl-tikad2-descrow { display: flex; align-items: flex-end; gap: 10px; }
+                .kpl-tikad2-descrow .txt { flex: 1; font-size: 14px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                .kpl-tikad2-descrow .more { color: #2f6bff; font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer; padding-bottom: 2px; }
+                .kpl-tikad2-dates { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #8a8a8a; }
+                .kpl-tikad2-wrap { margin: 6px 8px; }
+                .kpl-tikad2-table { border: 2px solid #e0333a; border-radius: 2px; overflow: hidden; background: #fff; }
+                .kpl-tikad2-table .head { background: linear-gradient(90deg, #e0333a, #c81e26); color: #fff; display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; }
+                .kpl-tikad2-table .head .t { font-size: 17px; font-weight: 800; }
+                .kpl-tikad2-table .head .logo { font-size: 13px; font-weight: 800; opacity: .92; letter-spacing: 1px; }
+                .kpl-tikad2-table .row { display: flex; border-top: 1px solid #e6b8ba; }
+                .kpl-tikad2-table .row:first-of-type { border-top: none; }
+                .kpl-tikad2-table .l1 { flex: none; width: 96px; display: flex; align-items: center; justify-content: center; text-align: center; font-size: 15px; font-weight: 800; color: #111; padding: 10px 6px; border-right: 1px solid #e0333a; word-break: break-all; }
+                .kpl-tikad2-table .r { flex: 1; min-width: 0; }
+                .kpl-tikad2-table .grp { display: flex; align-items: flex-start; padding: 8px 10px; }
+                .kpl-tikad2-table .grp + .grp { border-top: 1px solid #e6b8ba; }
+                .kpl-tikad2-table .gname { flex: none; font-size: 14px; font-weight: 700; color: #111; padding-right: 10px; border-right: 1px solid #d9d9d9; margin-right: 10px; line-height: 1.9; }
+                .kpl-tikad2-table .stocks { flex: 1; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+                .kpl-tikad2-table .stk { color: #2f6bff; font-size: 14px; font-weight: 600; line-height: 1.9; cursor: pointer; }
+                .kpl-tikad2-table .stk:hover { text-decoration: underline; }
+                .kpl-tikad2-table .stk.zt { color: #e0333a; font-weight: 800; }
+                .kpl-tikad2-table .disc { border-top: 1px solid #e6b8ba; padding: 8px 10px; font-size: 12px; color: #999; }
+                .kpl-tikad2-introfull { font-size: 14px; line-height: 1.9; }
+                .kpl-tikad2-introfull img { max-width: 100%; }
+                /* 个股行情宽表：统计条 + 表头排序 + 左固定/右横滑（显式白底卡片，防深色主题黑字黑底） */
+                .kpl-tikad2-stat { display: flex; gap: 18px; padding: 8px 12px; background: #f5f5f5; color: #333; font-size: 13px; margin: 6px 8px; border-radius: 4px; flex-wrap: wrap; }
+                .kpl-tikad2-stat b.up { color: #e0333a; }
+                .kpl-tikad2-stat b.down { color: #0aa858; }
+                .kpl-tikad2-scroll { overflow-x: auto; margin: 0 8px; background: #fff; border-radius: 4px; }
+                .kpl-tikad2-thead, .kpl-tikad2-srow { display: flex; align-items: stretch; min-width: max-content; border-bottom: 1px solid #ececec; }
+                .kpl-tikad2-thead { position: sticky; top: 0; background: #fff; z-index: 2; font-size: 13px; color: #8a8a8a; }
+                .kpl-tikad2-thead .left, .kpl-tikad2-srow .left { flex: none; width: 210px; position: sticky; left: 0; background: #fff; z-index: 1; padding: 8px 10px; }
+                .kpl-tikad2-thead .hidesw { cursor: pointer; font-weight: 600; }
+                .kpl-tikad2-thead .hidesw.off { opacity: .45; }
+                .kpl-tikad2-thead .hidesw-ic { margin-left: 6px; opacity: .7; }
+                .kpl-tikad2-thead .cell { flex: none; width: 72px; text-align: right; cursor: pointer; display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding: 8px 6px; }
+                .kpl-tikad2-thead .cell.on { color: #e0333a; font-weight: 800; }
+                .kpl-tikad2-thead .cell i { font-style: normal; font-size: 10px; }
+                .kpl-tikad2-srow { cursor: pointer; }
+                .kpl-tikad2-srow:hover { background: #f7f9ff; }
+                .kpl-tikad2-srow .nm { font-size: 15px; font-weight: 800; color: #111; display: flex; align-items: center; gap: 6px; }
+                .kpl-tikad2-srow .ztb { background: #e0333a; color: #fff; font-size: 10px; font-weight: 700; border-radius: 3px; padding: 1px 5px; }
+                .kpl-tikad2-srow .cd { font-size: 12px; color: #8a8a8a; margin-top: 2px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+                .kpl-tikad2-srow .cd i { font-style: normal; background: #f59e0b; color: #fff; font-size: 10px; border-radius: 3px; padding: 1px 4px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-tikad2-srow .brief { font-size: 12px; color: #9a9a9a; margin-top: 4px; line-height: 1.5; }
+                .kpl-tikad2-srow .cell { flex: none; width: 72px; text-align: right; font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: flex-end; padding: 8px 6px; color: #333; }
+                .kpl-tikad2-srow .cell b.up, .kpl-tikad2-srow .cell.up { color: #e0333a; }
+                .kpl-tikad2-srow .cell b.down, .kpl-tikad2-srow .cell.down { color: #0aa858; }
+                .kpl-tikad2-srow.zt .nm, .kpl-tikad2-srow.zt .cell, .kpl-tikad2-srow.zt .cell b.up, .kpl-tikad2-srow.zt .cell b.down { color: #e0333a; }
+                /* ---- 人气榜（3008，App 同款行布局，显式白底） ---- */
+                .kpl-pop2-hot5 { display: flex; align-items: center; gap: 8px; background: #fff5f3; border: 1px solid #ffd9d4; border-radius: 6px; padding: 6px 10px; margin: 0 8px 4px; font-size: 12px; overflow: hidden; }
+                .kpl-pop2-hot5 .lab { color: #e0333a; font-weight: 800; flex: none; }
+                .kpl-pop2-hot5 .it { color: #333; white-space: nowrap; }
+                .kpl-pop2-hot5 .it b { margin: 0 3px; }
+                .kpl-pop2-hot5 .it .sep { color: #ccc; margin-left: 8px; }
+                .kpl-pop2-row { display: flex; align-items: center; gap: 8px; padding: 10px 8px; border-bottom: 1px solid var(--dsw-alias-border-l2); cursor: pointer; }
+                .kpl-pop2-row:hover { background: var(--dsw-alias-button-elevated-fill); }
+                .kpl-pop2-row .rk { flex: none; width: 26px; text-align: center; font-weight: 800; font-size: 15px; color: var(--dsw-alias-label-secondary); }
+                .kpl-pop2-row .rk.r1 { color: #e0333a; }
+                .kpl-pop2-row .rk.r2 { color: #f97316; }
+                .kpl-pop2-row .rk.r3 { color: #eab308; }
+                .kpl-pop2-row .main { flex: 1; min-width: 0; }
+                .kpl-pop2-row .nm { font-size: 15px; font-weight: 800; color: var(--dsw-alias-label-primary); display: flex; align-items: center; gap: 6px; }
+                .kpl-pop2-row .nm .lb { font-style: normal; background: rgba(224,51,58,.1); color: #e0333a; font-size: 10px; font-weight: 700; border-radius: 3px; padding: 1px 4px; }
+                .kpl-pop2-row .cd { font-size: 11px; color: var(--dsw-alias-label-secondary); margin-top: 3px; display: flex; gap: 5px; align-items: center; overflow: hidden; }
+                .kpl-pop2-row .cd .zr { font-style: normal; background: rgba(245,158,11,.14); color: #b45309; border-radius: 3px; padding: 1px 4px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-pop2-row .cd .tg { font-style: normal; background: var(--dsw-alias-button-elevated-fill); color: var(--dsw-alias-label-secondary); border-radius: 3px; padding: 1px 4px; max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-pop2-row .vals { flex: none; display: flex; align-items: center; gap: 10px; }
+                .kpl-pop2-row .hot { text-align: right; line-height: 1.3; }
+                .kpl-pop2-row .hot b { display: block; font-size: 14px; color: var(--dsw-alias-label-primary); }
+                .kpl-pop2-row .hot .lbl { display: block; font-size: 10px; color: var(--dsw-alias-label-secondary); }
+                .kpl-pop2-row .rc { font-size: 12px; font-weight: 700; width: 34px; text-align: right; }
+                .kpl-pop2-row .pct { width: 64px; text-align: right; font-size: 14px; }
+                .kpl-pop2-more { display: block; width: 60%; margin: 10px auto; padding: 8px; background: var(--dsw-alias-button-elevated-fill); color: var(--dsw-alias-label-primary); border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+                .kpl-pop2-badge { font-size: 12px; color: #2f6bff; font-weight: 600; margin-left: 8px; }
+                .kpl-pop2-rc { font-size: 11px; font-weight: 700; }
+                .kpl-pop2-rc.up { color: #e0333a; } .kpl-pop2-rc.down { color: #0aa858; }
+                .kpl-pop2-stale { background: #fff7e6; color: #b45309; border: 1px solid #ffe1ad; border-radius: 6px; padding: 8px 12px; margin: 6px 8px; font-size: 12px; }
+                .kpl-pop2-tabs { display: flex; background: #fff; border-radius: 10px 10px 0 0; margin: 6px 8px 0; padding: 6px 10px 0; }
+                .kpl-pop2-tab { flex: 1; text-align: center; font-size: 16px; color: #666; padding: 10px 0 8px; cursor: pointer; position: relative; }
+                .kpl-pop2-tab.on { color: #111; font-weight: 800; }
+                .kpl-pop2-tab.on::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); bottom: 2px; width: 28px; height: 3px; background: #e0333a; border-radius: 2px; }
+                .kpl-pop2-sorts { display: flex; gap: 10px; background: #fff; margin: 0 8px; padding: 8px 10px 4px; }
+                .kpl-pop2-sorts .pill { font-size: 14px; color: #333; border: 1px solid #e5e5e5; border-radius: 8px; padding: 6px 14px; cursor: pointer; background: #fff; }
+                .kpl-pop2-sorts .pill.on { color: #e0333a; border-color: #e0333a; background: #fff5f4; font-weight: 700; }
+                .kpl-pop2-card { background: #fff; margin: 0 8px; padding: 10px 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+                .kpl-pop2-card:hover { background: #fafbff; }
+                .kpl-pop2-card .r1 { display: flex; align-items: center; gap: 8px; }
+                .kpl-pop2-card .r1 .nm { font-size: 16px; font-weight: 800; color: #111; }
+                .kpl-pop2-card .r1 .code { font-size: 13px; color: #999; flex: 1; }
+                .kpl-pop2-card .r1 .pct { font-size: 17px; font-weight: 800; }
+                .kpl-pop2-card .r1 .pct.up { color: #e0333a; } .kpl-pop2-card .r1 .pct.down { color: #0aa858; }
+                .kpl-pop2-card .r1 .hv { margin-left: 8px; font-size: 13px; color: #e0333a; }
+                .kpl-pop2-card .r1 .hv b { font-size: 15px; }
+                .kpl-pop2-card .r2 { display: flex; align-items: center; gap: 6px; margin: 6px 0 0 34px; flex-wrap: wrap; }
+                .kpl-pop2-card .rcup { font-size: 12px; font-weight: 800; color: #e0333a; }
+                .kpl-pop2-card .rcup.down { color: #0aa858; }
+                .kpl-pop2-card .chip-o { font-style: normal; border: 1px solid #f59e0b; color: #b45309; background: #fff; font-size: 11px; border-radius: 3px; padding: 0 4px; }
+                .kpl-pop2-card .chip-b { font-style: normal; border: 1px solid #6d9eff; color: #2f6bff; background: #fff; font-size: 11px; border-radius: 3px; padding: 0 4px; }
+                .kpl-pop2-card .desc { font-size: 13px; color: #666; line-height: 1.7; margin: 8px 0 0 34px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+                .kpl-pop2-card .desc.open { -webkit-line-clamp: 99; }
+                .kpl-pop2-card .desc .arr { color: #999; }
+                .kpl-pop2-five { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 8px; margin: 8px; padding: 10px 14px; font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+                .kpl-pop2-five .t { color: #111; font-weight: 800; }
+                .kpl-pop2-five .t b { color: #e0333a; }
+                .kpl-pop2-five .it { color: #333; }
+                /* ---- 最强风口页（App 风向标同源，显式白底） ---- */
+                .kpl-qd2-stat { display: flex; gap: 12px; background: #fff; border-radius: 6px; padding: 10px 14px; margin: 6px 8px; }
+                .kpl-qd2-stat .cell { flex: 1; text-align: center; }
+                .kpl-qd2-stat .lbl { font-size: 12px; color: #8a8a8a; }
+                .kpl-qd2-stat b { font-size: 20px; margin-right: 2px; }
+                .kpl-qd2-stat b.up { color: #e0333a; }
+                .kpl-qd2-stat b.down { color: #0aa858; }
+                .kpl-qd2-stat .yest { font-size: 12px; color: #999; }
+                .kpl-qd2-head, .kpl-qd2-row { display: grid; grid-template-columns: 34px 1.2fr 64px 76px 1fr; gap: 6px; align-items: center; padding: 10px 10px; }
+                .kpl-qd2-head { color: var(--dsw-alias-label-secondary); font-size: 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+                .kpl-qd2-row { border-bottom: 1px solid var(--dsw-alias-border-l2); cursor: pointer; }
+                .kpl-qd2-row:hover { background: var(--dsw-alias-button-elevated-fill); }
+                .kpl-qd2-row .rk { color: var(--dsw-alias-label-secondary); font-weight: 700; }
+                .kpl-qd2-row .nm { font-weight: 800; font-size: 14px; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-qd2-row .st { color: #e0333a; text-align: right; }
+                .kpl-qd2-row .rt { text-align: right; }
+                .kpl-qd2-row .rt.up { color: #e0333a; }
+                .kpl-qd2-row .rt.down { color: #0aa858; }
+                .kpl-qd2-row .pl { font-size: 12px; color: #2f6bff; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                /* ---- 严重异动提醒（App 同款 4 列表格，显式白底） ---- */
+                .kpl-yd2 { background: #fff; border-radius: 6px; padding: 2px 10px; }
+                .kpl-yd2 .hd { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; padding: 8px 0 6px; font-size: 11px; color: #999; border-bottom: 1px solid #f0f0f0; }
+                .kpl-yd2 .hd .c2 { text-align: right; } .kpl-yd2 .hd .c3 { text-align: right; } .kpl-yd2 .hd .c4 { text-align: right; }
+                .kpl-yd2-row { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+                .kpl-yd2-row:hover { background: #f7f9ff; }
+                .kpl-yd2-row .nm { font-size: 14px; font-weight: 800; color: #111; }
+                .kpl-yd2-row .cd { font-size: 11px; color: #8a8a8a; margin-top: 2px; display: flex; gap: 5px; align-items: center; }
+                .kpl-yd2-row .cd i { font-style: normal; background: rgba(245,158,11,.14); color: #b45309; border-radius: 3px; padding: 0 4px; }
+                .kpl-yd2-row .c2, .kpl-yd2-row .c3, .kpl-yd2-row .c4 { text-align: right; line-height: 1.4; }
+                .kpl-yd2-row .c2 b, .kpl-yd2-row .c3 b, .kpl-yd2-row .c4 b { display: block; font-size: 14px; }
+                .kpl-yd2-row .c2 span, .kpl-yd2-row .c3 span, .kpl-yd2-row .c4 span { display: block; font-size: 11px; color: #999; }
+                .kpl-yd2-row b.up { color: #e0333a; } .kpl-yd2-row b.down { color: #0aa858; }
+                .kpl-yd2-row .org { color: #f59e0b; }
                 .kpl-tika2-child { padding: 6px 12px 6px 44px; font-size: 13px; color: #3b82f6; border-left: 2px solid var(--dsw-alias-border-l2); margin: 2px 0 2px 26px; cursor: pointer; }
             `;
             document.head.appendChild(style);

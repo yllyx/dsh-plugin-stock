@@ -16,7 +16,9 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_PORT = 8765;
 // 首次运行含 pip install 依赖 + K线库冷载入，给足余量；/health 已非阻塞（status() 无锁）
-const HEALTH_TIMEOUT_MS = 30000;
+// 90s：2026-09-23 实测冷开机首次启动 import 就要 ~25s（冷文件缓存+杀软扫描新写入的 .py），
+// 30s 窗口会在 uvicorn 即将 bind 端口时把进程 SIGTERM 掉
+const HEALTH_TIMEOUT_MS = 90000;
 const HEALTH_POLL_MS = 500;
 
 class BackendManager {
