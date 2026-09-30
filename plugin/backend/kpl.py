@@ -1416,7 +1416,13 @@ class KplClient:
         table = []
         for lv1 in d.get("Table") or []:
             l1 = lv1.get("Level1") or {}
-            row1 = {"id": l1.get("ID"), "name": l1.get("Name"), "groups": []}
+            row1 = {"id": l1.get("ID"), "name": l1.get("Name"), "groups": [],
+                    # Level1 可直接挂 Stocks（无二级分类的形态，如"生产商"）
+                    "stocks": [{
+                        "code": s.get("StockID"), "name": s.get("prod_name"),
+                        "hot": s.get("Hot"), "is_zz": s.get("IsZz"), "is_hot": s.get("IsHot"),
+                        "reason": s.get("Reason"), "is_zt": str(s.get("StockID")) in zt,
+                    } for s in l1.get("Stocks") or []]}
             for lv2 in lv1.get("Level2") or []:
                 row1["groups"].append({
                     "id": lv2.get("ID"), "name": lv2.get("Name"),

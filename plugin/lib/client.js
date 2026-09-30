@@ -2433,6 +2433,17 @@ window.__ModuleLoader__.load({
                             React.createElement("div", { key: lv1.id, className: "row" },
                                 React.createElement("div", { className: "l1" }, lv1.name || "-"),
                                 React.createElement("div", { className: "r" },
+                                    // Level1 直接挂 Stocks 形态（无二级分类，如"生产商/投入研发"）
+                                    (lv1.groups || []).length === 0 && (lv1.stocks || []).length > 0 &&
+                                        React.createElement("div", { key: "l1stocks", className: "grp" },
+                                            React.createElement("span", { className: "stocks" },
+                                                (lv1.stocks || []).map(s =>
+                                                    React.createElement("a", {
+                                                        key: s.code,
+                                                        className: "stk" + (s.is_zt || ztCodes[s.code] ? " zt" : ""),
+                                                        title: s.reason || undefined,
+                                                        onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                                                    }, s.name)))),
                                     (lv1.groups || []).map(g =>
                                         React.createElement("div", { key: g.id, className: "grp" },
                                             React.createElement("span", { className: "gname" }, g.name),
