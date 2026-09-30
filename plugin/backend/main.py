@@ -122,8 +122,10 @@ async def connection_keepalive_loop():
     while True:
         _trading = False
         try:
-            n = time.localtime()
-            _trading = n.tm_wday < 5 and 555 <= n.tm_hour * 60 + n.tm_min <= 930
+            # ⭐ 权威交易日历（深交所官方月历，含法定节假日）：国庆/春节等假期
+            # 工作日不再误判为交易时段（2026-09-30 接入，此前只排周末）
+            from trade_calendar import get_cal
+            _trading = get_cal().is_trading_now()
             if not data_source.connected and _trading:
                 await asyncio.to_thread(data_source.connect)
         except Exception as e:
@@ -168,6 +170,18 @@ async def lifespan(app: FastAPI):
         k = kpl_api.get_kpl()
         k.prewarm_poprank()
         k.prewarm_themes()
+        # 行情菜单订阅面：会话就绪后完成 2100-2126 订阅（feed 保活线程随订阅启动）
+        try:
+            from kpl_marketfeed import get_feed
+            get_feed().ensure_subscribed()
+        except Exception as e:
+            logger.warning(f"marketfeed 预热失败: {e}")
+        # 权威交易日历预热（本月±1月，深交所官方；启动后判定零网络等待）
+        try:
+            from trade_calendar import get_cal
+            get_cal().prewarm()
+        except Exception as e:
+            logger.warning(f"交易日历预热失败: {e}")
     _ths.Thread(target=_kpl_prewarm, daemon=True, name="kpl-prewarm").start()
 
     # 启动舆情监控
@@ -1508,6 +1522,40 @@ async def kpl_sector_detail(plate_id: str):
     return await asyncio.to_thread(kpl_api.get_kpl().get_sector_detail, plate_id)
 
 
+@app.get("/api/trade-calendar")
+async def trade_calendar_status():
+    """权威交易日历（深交所官方月历，含法定节假日/调休）——今日是否交易日、
+    当前是否交易时段、上/下一交易日。前端判定统一以此为准。"""
+    def _run():
+        from trade_calendar import get_cal
+        return get_cal().today()
+    return await asyncio.to_thread(_run)
+
+
+@app.get("/api/kpl/marketfeed")
+async def kpl_marketfeed():
+    """行情菜单订阅面（二期）：2100-2126 HQDaBan 家族快照（情绪条/雷达/量能/涨停形势/
+    权重/北向/涨跌统计/温度提示/涨跌分布/总览/涨停序列/连板天梯/风向标）"""
+    from kpl_marketfeed import get_feed
+    return await asyncio.to_thread(get_feed().snapshot)
+
+
+@app.get("/api/kpl/mkttrend")
+async def kpl_mkttrend():
+    """主指数分时（3003 拉取式，直播 tab 分时图+板块 tab 顶部横滑卡同源）"""
+    from kpl_marketfeed import get_index_trend
+    return await asyncio.to_thread(get_index_trend)
+
+
+@app.get("/api/kpl/rankplate")
+async def kpl_rankplate():
+    """板块强度表（行情菜单·板块 tab 表格同源 ZhiShuRanking/RealRankingInfo Type=12/13/14）"""
+    def _run():
+        from kpl_marketfeed import get_plate_rank
+        return get_plate_rank(kpl_api.get_kpl())
+    return await asyncio.to_thread(_run)
+
+
 @app.get("/api/kpl/fengkou")
 async def kpl_fengkou(day: str = Query("")):
     """市场风口（App 下钻页同源 StockFengKData/GetFengKList，主力净额降序；day=回看历史日期）"""
@@ -1524,6 +1572,36 @@ async def kpl_daban():
 async def kpl_qiangdu():
     """最强风口（App 同源 QiangDu_Article，盘中实时；盘后回退当日快照）"""
     return await asyncio.to_thread(kpl_api.get_kpl().get_qiangdu)
+
+
+@app.get("/api/kpl/lhb")
+async def kpl_lhb(day: str = Query("")):
+    """龙虎榜三榜合一（App 龙虎榜菜单同源 LongHuBang 控制器：股票/机构/营业部+机构净买历史）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_lhb, day)
+
+
+@app.get("/api/kpl/lhb/yixian")
+async def kpl_lhb_yixian(day: str = Query("")):
+    """一线游资分组榜（订阅 tab 官方组合同源 GetYiXianByDay）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_lhb_yixian, day)
+
+
+@app.get("/api/kpl/lhb/sub")
+async def kpl_lhb_sub(day: str = Query("")):
+    """龙虎榜订阅 tab（今日分组动态 GetDay + 我的订阅营业部 GetOfficev2 + 官方组合）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_lhb_sub, day)
+
+
+@app.get("/api/kpl/lhb/business/{bid}")
+async def kpl_lhb_business_detail(bid: str):
+    """营业部详情（GetOneBusinessInfo+GetNewDoStockLog 历史操作表）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_lhb_business_detail, bid)
+
+
+@app.get("/api/kpl/lhb/stock/{code}")
+async def kpl_lhb_stock_detail(code: str, day: str = Query("")):
+    """个股龙虎榜详情（GetNewOneStockInfo：买卖席位+历史上榜日）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_lhb_stock_detail, code, day)
 
 
 @app.get("/api/kpl/yidong")

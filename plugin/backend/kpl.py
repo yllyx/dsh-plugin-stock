@@ -42,6 +42,7 @@ HOST_HQ = "https://apphwshhq.longhuvip.com/w1/api/index.php"   # 行情L2/板块
 HOST_HQ2 = "https://apphwhq.longhuvip.com/w1/api/index.php"    # 指数行情
 HOST_ART = "https://apparticle.longhuvip.com/w1/api/index.php" # 资讯/板块列表
 HOST_HIS = "https://apphis.longhuvip.com/w1/api/index.php"     # 历史情绪
+HOST_LHB_KPL = "https://applhb.kaipanla.com/w1/api/index.php"  # 龙虎榜（App ApiConfig.API_LHB，2026-09-30 实测）
 
 MIN_INTERVAL = 2.5  # 秒，全局请求最小间隔
 
@@ -671,9 +672,9 @@ class KplClient:
         # 3.5 题材库热榜（Socket，后台已有缓存则即时）
         futs["tika"] = pool.submit(self.get_themes_socket)
         # 3.6 人气榜（socket 3008，App 首页同源：盘中时段=盘中榜 type1，其余=复盘榜 type13）
-        _now = time.localtime()
-        _trading = (_now.tm_wday < 5 and (555 <= _now.tm_hour * 60 + _now.tm_min <= 690
-                                          or 780 <= _now.tm_hour * 60 + _now.tm_min <= 900))
+        # ⭐ 交易日判定走深交所官方日历（法定节假日休市日不再误判"盘中"，2026-09-30）
+        from trade_calendar import get_cal
+        _trading = get_cal().is_trading_now()
         futs["poprank"] = pool.submit(self.get_pop_rank, 1 if _trading else 13, 1, 0, 5)
         # 3.7 严重异动提醒（StockBidYiDong/GetPianLiZhi_Index，偏离值监控）
         futs["yidong"] = pool.submit(self.get_yidong_alert)
@@ -1236,6 +1237,402 @@ class KplClient:
         if data.get("items"):
             self._cache[key] = {"data": data, "ts": time.time()}
         return data
+
+    # ============= 龙虎榜（App 底部导航·龙虎榜菜单同源 LongHuBang 控制器 @applhb.kaipanla.com）=============
+    # 2026-09-30 全套实测锚定（App 截图逐位比对）：
+    #   GetStockList   股票榜（万科Ａ 4.41%/净买 71384560=7138万 ✓，字段 D3=3日榜标）
+    #   GetAgencyListV2 机构榜（个股+BuyIn+FengKou 801板块数组；App"机构净买▼"排序）
+    #   GetBusinessList 营业部榜（245 席位；中信证券上海分公司 5.03亿/4.73亿/21 ✓）
+    #   GetAgencyDayList 机构买卖日明细（SDay/EDay 参数，字节码实锤）→ 机构净买入历史柱状图
+    #   GetYiXianByDay 一线游资分组榜（订阅 tab 官方组合同源）
+    #   UpdateList 上榜代码清单（增量刷新判定用）
+    # App 顶部"今日上榜数" = 各榜行数（股票66/机构31/营业部245，2026-09-30 实测一致）
+
+    def get_lhb(self, day: str = "") -> Dict[str, Any]:
+        """龙虎榜三榜合一（股票/机构/营业部 + 机构净买入历史 + 上榜数）。60s 缓存。
+        ⭐ 历史回看参数名是 **Time**（App 字节码 j00.G 实锤：GetStockList=
+        {Type:"2", Time, Index:"0", st:"500"}；Day 参数会被服务端静默忽略恒返最新——
+        2026-10-01 实测 Time=0929 超声电子 4222万 与 App 实拍逐位一致）。
+        非交易日（节假日/周末）自动归一到最近前一交易日（深交所日历）。"""
+        day = day or time.strftime("%Y-%m-%d")
+        try:
+            from trade_calendar import get_cal
+            if not get_cal().is_trading_day(day):
+                prev = get_cal().prev_trading_day(day)
+                if prev:
+                    day = prev
+        except Exception:
+            pass
+        key = f"lhb:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+
+        def _f(d):
+            try:
+                return float(d)
+            except Exception:
+                return 0.0
+
+        # 股票榜（App 参数 {Type:"2", Time, Index:0, st:500}，服务端序直出）
+        stocks = []
+        try:
+            d = self.call(HOST_LHB_KPL, "LongHuBang", "GetStockList",
+                          {"Type": "2", "Time": day, "Index": "0", "st": "500"},
+                          authed=True)
+            for it in (d or {}).get("list") or []:
+                stocks.append({
+                    "id": str(it.get("ID") or ""), "name": str(it.get("Name") or ""),
+                    "pct": str(it.get("IncreaseAmount") or ""), "d3": it.get("D3"),
+                    "buy_in": _f(it.get("BuyIn")), "join_num": it.get("JoinNum"),
+                    "turnover": _f(it.get("Turnover")),
+                    "turnover_ratio": it.get("TurnoverRatio"),
+                    "amplitude": it.get("Amplitude"),
+                    "circ_cap": _f(it.get("CircPrice")),
+                    "total_cap": _f(it.get("Capitalization")),
+                })
+        except Exception as e:
+            logger.debug(f"GetStockList: {e}")
+
+        # 风口概念（App 口径 = GetAgencyListV2 的 FengKou 801板块id 体系）。
+        # GetStockList 不带概念；GetFengKList 的"风口概念"串与 App 龙虎榜概念口径不同（实测
+        # 襄阳轴承：FengKou=机器人概念/汽车零部件，风口串=新能源汽车——弃用，宁缺勿错）。
+        # GetAgencyListV2 在下方机构榜处统一拉取（concept_map 同时供股票榜复用）。
+
+        # 机构榜（App 按"机构净买▼"排序 → 本地 BuyIn 降序）+ 概念表（FengKou 801id 翻译）
+        agencies = []
+        concept_map: Dict[str, str] = {}
+        try:
+            d = self.call(HOST_LHB_KPL, "LongHuBang", "GetAgencyListV2",
+                          {"Time": day, "Index": "0", "st": "500"}, authed=True)
+            plate_names = self._active_plate_names()
+            for it in (d or {}).get("List") or []:
+                fk = it.get("FengKou") or []
+                names = [plate_names.get(str(p), "") for p in
+                         (fk if isinstance(fk, list) else [fk])]
+                txt = "/".join([n for n in names if n][:2])
+                sid = str(it.get("ID") or "")
+                if txt:
+                    concept_map[sid] = txt
+                agencies.append({
+                    "id": sid, "name": str(it.get("Name") or ""),
+                    "day": it.get("Day"), "buy_in": _f(it.get("BuyIn")),
+                    "join_num": it.get("JoinNum"),
+                    "pct": str(it.get("IncreaseAmount") or ""),
+                    "concept": txt,
+                })
+            agencies.sort(key=lambda r: -r["buy_in"])
+        except Exception as e:
+            logger.debug(f"GetAgencyListV2: {e}")
+        for s in stocks:
+            s["concept"] = concept_map.get(s["id"], "")
+
+        # 营业部榜（App 按"买入▼"排序 → 本地 Buy 降序；历史用 Time 参数）
+        business = []
+        try:
+            d = self.call(HOST_LHB_KPL, "LongHuBang", "GetBusinessList",
+                          {"Time": day}, authed=True)
+            for it in (d or {}).get("list") or []:
+                business.append({
+                    "id": str(it.get("ID") or ""), "name": str(it.get("Name") or ""),
+                    "buy": _f(it.get("Buy")), "sell": _f(it.get("Sell")),
+                    "join_num": it.get("JoinNum"),
+                })
+            business.sort(key=lambda r: -r["buy"])
+        except Exception as e:
+            logger.debug(f"GetBusinessList: {e}")
+
+        # 机构净买入历史（近 90 个自然日，柱状图数据）
+        try:
+            sday = (datetime.datetime.strptime(day, "%Y-%m-%d")
+                    - datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+            agency_days = self.get_lhb_agency_days(sday, day)
+        except Exception:
+            agency_days = []
+
+        out = {"day": day,
+               "counts": {"stock": len(stocks), "agency": len(agencies),
+                          "business": len(business)},
+               "stocks": stocks, "agencies": agencies, "business": business,
+               "agency_days": agency_days,
+               "agency_net": round(sum(r["buy_in"] for r in agencies), 2)}
+        if stocks or business or agencies:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_lhb_agency_days(self, sday: str, eday: str) -> List[Dict[str, Any]]:
+        """机构买卖日明细（GetAgencyDayList，SDay/EDay）→ 按日聚合净买（柱状图）"""
+        try:
+            d = self.call(HOST_LHB_KPL, "LongHuBang", "GetAgencyDayList",
+                          {"SDay": sday, "EDay": eday}, authed=True)
+        except Exception as e:
+            logger.debug(f"GetAgencyDayList: {e}")
+            return []
+        by_day: Dict[str, float] = {}
+        for it in (d or {}).get("List") or []:
+            day = str(it.get("Day") or "")
+            try:
+                by_day[day] = by_day.get(day, 0.0) + float(it.get("BuyIn") or 0)
+            except Exception:
+                continue
+        return [{"day": k, "net": round(v, 2)} for k, v in sorted(by_day.items())]
+
+    def get_lhb_yixian(self, day: str = "") -> List[Dict[str, Any]]:
+        """一线游资分组榜（GetYiXianByDay，订阅 tab 官方组合同源）"""
+        day = day or time.strftime("%Y-%m-%d")
+        key = f"lhbyx:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        try:
+            d = self.call(HOST_LHB_KPL, "LongHuBang", "GetYiXianByDay",
+                          {"Time": day}, authed=True)
+        except Exception as e:
+            logger.debug(f"GetYiXianByDay: {e}")
+            return []
+        groups = []
+        for g in (d or {}).get("List") or []:
+            stocks = [{"id": str(s.get("ID") or ""), "name": str(s.get("Name") or ""),
+                       "money": s.get("Money"), "pct": str(s.get("IncreaseAmount") or ""),
+                       "num": s.get("Num"), "d3": s.get("D3")}
+                      for s in (g.get("List") or []) if isinstance(s, dict)]
+            groups.append({"id": str(g.get("ID") or ""), "name": str(g.get("Name") or ""),
+                           "stocks": stocks})
+        if groups:
+            self._cache[key] = {"data": groups, "ts": time.time()}
+        return groups
+
+    def _active_plate_names(self) -> Dict[str, str]:
+        """801/803 板块id → 名称（FengKou 概念翻译用）。
+        主源：`kpl_plate_names.json` 官方名表（KPL_CACHE STOCK 表 TYPE=1 板块行 1568 条，
+        2026-09-30 从 App 数据库导出；板块名稳定不过期）。文件缺失时后台
+        _build_plate_names 遍历构建（行业种子 × SonPlate_Info 子概念）。"""
+        cache = getattr(self, "_plate_name_cache", None)
+        if cache is not None:
+            return cache
+        names: Dict[str, str] = {}
+        # ① 官方名表（无过期：板块名不变）
+        try:
+            from storage import storage as _st
+            p = _st.data_dir / "kpl_plate_names.json"
+            if p.exists():
+                sn = json.loads(p.read_text(encoding="utf-8"))
+                names.update({str(k): str(v) for k, v in (sn.get("names") or {}).items()})
+        except Exception:
+            pass
+        # ② 即时部分（官方表缺失时的兜底）
+        try:
+            for nm, _r, pid in self._active_plates_raw():
+                names.setdefault(str(pid), str(nm))
+        except Exception:
+            pass
+        self._plate_name_cache = names
+        # ③ 全表缺失才后台构建
+        if len(names) < 100:
+            threading.Thread(target=self._build_plate_names, daemon=True,
+                             name="kpl-plate-names").start()
+        return names
+
+    def _build_plate_names(self) -> None:
+        """构建 801/803 板块名表：已知行业种子 × SonPlate_Info{PlateID}（返回该行业
+        子概念 [id,名称,强度] 列表）→ 概念级 {id: name}。
+        ⚠️ PlateTCConfig 的 58 个 id 是无子板块的另一族（实测 SonPlate 全空），不可作种子。
+        种子=实拍/接口已确认的行业 id（锂电池 801004/医药 801045/芯片 801001…），
+        一层遍历 ~40 请求覆盖当日 FengKou 概念绝大多数；落盘 7 天重建。"""
+        if getattr(self, "_plate_names_building", False):
+            return
+        self._plate_names_building = True
+        try:
+            seeds = [ "801001", "801004", "801005", "801007", "801008", "801014",
+                      "801027", "801029", "801033", "801035", "801045", "801058",
+                      "801065", "801067", "801072", "801087", "801104", "801111",
+                      "801114", "801116", "801122", "801123", "801128", "801136",
+                      "801146", "801155", "801156", "801157", "801159", "801162",
+                      "801166", "801177", "801181", "801196", "801198", "801199",
+                      "801218", "801224", "801235", "801250", "801256", "801258",
+                      "801273", "801301", "801314", "801328", "801350", "801351",
+                      "801375", "801399", "801430", "801433", "801437", "801445",
+                      "801460", "801511", "801519", "801522", "801529", "801546",
+                      "801580", "801584", "801587", "801629", "801631", "801642",
+                      "801657", "801660", "801694", "801718", "801722", "801723",
+                      "801725", "801760", "801807", "801827", "801829", "801871",
+                      "801874", "801880", "801881", "801886", "801932" ]
+            names: Dict[str, str] = {}
+            for pid in seeds:
+                try:
+                    r = self.call("https://apphwshhq.longhuvip.com/w1/api/index.php",
+                                  "ZhiShuRanking", "SonPlate_Info",
+                                  {"PlateID": pid}, authed=True)
+                except Exception:
+                    continue
+                for row in (r or {}).get("List") or []:
+                    if isinstance(row, (list, tuple)) and len(row) >= 2:
+                        names[str(row[0])] = str(row[1])
+            # 行业级名字（FengKou 首位常为行业）由 KPL_SECTORS/BaceFaceList/JJYDBK 补
+            for nm, code in (("芯片", "801001"), ("锂电池", "801004"), ("医药", "801045"),
+                             ("创新药", "801723"), ("地产链", "801676"), ("房地产", "801007"),
+                             ("AI应用", "801159"), ("存储", "801722"), ("酿酒", "801035"),
+                             ("银行", "801027"), ("化工", "801235"), ("元器件", "801445"),
+                             ("面板", "801067"), ("通信", "801660"), ("科创板", "801351")):
+                names.setdefault(code, nm)
+            try:
+                for nm, _r, pid in self._active_plates_raw():
+                    names.setdefault(str(pid), str(nm))
+            except Exception:
+                pass
+            if len(names) >= 100:
+                try:
+                    from storage import storage as _st
+                    p = _st.data_dir / "kpl_plate_names.json"
+                    tmp = p.with_suffix(".tmp")
+                    tmp.write_text(json.dumps({"ts": time.time(), "names": names},
+                                              ensure_ascii=False), encoding="utf-8")
+                    tmp.replace(p)
+                except Exception as e:
+                    logger.debug(f"板块名表落盘: {e}")
+                with getattr(self, "_plate_name_lock", threading.Lock()):
+                    merged = dict(getattr(self, "_plate_name_cache", {}) or {})
+                    merged.update(names)
+                    self._plate_name_cache = merged
+                logger.info(f"KPL 板块名表构建完成: {len(names)} 条")
+            else:
+                logger.warning(f"KPL 板块名表构建失败（仅 {len(names)} 条）")
+        finally:
+            self._plate_names_building = False
+
+    def get_lhb_business_detail(self, bid: str) -> Dict[str, Any]:
+        """营业部详情（App 下钻 H5 DepkDetails 同源）：
+        GetOneBusinessInfo（名称/关联营业部 AssocNum/上榜次数 UpNum/订阅态）
+        + GetNewDoStockLog（历史操作表：Time=12 近12月, Day=3 近三月,
+        Money=5000000 金额>500万, Order=2——App 抓包原参数）。"""
+        key = f"lhbbd:{bid}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 120:
+            return hit["data"]
+        out: Dict[str, Any] = {"id": str(bid), "logs": []}
+        try:
+            d = self.call(HOST_LHB_KPL, "Business", "GetOneBusinessInfo",
+                          {"BusinessID": str(bid)}, authed=True)
+            out.update({"name": d.get("Name"), "assoc_num": d.get("AssocNum"),
+                        "up_num": d.get("UpNum"), "is_dy": d.get("IsDY"),
+                        "type": d.get("Type")})
+        except Exception as e:
+            logger.debug(f"GetOneBusinessInfo: {e}")
+        try:
+            d = self.call(HOST_LHB_KPL, "Business", "GetNewDoStockLog",
+                          {"BusinessID": str(bid), "Time": "12", "st": "60",
+                           "Index": "0", "SDay": "0", "Day": "3",
+                           "Money": "5000000", "Order": "2"}, authed=True)
+            logs = []
+            for it in (d or {}).get("list") or []:
+                logs.append({
+                    "stock_id": str(it.get("StockID") or ""),
+                    "name": str(it.get("Name") or ""),
+                    "pct": str(it.get("IncreaseAmount") or ""),
+                    "d3": it.get("D3"), "buy": it.get("Buy") or 0,
+                    "sell": it.get("Sell") or 0,
+                    "type": it.get("Type"),          # 1=买入 2=卖出
+                    "money": it.get("Money"), "time": it.get("Time"),
+                })
+            out["logs"] = logs
+        except Exception as e:
+            logger.debug(f"GetNewDoStockLog: {e}")
+        if out.get("name"):
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_lhb_stock_detail(self, code: str, day: str = "") -> Dict[str, Any]:
+        """个股龙虎榜详情（App 下钻 H5 StockDetails 同源 Stock/GetNewOneStockInfo）：
+        席位买卖列表 List[].BuyList/SellList + 历史上榜日 OnTimeList + 连板 lbnum。
+        服务端 Time 缺省回最近上榜日。"""
+        key = f"lhbsd:{code}:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 120:
+            return hit["data"]
+        params = {"Type": "0", "StockID": str(code)}
+        if day:
+            params["Time"] = day
+        try:
+            d = self.call(HOST_LHB_KPL, "Stock", "GetNewOneStockInfo",
+                          params, authed=True)
+        except Exception as e:
+            logger.debug(f"GetNewOneStockInfo: {e}")
+            return {}
+
+        def _seats(rows):
+            out = []
+            for it in rows or []:
+                if not isinstance(it, dict):
+                    continue
+                out.append({
+                    "id": str(it.get("ID") or ""), "name": str(it.get("Name") or ""),
+                    "buy": float(it.get("Buy") or 0), "sell": float(it.get("Sell") or 0),
+                    "px": it.get("PX"), "day": it.get("Day"),
+                })
+            return out
+
+        seats = []
+        for grp in (d or {}).get("List") or []:
+            if isinstance(grp, dict):
+                seats.append({"buy": _seats(grp.get("BuyList")),
+                              "sell": _seats(grp.get("SellList")),
+                              "reason": grp.get("ReasonType")})
+        out = {
+            "name": d.get("Name"), "day": d.get("Time"),
+            "price": d.get("CurPrice"), "pct": d.get("QuoteChange"),
+            "turnover_ratio": d.get("TurnoverRatio"), "circ": d.get("Circulation"),
+            "buy_in": d.get("BuyIn"), "lbnum": d.get("lbnum"), "tag": d.get("tag"),
+            "on_times": (d.get("OnTimeList") or [])[:30],
+            "seats": seats,
+        }
+        if out.get("name"):
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_lhb_sub(self, day: str = "") -> Dict[str, Any]:
+        """订阅 tab 三子页数据（App 订阅 tab = H5 MySub.html 同源）：
+        - today: UserBusiness/GetDay {Day} → 游资分组体系（顶级/一线/知名游资/机构/庄股）
+          各组成员=订阅对象当日上榜动态（无订阅时为空，与 App 空白一致）
+        - offices: UserBusiness/GetOfficev2 → 我的订阅营业部列表
+        - official: 官方组合 = GetYiXianByDay（复用 get_lhb_yixian）"""
+        day = day or time.strftime("%Y-%m-%d")
+        key = f"lhbsub:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        out: Dict[str, Any] = {"day": day, "groups": [], "offices": []}
+        try:
+            d = self.call(HOST_LHB_KPL, "UserBusiness", "GetDay",
+                          {"Day": day}, authed=True)
+            tmap = {str(t.get("ID")): str(t.get("Name"))
+                    for t in (d or {}).get("TList") or []}
+            members = (d or {}).get("List") or {}
+            for gid, lst in members.items():
+                rows = []
+                for m in lst if isinstance(lst, list) else []:
+                    if isinstance(m, dict):
+                        rows.append({"id": str(m.get("ID") or ""),
+                                     "name": str(m.get("Name") or ""),
+                                     "money": m.get("Money"), "num": m.get("Num")})
+                out["groups"].append({"id": str(gid),
+                                      "name": tmap.get(str(gid), f"分组{gid}"),
+                                      "stocks": rows})
+        except Exception as e:
+            logger.debug(f"UserBusiness/GetDay: {e}")
+        try:
+            d = self.call(HOST_LHB_KPL, "UserBusiness", "GetOfficev2", {}, authed=True)
+            offices = []
+            for o in (d or {}).get("List") or []:
+                if isinstance(o, dict):
+                    offices.append({"id": str(o.get("ID") or o.get("BusinessID") or ""),
+                                    "name": str(o.get("Name") or ""),
+                                    "buy": o.get("Buy"), "sell": o.get("Sell")})
+            out["offices"] = offices
+        except Exception as e:
+            logger.debug(f"GetOfficev2: {e}")
+        out["official"] = self.get_lhb_yixian(day)
+        self._cache[key] = {"data": out, "ts": time.time()}
+        return out
 
     def get_qiangdu(self) -> Dict[str, Any]:
         """最强风口（App 首页模块同源 Index/GetInfo 的 ZQFKList，

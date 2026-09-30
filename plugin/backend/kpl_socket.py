@@ -395,6 +395,55 @@ class KplSocketSession:
         # （RPC 永远超时→会话被复位重连，比不加锁死得更快，2026-09-27 首版教训）；
         # 3008/3009/3001 是订阅式，服务端持续推送，无人读时接收缓冲堆满 → 服务端踢线
         self._recv_lock = threading.RLock()
+        # ---- 行情菜单订阅器（2026-09-30 二期）----
+        # 订阅的 cmd 集合 + 最近推送（cmd → {"ts": 接收时刻, "body": 原始 body 含 mini头+ASCII前缀}）
+        # 推送由 drain 线程/RPC 接收路径分帧后入库；重连后由 API 层重发订阅帧
+        self.sub_cmds: set = set()
+        self.sub_latest: Dict[int, Dict[str, Any]] = {}
+        self._drain_buf = bytearray()
+
+    def _feed_frames(self, chunk: bytes) -> None:
+        """字节流 → 完整帧；订阅 cmd 的帧交由 _feed_push 入库，其余直接丢弃。"""
+        if not chunk:
+            return
+        self._drain_buf.extend(chunk)
+        pos = 0
+        while pos < len(self._drain_buf):
+            f, consumed = try_parse_frame(bytes(self._drain_buf[pos:]))
+            if f is None:
+                break
+            pos += consumed
+            cmd = f.get("cmd")
+            if cmd in self.sub_cmds:
+                self._feed_push(cmd, bytes(f["body"] or b""))
+        if pos:
+            del self._drain_buf[:pos]
+        if len(self._drain_buf) > 1 << 20:
+            self._drain_buf.clear()
+
+    def _feed_push(self, cmd: int, body: bytes) -> None:
+        """订阅推送入库。大快照（3004/3007/2501 式）会拆多帧流式到达：
+        3 秒窗口内的同 cmd 帧归入同一组（parts 顺序拼接），窗口外/组首带
+        mini头 的帧开启新组——旧实现只保留最后一帧导致 items 只剩尾段。"""
+        now = time.time()
+        prev = self.sub_latest.get(cmd)
+        if prev and now - prev.get("ts", 0) < 3.0 and len(prev.get("parts", [])) < 24:
+            prev["parts"].append(body)
+            prev["ts"] = now
+        else:
+            self.sub_latest[cmd] = {"ts": now, "parts": [body]}
+
+    def send_subscriptions(self, cmds) -> None:
+        """发送订阅帧（pb.Empty，kind=4）。重连后必须重发（服务端订阅随连接走）。"""
+        new = set(int(c) for c in cmds)
+        for cmd in sorted(new - self.sub_cmds):
+            try:
+                with self._send_lock:
+                    self.sock.sendall(build_frame(cmd, b"", kind=4, seq=self._next_seq()))
+            except Exception as e:
+                logger.debug(f"KPL 订阅帧 {cmd} 发送失败: {e}")
+                return
+        self.sub_cmds |= new
 
     @property
     def alive(self) -> bool:
@@ -558,6 +607,9 @@ class KplSocketSession:
                     if f is None:
                         break
                     pos += consumed
+                    # RPC 间隙混入的订阅推送不能丢：入库供 marketfeed 使用
+                    if f.get("cmd") in self.sub_cmds:
+                        self._feed_push(f["cmd"], bytes(f["body"] or b""))
                     if f["cmd"] == 110:
                         for fno, wt, v in pb_flat(f["body"]):
                             if fno == 1:
@@ -573,8 +625,9 @@ class KplSocketSession:
         return None
 
     def _drain_loop(self):
-        """推送清理线程：订阅式 cmd（3008/3009/3001）的服务端推送无人读时会在内核
-        接收缓冲堆积 → 服务端踢线。定期与 RPC 接收互斥地清空缓冲（帧直接丢弃）。"""
+        """推送清理线程：订阅式 cmd（3008/3009/3001/2100-2126…）的服务端推送无人读时
+        会在内核接收缓冲堆积 → 服务端踢线。定期与 RPC 接收互斥地清缓冲；
+        属于订阅集的帧交 _feed_frames 入库（行情菜单 marketfeed 数据源，2026-09-30）。"""
         t0 = time.time()
         while self._alive:
             time.sleep(1.5)
@@ -595,6 +648,7 @@ class KplSocketSession:
                             self._alive = False
                             break
                         drained += len(d)
+                        self._feed_frames(d)
                         if drained > 8 * 1024 * 1024:
                             break
                     except socket.timeout:
@@ -679,6 +733,12 @@ class KplSocketAPI:
                 try:
                     if not self._session or not self._session.alive:
                         self._session = KplSocketSession(self.device_id, self.static_dir, self.data_dir)
+                        # 重连后订阅随连接丢失：新会话立即重发订阅帧
+                        if getattr(self, "desired_subs", None):
+                            try:
+                                self._session.send_subscriptions(self.desired_subs)
+                            except Exception:
+                                pass
                     resp = self._session.rpc(cmd, body, timeout_s)
                     if resp is not None:
                         return resp
@@ -694,6 +754,53 @@ class KplSocketAPI:
                         pass
                 self._session = None
         return None
+
+    # ---- 行情菜单订阅器（2026-09-30 二期）----
+    # 2100-2126 HQDaBan 家族 pb.Empty 订阅：订阅后服务端以全量快照持续推送，
+    # 由 Session._feed_frames 分帧入库 sub_latest；本层负责订阅管理+读取。
+
+    def subscribe(self, cmds) -> None:
+        """登记并确保当前会话已发送订阅帧"""
+        cmds = set(int(c) for c in cmds)
+        self.desired_subs = getattr(self, "desired_subs", set()) | cmds
+        s = self._session
+        if s and s.alive:
+            s.send_subscriptions(cmds)
+
+    def ensure_session(self, timeout_s: float = 90) -> bool:
+        """主动拉起会话（阻塞，最多 timeout_s）。成功后自动重发 desired_subs 订阅帧。"""
+        end = time.time() + timeout_s
+        while time.time() < end:
+            with self._lock:
+                if self._session and self._session.alive:
+                    self._session.send_subscriptions(getattr(self, "desired_subs", set()))
+                    return True
+                s = KplSocketSession(self.device_id, self.static_dir, self.data_dir)
+                if s.connect():
+                    self._session = s
+                    s.send_subscriptions(getattr(self, "desired_subs", set()))
+                    return True
+                time.sleep(2)
+        return False
+
+    def get_push(self, cmd: int, max_age: float = 90) -> Optional[Dict[str, Any]]:
+        """读取某 cmd 最近推送（含 ts）。会话不活/数据过期返回带 stale 标记的旧值或 None"""
+        s = self._session
+        if not s:
+            return None
+        hit = s.sub_latest.get(cmd)
+        if not hit:
+            return None
+        out = dict(hit)
+        out["stale"] = (time.time() - hit["ts"]) > max_age
+        return out
+
+    def push_ages(self) -> Dict[int, float]:
+        s = self._session
+        if not s:
+            return {}
+        now = time.time()
+        return {c: round(now - v["ts"], 1) for c, v in s.sub_latest.items()}
 
     # ---- 板块详情：股票池（龙一排序+全字段行情） ----
 

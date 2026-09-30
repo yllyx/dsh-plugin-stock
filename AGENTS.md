@@ -141,7 +141,61 @@ git push origin main --tags
 - **主题机会页**（`GET /api/kpl/themes?tab=themes|calendar&index=&st=`）：双Tab同端点 `ThemeNews/GetList`（apparticle），**Type=-1=最新主题、Type=3=投资日历**（mitmproxy 代理对 apparticle 域有效——ART/LHB 域无 pinning 可抓，apphwshhq 域有 pinning 抓不到）。主题条目 `Stocks` 按 `SetTop=1` 优先展示前4只（2×2）；日历条目 `ColorType` 1红=事件 2橙=会议。分页用 Index（0,1,2…st=30/页）；`dex 里 bj 类` = ForumsTuyere 论坛仓库（GetEvnArt/AddFocus 等，主题收藏/关注用）
 - **主题详情页**（`GET /api/kpl/themes/{news_id}`）：`ThemeNews/GetInfo`（apparticle，参数 `NewsID`+`Type=0`）。Info 含 `Content`(HTML正文)、`ZSCode/ZSName/ZSDesc`(主题介绍卡)、`Stocks[{Code,Name,Rate,Desn公司简介,IsSel}]`；`TiCai/ReaderCount`(appres) 是阅读计数上报可忽略。前端 KplTab 下钻用**栈(drills)**实现逐级返回，底部导航切换时清栈
 
+### ⭐ 行情菜单二期（2026-09-30 全 tab 数据源逆向+订阅器落地）
+
+**App 行情菜单 7 tab（板块/个股/港股/打板/情绪/直播/全球）数据源全部 socket**（mitmproxy 双重实锤：板块/个股 tab 停留+下拉刷新 HTTP 零流量）。行情页类图（dex 实锤）：`newindex/stareplate/` 包 = StarePlateFragment(容器)/StockFragment(个股)/HKFragment+HKStockListFragment(港股)/PlateFragment+PlateListPresenter(板块)/PatternFragment(打板)/MarketLiveFragment(直播)/MarketMoodFragment(情绪)。
+
+**订阅面架构（`backend/kpl_marketfeed.py` 新模块）**：
+- `kpl_socket.Session` 增 `sub_cmds/sub_latest/_feed_push/_feed_frames`：drain 线程与 RPC 接收路径把**订阅 cmd 的帧**入库（3 秒窗口内同 cmd 帧归入同组 parts——大快照分帧到达，旧实现只留最后一帧导致 items 只剩尾段）；其余推送仍丢弃防缓冲堆满。`KplSocketAPI.subscribe/ensure_session/get_push/push_ages`；会话重建时自动重发 desired_subs（订阅随连接走）
+- pb.Empty 订阅族 **2100-2126 全家族 13 cmd + 3004/3007 带参订阅**：订阅后服务端持续推全量快照（**盘后也推**，18:4x 实测）；`GET /api/kpl/marketfeed` 一次返回全部语义化快照（20s 缓存）；keepalive 线程 25s 巡检数据龄，停滞自动重发订阅帧
+- **⭐ ASCII 前缀剥离必须用 mini 头 bytes[2:4] 长度（权威）**：2106 前缀=`hqDaban|133:20010/2106-0/0`（26 字符，尾部多参数回显"0"），regex 剥到斜杠会错 1 字节整帧报废
+- **⭐ 3003 主指数分时 time 格式=HMMSSmmm**（93000000=9:30:00.000，1 位小时+2 分+3 毫秒），//10^5=930→09:30
+
+**各 cmd 定案（字段号经 2026-09-30 样本逐个解析）**：2100=打板情绪条(涨停52/昨57·封板率81.25/87.69·跌停9/10)；2101=市场雷达(items: 状态"封涨大减"+内容"涨停封单大幅减少1574万元…"+个股+时间戳)；2106=量能(f9 总额/f5 汇总文字"14379亿(2.04%,增量287亿)"/f10 分钟序列)；2107=涨停形势(11 数值+文字)；2108=权重表现(拖累股/评语/领涨跌行业)；2109=北向(净额/评语/披露口径)；2110=涨跌统计(zt/dt/realZt/realDt/rise 2567/down 2823/sign"市场人气较好"+zdList 分布——与 App 直播 tab 数字逐位一致)；2111=温度提示(f6 文字"情绪指标过高(75)…")；2114=涨跌分布今昨双快照(±11 档)；2115=总览(沪深成交 1.437 万亿/情绪 0.41"不活跃"/预估 14502 亿)；**2116=涨停家数分钟序列(f10)+分时收益曲线(f12/f21)+盘面播报文字(f20 "15:00 三大指数全天分化…"——直播 tab 播报源)**；2117=连板天梯(7板新华传媒/4板襄阳轴承/3板×4/2板×6)；2126=风向标 up3+down3(涨幅+板块)；2121=涨停股票列表(带参 QxZtSituationStockReq{bsType1,orderType2,sortType3}，参数枚举待盘中校准)
+
+**个股 tab（StockFragment→common/quota/StockRangeListFragment+RealTimeChartsPresenter）**：数据=**3004 HQList.SubRealtimeLHB 订阅**（LHB=LeaderBoard 非龙虎榜！）+**3101 GetRealtimeLHBRangeData 区间拉取（时间轴回放，startTime/endTime=HHMM 整数如 925/1500——App 从时间轴控件字符串 replace(":","") 解析）**。Req{quotaType1,sortType2,cxType3,limitType4,stType5(沪),zbType6,cybType7,kcbType8,bjsType9(北交,App 取反=过滤开关),indexType10,start20,count21}；Resp items41=GroupStockQuotasResp.Item(quotas f100 动态列)。**实测盘后：初次订阅推一次头部(total=3403 全市场✓)无 items——items 为盘中增量推送**；App 盘后显示=KPL_CACHE 本地缓存，插件从下一交易时段起积累（前端已如实提示，勿造数据）。参数枚举（DynamicQuotaBean.getServerType/getServerSort 从本地 DB 读）待盘中用 App 截图锚定
+
+**板块 tab 表格（PlateListPresenter 字节码实锤）**：数据=**3007 HQList.SubPlateTypeQuotasList 订阅**，Req{quotaType1,sortType2,plateType3(精选/行业),start4,count5(30)}；Resp Item{plateId1,plateName2,**strength3(强度)**,incRate4,incSpeed5,tur6,**mainNetAmount7(主力净额)**,mainBuy8}——强度/主力净额列就在这（盘后静默待盘中验证）。~~RealRankingInfo 是板块强度表~~已证伪：HTTP `ZhiShuRanking/RealRankingInfo`(apphwshhq) Type=12/13/14 只返回 801 板块的市值/PE 静态列（Title="第二季度机构增仓/2026PE/2027PE" 是**滑动附加列**），无强度/主力净额；j00.Y 签名=(Type,ZSType,Index,st,Order+RStart/REnd/Date)
+
+**直播 tab**：3003 分时（currNums=[0,1,2]=上证/深证/创业板，preClose/turnover/points 4 位定点）+2110 四格+2114 分布+2115 温度/量能+2116 涨停曲线+播报+2106 量能+2108 权重+2109 北向——全部已接 `/api/kpl/marketfeed`+`/api/kpl/mkttrend`。前端：KplDabanSub/KplLiveSub/KplStockSub/KplHkSub 四组件+KplPlateSub 顶部横滑卡（沪深创/预测量能/涨跌家数，kpl-mkt-* CSS 显式色值）+canvas 分时图/分布柱状图；`useMarketFeed` hook 20s 轮询
+
+**港股 tab**：HKFragment/HKStockListFragment/GetHKIndustry_Ranking/GetHKSubject_Ranking 已定位（api_registry），协议未逆向（三卡恒指/国企/恒生科技疑=3006 传 HK 指数 id），页面骨架占位
+
+**坑（本轮实锤）**：① 3004/3007/3101 带参 cmd **盘后完全静默**（连 110 错误都不回）但**不踢线**——勿把静默当参数错反复盲扫；2100-2126 pb.Empty 族盘后照推；② 曾误判"会话 1s 被踢"为 3004 帧触发——实为 8765 后端进程同 device 互踢残留，**排查互踢先杀 8765 再测**；③ 服务端对**同一会话重复订阅 3004 只推一次**，重订阅静默≠失败；④ DSH 看门狗杀进程后可能不自动拉起（状态卡 running）——手动 DETACHED_PROCESS 拉起 uvicorn 后 DSH 经 isAlreadyRunning 复用
+
+### ⭐ 龙虎榜（2026-09-30 全套复刻，App 底部导航·龙虎榜菜单同源）
+
+**数据面 = HTTP `LongHuBang`/`Business`/`Stock`/`UserBusiness` 控制器 @applhb.kaipanla.com（ApiConfig.API_LHB，App 龙虎榜下钻页是 H5：appage/w48/web/DepkDetails.html、StockDetails.html、MySub.html——抓包实锤全部请求参数）**。主列表为原生页但数据同走 HTTP（mitmproxy 324 流量全解）：
+
+| 功能 | 接口 | 关键参数/锚定 |
+|---|---|---|
+| 股票榜 | `LongHuBang/GetStockList` {Day} | 万科Ａ 4.41%/净买 71384560=7138万 ✓；字段 ID/Name/IncreaseAmount/D3(1=3日榜标)/BuyIn/JoinNum/Turnover/CircPrice/Amplitude/TurnoverRatio/Capitalization；服务端序直出 |
+| 机构榜 | `LongHuBang/GetAgencyListV2` {Time, Index:0, st:500}（App 参数，字节码 j00.D；Day 亦被接受） | Item 含 **FengKou=801板块id 数组（App 概念列来源）**；本地 BuyIn 降序；华是科技 2.14亿 ✓ |
+| 营业部榜 | `LongHuBang/GetBusinessList` {Day} | 245 席位（自然人 75.79/73.57 ✓）；中信上海分公司 5.03亿/4.73亿/21 ✓；本地 Buy 降序 |
+| 机构净买历史柱状 | `LongHuBang/GetAgencyDayList` {SDay, EDay}（字节码 ox0.U 实锤） | 按日聚合 BuyIn；App"机构净买入 10.71亿"顶部汇总口径**未复现**（候选实测 ΣV2=5.25亿/Σ\|BuyIn\|=10.36亿/DayList当日=4.04亿——插件显示 ΣV2，待与 App 同刻锚定） |
+| 营业部详情 | `Business/GetOneBusinessInfo` {BusinessID} + `Business/GetNewDoStockLog` {BusinessID, Time:12, st:30, Index:0, SDay:0, Day:3, Money:5000000, Order:2}（App 抓包原参数） | Info: AssocNum 关联营业部/UpNum 上榜次数；Log 条目 money/1e4 与 App"金额(万)"逐位一致（近岸蛋白 433992.44 ✓） |
+| 个股龙虎榜详情 | `Stock/GetNewOneStockInfo` {Type:0, Time, StockID} | **List[].BuyList/SellList=买卖席位**（名称/买卖额/PX 排名）；OnTimeList 历史上榜日；Time 缺省回最近上榜日 |
+| 一线游资（订阅·官方组合） | `LongHuBang/GetYiXianByDay` {Day} | 分组[{Name 一线游资, stocks{Money,Num 上榜次数}}] |
+| 上榜代码清单 | `LongHuBang/UpdateList` {Day} | 增量刷新判定用 |
+| 我的订阅 | `UserBusiness/GetOfficev2` | 空列表=无订阅（与 App 空白一致）；订阅写=`LongHuBang/Add`（二期） |
+
+- **历史回看（✅ 2026-10-01 实锤打通）**：三榜历史参数名是 **Time**（App 字节码 j00.G：GetStockList={Type:"2", Time, Index:"0", st:"500"}；~~Day~~ 被服务端静默忽略恒返最新——曾据此误判"历史无接口"）。实测 Time=2026-09-29：超声电子 10.01%/42228421 与 App 切日期实拍逐位一致；GetBusinessList/GetAgencyListV2/GetYiXianByDay 的 Time 同样有效（机构榜 09-29=36 只 vs 09-30=31）。App 切历史日期零 HTTP=读本地缓存（当日在线拉取、历史读缓存），插件直拉服务端等价。**get_lhb(day) 非交易日自动归一到最近前一交易日**（深交所日历，国庆请求 10-05 → 返回 09-30）；前端 ◀▶ ±1 自然日点击+后端归一，▶ 今日禁用（App 同款）
+- **插件端点**：`/api/kpl/lhb?day=`（三榜合一+counts+agency_days，60s 缓存，非交易日归一）、`/api/kpl/lhb/business/{bid}`、`/api/kpl/lhb/stock/{code}?day=`、`/api/kpl/lhb/yixian?day=`、`/api/kpl/lhb/sub?day=`
+- **前端**：KplLhbPage（上榜数+◀▶交易日历跳日+股票/机构/营业部/订阅四子 tab+机构柱状 canvas KplLhbBars）+ KplLhbBizDetail（近三月上榜/关联营业部/历史操作表，前两行高亮=App 同款米黄底）+ KplLhbStockDetail（买卖席位表+历史上榜日）；CSS kpl-lhb-* 显式白底。入口=KPL_NAV "龙虎榜"（原有占位已实装）
+- **概念列口径（✅ 已解决，2026-09-30 深夜）**：App 用 GetAgencyListV2 的 FengKou 801 板块 id 数组 + **KPL_CACHE STOCK 表翻译**。实锤：从模拟器 KPL_CACHE 导出 STOCK 表 TYPE=1 板块行 **1568 条官方名表**（801159=机器人概念、801199=汽车零部件、801004=锂电池），落盘 `data_dir/kpl_plate_names.json`（板块名稳定不过期）；华是科技"机器人概念/AI应用"与 App 逐位一致。**FengKou 数组顺序≠App 显示顺序**（App 按当日概念强度挑前 2，插件按数组原序——同集可能异序，待盘中校准排序规则）。**801159≠AI应用**（插件旧 KPL_SECTORS 猜错）。接口源：`ZhiShuRanking/SonPlate_Info {PlateID}` 返回子概念 [id,名,强度]（可遍历补新板块，行业种子 × 一层 ~200s，种子版在 _build_plate_names）；⚠️ PlateTCConfig 的 58 个 id 是无子板块另一族不可作种子；⚠️ GetFengKList 概念串口径不同弃用；RefreshStockList_W8 等同步接口已不存在（9999），官方名表只能 App DB 导出或遍历构建
+- **订阅 tab（✅ 三子页已实现）**：`UserBusiness/GetDay {Day}` = **游资分组体系**（TList: 3顶级游资/2一线游资/4知名游资/5机构/1庄股 + List 分组成员=订阅对象当日动态，无订阅全空=App 同款）；`UserBusiness/GetOfficev2` = 我的订阅营业部；官方组合=GetYiXianByDay。端点 `/api/kpl/lhb/sub`，前端 KplLhbSubTab 独立组件（修括号教训：深层三元嵌套改抽独立组件早 return 扁平写）。**LongHuBang/Add {StockID}** = 订阅个股龙虎榜提醒（errcode=0 实测；**取消接口不存在**——Del/Delete/Cancel/Remove 均 9999，测试账号 000678 订阅无法程序化撤销）
+- **待办（剩余）**：①机构净买入汇总口径锚定（同刻对 App）②概念排序规则（App 按强度挑前 2）③悬浮球"会不会上龙虎榜"（LhbWillItGoUp 包，VIP 预测）④个股 K线/分时叠加（GetStockChart/GetBusinessChart）⑤订阅写 UI（App 内操作）
+
+
+
+### ⭐ 权威交易日历（2026-09-30 接入，深交所官方口径，法定节假日/调休全覆盖）
+
+- **数据源**：`https://www.szse.cn/api/report/exchange/onepersistenthour/monthList?month=YYYY-MM`（深交所官方月历，`jybz=1` 交易日/`0` 休市；10-01~10-07 国庆全休、10-08 复市这类安排直接以交易所数据为准，**插件不做任何自己的节假日推断**）。模块 `backend/trade_calendar.py`（TradeCalendar：按月拉取+磁盘缓存 `trade_calendar.json` 7 天过期+过期后网络失败仍用旧缓存；完全无数据才退化周末规则）。`GET /api/trade-calendar` 返回今日状态摘要（is_trading_day/in_trading_hours/prev/next_trading_day）
+- **接入点（此前全部只排周末、国庆等法定假工作日会误判"盘中"）**：① main.py pytdx keepalive"仅交易时段重试"② kpl.py home feed 人气榜 盘中 type1/复盘 type13 切换 ③ 前端首页人气榜徽标 ④ KplPopRankPage 默认 tab ⑤ 最强风口盘前提示。前端：WatchlistPanel 启动拉日历存 `window.__kplTradeCal`（10 分钟刷新+重渲染 tick），helper `isTradingNowCal()/isTradingDayToday()`（无数据退化周末规则）；个股 tab 空态显示"下一交易日: 2026-10-08"具体日期
+- **遗留**：alert_engine 时间止损"5 个交易日"仍是自然日近似（TRADING_DAY_HOURS=24，与日历无关的独立简化，待后续接日历）
+
 ### 题材库（Socket 通道已独立化：内置 unidbg 签名器，无模拟器/无网关/无 frida，2026-09-23 全链路实测）
+
 
 - **架构**：`kpl.py` → `kpl_socket.get_kpl_socket()`（KplSocketAPI：3009/3010/2501/3001/3006）→ `KplSocketSession.connect()`（TLS mTLS + 260挑战 + **`sign_local()`** + 610鉴权 + 心跳7s）
 - **内置签名器**：`backend/signer/`（kplsigner.jar + lib/*.jar + kpl_min.apk 裁剪版 1.2MB + libauthSign_armv7_patched.so，~30MB 随插件分发）。原理 = unidbg 模拟 armeabi-v7a 的 libauthSign.so：VM 传真 APK（包名/签名证书/assets 自动解析），mock `currentApplication`/`getAssets`/`Config.channelID("129")`/`versionName("6.3.20.0")`/`ApiConfig.apiVersion("w48")`，so 内 unidbg/frida 检测字符串已 patch（等长破坏 9 处）。**依赖系统 Java 8+**（`_find_java` 自动定位并执行校验，规避 Oracle java8path 存根——该存根 `java -version` 直接失败）
