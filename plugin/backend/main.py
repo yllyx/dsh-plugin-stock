@@ -1502,6 +1502,24 @@ async def kpl_poprank(
     return await asyncio.to_thread(kpl_api.get_kpl().get_pop_rank, type, order, start, count)
 
 
+@app.get("/api/kpl/sector/{plate_id}")
+async def kpl_sector_detail(plate_id: str):
+    """板块详情（近期活跃板块点入，801/803 板块体系）：2501 股票池+板块涨幅"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_sector_detail, plate_id)
+
+
+@app.get("/api/kpl/fengkou")
+async def kpl_fengkou(day: str = Query("")):
+    """市场风口（App 下钻页同源 StockFengKData/GetFengKList，主力净额降序；day=回看历史日期）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_fengkou, day)
+
+
+@app.get("/api/kpl/daban")
+async def kpl_daban():
+    """风向标（打板页 tab 同源，socket 2103 订阅式盘中实时；盘后回退快照）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_daban)
+
+
 @app.get("/api/kpl/qiangdu")
 async def kpl_qiangdu():
     """最强风口（App 同源 QiangDu_Article，盘中实时；盘后回退当日快照）"""

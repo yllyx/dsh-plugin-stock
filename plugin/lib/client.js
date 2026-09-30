@@ -1883,6 +1883,29 @@ window.__ModuleLoader__.load({
                     qdRows.length > 0 && React.createElement("div", null, qdRows),
                     qdRows.length === 0 && React.createElement("div", { className: "kpl-empty" }, "盘中数据，收盘后清空")),
 
+                // ===== 风向标（App 同源 CWeatherVaneList：SZ 涨 3 卡 + XD 跌 3 卡） =====
+                React.createElement("div", { className: "kpl-sec" },
+                    React.createElement("div", { className: "kpl-sec-head" },
+                        React.createElement("span", { className: "t" }, "风向标"),
+                        React.createElement("span", {
+                            className: "more", onClick: () => go({ page: "daban" }),
+                        }, (home && home.daban && ((home.daban.sz || []).length + (home.daban.xd || []).length)) ? "更多 ›" : "进入 ›")),
+                    home && home.daban && ((home.daban.sz || []).length + (home.daban.xd || []).length) > 0 &&
+                        React.createElement("div", { className: "kpl-fx-cards" },
+                            (home.daban.sz || []).map((r, i) =>
+                                React.createElement("div", { key: "s" + i, className: "kpl-fx-card" },
+                                    React.createElement("div", { className: "plate" }, r.plate || "--"),
+                                    React.createElement("div", { className: "sname" }, r.name),
+                                    React.createElement("div", { className: "srate up" }, "+" + Number(r.rate).toFixed(2) + "%"))),
+                            (home.daban.xd || []).map((r, i) =>
+                                React.createElement("div", { key: "x" + i, className: "kpl-fx-card" },
+                                    React.createElement("div", { className: "plate" }, r.plate || "--"),
+                                    React.createElement("div", { className: "sname" }, r.name),
+                                    React.createElement("div", { className: "srate down" }, Number(r.rate).toFixed(2) + "%")))),
+                    home && home.daban && ((home.daban.sz || []).length + (home.daban.xd || []).length) === 0 &&
+                        React.createElement("div", { className: "kpl-empty" },
+                            "盘中实时推送，下一交易日 9:30 起自动更新")),
+
                 // ===== AI快讯 =====
                 ((home && home.flash) || []).length > 0 && React.createElement("div", { className: "kpl-flash" },
                     React.createElement("div", { className: "kpl-flash-head" },
@@ -2006,7 +2029,7 @@ window.__ModuleLoader__.load({
                                     React.createElement("b", { className: Number(s.space) >= 0 ? "up" : "down" }, fmtRate(s.space)),
                                     React.createElement("span", null, s.rule_short || "")))))),
 
-                // ===== 近期活跃板块 =====
+                // ===== 近期活跃板块（App 同源 BaceFaceList 4 条；点击进板块详情） =====
                 ((home && home.active_plates) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "近期活跃板块")),
@@ -2014,20 +2037,27 @@ window.__ModuleLoader__.load({
                         home.active_plates.map((p, i) =>
                             React.createElement("div", {
                                 key: i, className: "kpl-active-plate",
-                                onClick: p.id ? () => go({ page: "tikaDetail", id: p.id, name: p.name }) : undefined,
+                                onClick: p.plateId ? () => go({ page: "sectorDetail", plateId: String(p.plateId), name: p.name }) : undefined,
                             },
                                 React.createElement("div", { className: "n" }, p.name),
-                                React.createElement("div", { className: "r " + rateCls(p.rate) }, fmtRate(p.rate)))))),
+                                React.createElement("div", { className: "r " + rateCls(p.rate) }, (p.rate >= 0 ? "+" : "") + Number(p.rate).toFixed(2) + "%"))))),
 
-                // ===== 市场风口（热词） =====
-                ((home && home.tuyere_words) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
+                // ===== 市场风口（App 同款散布 pill：股票名 红涨绿跌） =====
+                React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "市场风口"),
-                        React.createElement("span", { className: "more" }, "更多 ›")),
-                    React.createElement("div", { className: "kpl-tuyere" },
-                        home.tuyere_words.slice(0, 10).map((w, i) =>
-                            React.createElement("span", { key: i, className: "kpl-tuyere-pill" },
-                                w.KeyWord, React.createElement("b", null, " " + (w.num || "")))))),
+                        React.createElement("span", {
+                            className: "more", onClick: () => go({ page: "fengkou" }),
+                        }, (home && home.fengkou || []).length ? "更多 ›" : "进入 ›")),
+                    ((home && home.fengkou) || []).length > 0 && React.createElement("div", { className: "kpl-fk-scatter" },
+                        (home.fengkou || []).slice(0, 6).map((r, i) =>
+                            React.createElement("span", {
+                                key: i, className: `kpl-fk-pill ${Number(r.net) >= 0 ? "red" : "green"}`,
+                                style: { top: [8, 58, 30, 78, 4, 50][i % 6] + "%", left: [30, 4, 62, 12, 48, 74][i % 6] + "%" },
+                                onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }),
+                            }, r.name))),
+                    ((home && home.fengkou) || []).length === 0 && React.createElement("div", { className: "kpl-empty" },
+                        "监控交易最活跃的股票，自动上榜")),
 
                 // ===== 推荐文章 =====
                 ((home && home.articles) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
@@ -2585,6 +2615,139 @@ window.__ModuleLoader__.load({
                             s.name, " ｜ 5分钟人气上升 ", s.num || 0, " 位"))));
         }
 
+        /* ---- 最强风口页（App 打板页·风向标同源，2026-09-27 实拍复刻）---- */
+
+        function KplQiangduPage({ go }) {
+            const [data, setData] = useState(null);
+            const [idx, setIdx] = useState(null);
+            const [loading, setLoading] = useState(true);
+            useEffect(() => {
+                let alive = true;
+                api("/api/kpl/qiangdu").then(x => {
+                    if (!alive) return;
+                    setData(x); setLoading(false);
+                }).catch(() => { if (alive) setLoading(false); });
+                api("/api/index-quotes").then(x => {
+                    if (alive) setIdx(((x || {}).indices || {})["000001"] || null);
+                }).catch(() => { });
+                return () => { alive = false; };
+            }, []);
+            const rateCls = r => (Number(r) >= 0 ? "up" : "down");
+            const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
+            // 优先对象行（后端已反查代码/上榜时间），回退原始数组行
+            const list = ((data && data.rows) || []).length > 0 ? (data.rows || [])
+                : ((data && data.list) || []).map(row => Array.isArray(row) ? {
+                    name: row[1] || "-", st: row[2] || "", rate: row[3],
+                    plate: row[4] || "", time: /^\d{1,2}:\d{2}$/.test(String(row[0] || "")) ? row[0] : "",
+                    code: "",
+                } : { name: row.Name || "-", st: "", rate: row.Rate, plate: row.Plate || "", time: "", code: "" });
+            const sent = (data && data.sentiment) || {};
+            const t = sent.today || {}, y = sent.yesterday || {};
+            const day = (data && (data.snap_day || data.day)) || "";
+            const idxUp = idx && Number(idx.change_pct) >= 0;
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "最强风口", onBack: () => go({ page: "back" }) }),
+                // 交易日 9:30 前提示（App 同款）：数据尚未开始计算
+                (() => {
+                    const n = new Date();
+                    const beforeOpen = n.getDay() >= 1 && n.getDay() <= 5 &&
+                        (n.getHours() * 60 + n.getMinutes()) < 570;
+                    return beforeOpen && React.createElement("div", { className: "kpl-fk-tip" },
+                        "数据将在 9:30 开始计算");
+                })(),
+                // 指数条（App 顶部：沪 3888.37 -48.15 -1.22%）
+                idx && React.createElement("div", { className: "kpl-qd2-idx" },
+                    React.createElement("span", { className: "nm" }, "沪"),
+                    React.createElement("b", { className: idxUp ? "up" : "down" }, idx.price != null ? idx.price : "--"),
+                    React.createElement("span", { className: `chg ${idxUp ? "up" : "down"}` },
+                        `${idx.change != null ? idx.change : "--"}  ${idx.change_pct != null ? fmtRate(idx.change_pct) : "--"}`)),
+                // 情绪指标条（涨停板/强势股/跌停股 今日/昨日）
+                React.createElement("div", { className: "kpl-qd2-stat" },
+                    [{ k: "涨停板", tk: t.ztjs, yk: y.ztjs }, { k: "强势股", tk: t.strong, yk: y.strong },
+                     { k: "跌停股", tk: t.df_num, yk: y.df_num }].map(c =>
+                        React.createElement("div", { key: c.k, className: "cell" },
+                            React.createElement("div", { className: "lbl" }, c.k),
+                            React.createElement("div", null,
+                                React.createElement("b", { className: "up" }, c.tk || "--"), " / ",
+                                React.createElement("span", { className: "yest" }, c.yk || "--")),
+                            React.createElement("div", { className: "lbl" }, "今日 / 昨日")))),
+                // 表头 + 最强风口列表（App 同款：名称+代码+上榜时间徽标 | 强度 | 涨跌幅 | 精选板块）
+                React.createElement("div", { className: "kpl-qd2-head" },
+                    React.createElement("span", null, "#"),
+                    React.createElement("span", null, "股票名称"),
+                    React.createElement("span", { className: "st" }, "强度"),
+                    React.createElement("span", { className: "rt" }, "涨跌幅"),
+                    React.createElement("span", { className: "pl" }, "精选板块")),
+                loading && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
+                !loading && list.map((r, i) =>
+                    React.createElement("div", { key: i, className: "kpl-qd2-row" },
+                        React.createElement("span", { className: "rk" }, i + 1),
+                        React.createElement("span", { className: "nm" },
+                            r.name,
+                            React.createElement("span", { className: "cd" },
+                                r.code || "",
+                                r.time ? React.createElement("i", { className: "tm" }, r.time) : null)),
+                        React.createElement("span", { className: "st" }, r.st),
+                        React.createElement("span", { className: `rt ${rateCls(r.rate)}` }, fmtRate(r.rate)),
+                        React.createElement("span", { className: "pl" }, (r.plate || "").split("/").map((p, j) =>
+                            React.createElement("span", { key: j, className: "pl-item" }, p))))),
+                !loading && list.length === 0 && React.createElement("div", { className: "kpl-empty" },
+                    "风向标为盘中实时数据，下一交易日 9:30 起自动更新"),
+                day && React.createElement("div", { className: "kpl-qd2-day" },
+                    `数据日期 ${day}${(data && data.cached) ? "（盘后快照）" : ""}`));
+        }
+
+        /* ---- 风向标页（App 打板页·风向标 tab 同源，socket 2103 订阅式）---- */
+
+        /* ---- 风向标页（App 打板页·风向标 tab 同源 CWeatherVaneList+DaBanList）---- */
+
+        function KplDabanPage({ go }) {
+            const [data, setData] = useState(null);
+            const [loading, setLoading] = useState(true);
+            useEffect(() => {
+                let alive = true;
+                api("/api/kpl/daban").then(x => {
+                    if (!alive) return; setData(x); setLoading(false);
+                }).catch(() => { if (alive) setLoading(false); });
+                return () => { alive = false; };
+            }, []);
+            const head = (data && data.head) || {};
+            const sz = (data && data.sz) || [];
+            const xd = (data && data.xd) || [];
+            const fmtPair = pair => (pair == null || pair[0] == null) ? "--" :
+                (String(pair[0]) + (pair[0].toString().indexOf("%") < 0 && isNaN(Number(pair[0])) ? "" : "") ) ;
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "风向标", onBack: () => go({ page: "back" }) }),
+                // 情绪条（App 打板页顶部同款：涨停板/封板率/跌停股 今日/昨日）
+                React.createElement("div", { className: "kpl-sd-summary" },
+                    [{ k: "涨停板", tk: head.zt ? head.zt[0] : null, yk: head.zt ? head.zt[1] : null },
+                     { k: "封板率%", tk: head.fbl ? head.fbl[0] : null, yk: head.fbl ? head.fbl[1] : null },
+                     { k: "跌停股", tk: head.dt ? head.dt[0] : null, yk: head.dt ? head.dt[1] : null }].map(c =>
+                        React.createElement("div", { key: c.k, className: "cell" },
+                            React.createElement("div", { className: "lbl" }, c.k),
+                            React.createElement("div", null,
+                                React.createElement("b", { className: c.k === "跌停股" ? "down" : "up" }, c.tk != null ? c.tk : "--"),
+                                " / ",
+                                React.createElement("span", { className: "yest" }, c.yk != null ? c.yk : "--")),
+                            React.createElement("div", { className: "lbl" }, "今日 / 昨日")))),
+                // 风向标 6 卡（SZ 涨 3 + XD 跌 3，App 首页同款）
+                React.createElement("div", { className: "kpl-fx-cards" },
+                    sz.map((r, i) =>
+                        React.createElement("div", { key: "s" + i, className: "kpl-fx-card" },
+                            React.createElement("div", { className: "plate" }, r.plate || "--"),
+                            React.createElement("div", { className: "sname" }, r.name),
+                            React.createElement("div", { className: "srate up" }, "+" + Number(r.rate).toFixed(2) + "%"))),
+                    xd.map((r, i) =>
+                        React.createElement("div", { key: "x" + i, className: "kpl-fx-card" },
+                            React.createElement("div", { className: "plate" }, r.plate || "--"),
+                            React.createElement("div", { className: "sname" }, r.name),
+                            React.createElement("div", { className: "srate down" }, Number(r.rate).toFixed(2) + "%")))),
+                (data && data.day) && React.createElement("div", { className: "kpl-qd2-day" },
+                    `数据日期 ${data.day}`),
+                React.createElement("div", { className: "kpl-qd2-day" },
+                    "打板页完整股票列表（竞价/即将涨停/涨停）开发中"));
+        }
+
         /* ---- 行情页（子Tab: 板块/个股/...） ---- */
 
         function KplMarketPage({ go, initialSub }) {
@@ -2947,8 +3110,11 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "themeDetail") content = React.createElement(KplThemeDetailPage, { id: drill.id, go });
                 else if (drill.page === "tika") content = React.createElement(KplTikaPage, { go });
                 else if (drill.page === "tikaDetail") content = React.createElement(KplTikaDetailPage, { id: drill.id, name: drill.name, go });
+                else if (drill.page === "sectorDetail") content = React.createElement(KplSectorDetailPage, { plateId: drill.plateId, name: drill.name, go });
+                else if (drill.page === "fengkou") content = React.createElement(KplFengkouPage, { go });
                 else if (drill.page === "poprank") content = React.createElement(KplPopRankPage, { go });
                 else if (drill.page === "qiangdu") content = React.createElement(KplQiangduPage, { go });
+                else if (drill.page === "daban") content = React.createElement(KplDabanPage, { go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
                 content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
@@ -3673,10 +3839,12 @@ window.__ModuleLoader__.load({
                 .kpl-sent-cell .val b { font-size: 19px; }
                 .kpl-sent-cell .val .yest { font-size: 11px; color: var(--dsw-alias-label-secondary); }
                 .kpl-sent-day { font-size: 10px; color: var(--dsw-alias-label-secondary); text-align: right; }
-                .kpl-active-plates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-                .kpl-active-plate { text-align: center; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; padding: 8px 4px; cursor: pointer; }
-                .kpl-active-plate .n { font-size: 12px; color: #3b82f6; font-weight: 600; }
-                .kpl-active-plate .r { font-size: 13px; font-weight: 700; margin-top: 2px; }
+                .kpl-active-plates { display: grid; grid-template-columns: repeat(4, 1fr); background: #fff; border-radius: 8px; padding: 14px 4px; margin: 6px 8px; }
+                .kpl-active-plate { text-align: center; cursor: pointer; border-right: 1px solid #f0f0f0; padding: 2px 4px; }
+                .kpl-active-plate:last-child { border-right: none; }
+                .kpl-active-plate:hover { background: #f7f9ff; }
+                .kpl-active-plate .n { font-size: 16px; color: #2f6bff; font-weight: 700; }
+                .kpl-active-plate .r { font-size: 14px; font-weight: 700; margin-top: 8px; }
                 .kpl-tuyere { display: flex; flex-wrap: wrap; gap: 8px; }
                 .kpl-tuyere-pill { background: #ef4444; color: #fff; border-radius: 999px; padding: 4px 14px; font-size: 12px; font-weight: 600; }
                 .kpl-tuyere-pill b { font-weight: 400; opacity: .85; }
@@ -3897,6 +4065,13 @@ window.__ModuleLoader__.load({
                 .kpl-pop2-five .t b { color: #e0333a; }
                 .kpl-pop2-five .it { color: #333; }
                 /* ---- 最强风口页（App 风向标同源，显式白底） ---- */
+                .kpl-qd2-idx { display: flex; align-items: baseline; gap: 10px; background: #fff; border-radius: 6px; padding: 10px 14px; margin: 6px 8px; }
+                .kpl-qd2-idx .nm { font-size: 14px; font-weight: 800; color: #333; }
+                .kpl-qd2-idx b { font-size: 20px; }
+                .kpl-qd2-idx b.up { color: #e0333a; } .kpl-qd2-idx b.down { color: #0aa858; }
+                .kpl-qd2-idx .chg { font-size: 13px; }
+                .kpl-qd2-idx .chg.up { color: #e0333a; } .kpl-qd2-idx .chg.down { color: #0aa858; }
+                .kpl-qd2-day { text-align: center; font-size: 12px; color: #999; padding: 10px 0 14px; }
                 .kpl-qd2-stat { display: flex; gap: 12px; background: #fff; border-radius: 6px; padding: 10px 14px; margin: 6px 8px; }
                 .kpl-qd2-stat .cell { flex: 1; text-align: center; }
                 .kpl-qd2-stat .lbl { font-size: 12px; color: #8a8a8a; }
@@ -3905,16 +4080,16 @@ window.__ModuleLoader__.load({
                 .kpl-qd2-stat b.down { color: #0aa858; }
                 .kpl-qd2-stat .yest { font-size: 12px; color: #999; }
                 .kpl-qd2-head, .kpl-qd2-row { display: grid; grid-template-columns: 34px 1.2fr 64px 76px 1fr; gap: 6px; align-items: center; padding: 10px 10px; }
-                .kpl-qd2-head { color: var(--dsw-alias-label-secondary); font-size: 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
-                .kpl-qd2-row { border-bottom: 1px solid var(--dsw-alias-border-l2); cursor: pointer; }
-                .kpl-qd2-row:hover { background: var(--dsw-alias-button-elevated-fill); }
-                .kpl-qd2-row .rk { color: var(--dsw-alias-label-secondary); font-weight: 700; }
-                .kpl-qd2-row .nm { font-weight: 800; font-size: 14px; color: var(--dsw-alias-label-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-                .kpl-qd2-row .st { color: #e0333a; text-align: right; }
-                .kpl-qd2-row .rt { text-align: right; }
-                .kpl-qd2-row .rt.up { color: #e0333a; }
-                .kpl-qd2-row .rt.down { color: #0aa858; }
+                .kpl-qd2-head { color: #999; font-size: 12px; border-bottom: 1px solid #f0f0f0; }
+                .kpl-qd2-row { border-bottom: 1px solid #f0f0f0; cursor: pointer; background: #fff; }
+                .kpl-qd2-row .rk { color: #999; font-weight: 700; }
+                .kpl-qd2-row .nm { font-weight: 800; font-size: 14px; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-qd2-row .nm .cd { display: flex; gap: 5px; align-items: center; font-size: 11px; font-weight: 400; color: #8a8a8a; margin-top: 2px; }
+                .kpl-qd2-row .nm .cd .tm { font-style: normal; color: #d97706; border: 1px solid #f59e0b; border-radius: 4px; padding: 0 4px; font-size: 10px; }
+                .kpl-qd2-row .st { color: #e0333a; text-align: right; background: #f3f7fd; align-self: stretch; display: flex; align-items: center; justify-content: flex-end; padding: 0 6px; }
                 .kpl-qd2-row .pl { font-size: 12px; color: #2f6bff; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-qd2-row .pl .pl-item { display: block; color: #e0333a; line-height: 1.5; }
+                .kpl-qd2-row:hover { background: #f7f9ff; }
                 /* ---- 严重异动提醒（App 同款 4 列表格，显式白底） ---- */
                 .kpl-yd2 { background: #fff; border-radius: 6px; padding: 2px 10px; }
                 .kpl-yd2 .hd { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; padding: 8px 0 6px; font-size: 11px; color: #999; border-bottom: 1px solid #f0f0f0; }
@@ -3930,6 +4105,44 @@ window.__ModuleLoader__.load({
                 .kpl-yd2-row b.up { color: #e0333a; } .kpl-yd2-row b.down { color: #0aa858; }
                 .kpl-yd2-row .org { color: #f59e0b; }
                 .kpl-tika2-child { padding: 6px 12px 6px 44px; font-size: 13px; color: #3b82f6; border-left: 2px solid var(--dsw-alias-border-l2); margin: 2px 0 2px 26px; cursor: pointer; }
+                .kpl-fx-cards { display: flex; gap: 8px; padding: 2px 8px 8px; }
+                .kpl-fx-card { flex: 1; background: #fff; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px 8px; text-align: center; cursor: pointer; }
+                .kpl-fx-card:hover { border-color: #e0333a; }
+                .kpl-fx-card .plate { font-size: 12px; color: #8a8a8a; margin-bottom: 6px; }
+                .kpl-fx-card .sname { font-size: 15px; font-weight: 800; color: #2f6bff; margin-bottom: 4px; }
+                .kpl-fx-card .srate { font-size: 14px; font-weight: 800; }
+                .kpl-fx-card .srate.up { color: #e0333a; }
+                .kpl-fx-card .srate.down { color: #0aa858; }
+                /* 市场风口（散布 pill + 下钻页） */
+                .kpl-fk-scatter { position: relative; height: 150px; background: #fff; border-radius: 8px; margin: 4px 8px 8px; overflow: hidden; }
+                .kpl-fk-pill { position: absolute; color: #fff; border-radius: 999px; padding: 7px 16px; font-size: 14px; font-weight: 700; cursor: pointer; }
+                .kpl-fk-pill.red { background: #e0333a; }
+                .kpl-fk-pill.green { background: #0aa858; }
+                .kpl-fk-pill:hover { opacity: .85; }
+                .kpl-fk-tip { background: #fdf6e3; color: #7c5e00; font-size: 12px; line-height: 1.6; padding: 10px 12px; margin: 6px 8px; border-radius: 6px; }
+                .kpl-tabs2-row { display: flex; background: #fff; margin: 6px 8px 0; border-radius: 6px 6px 0 0; }
+                .kpl-tabs2-item { flex: 1; text-align: center; font-size: 15px; color: #333; padding: 12px 0; cursor: pointer; border-bottom: 2px solid transparent; }
+                .kpl-tabs2-item.on { color: #e0333a; font-weight: 700; border-bottom-color: #e0333a; }
+                .kpl-fk-head { display: grid; grid-template-columns: 1.1fr 70px 90px 1fr; gap: 6px; padding: 10px 10px; font-size: 12px; color: #999; border-bottom: 1px solid #f0f0f0; }
+                .kpl-fk-head .st { text-align: right; background: #eef4fd; padding: 2px 6px; }
+                .kpl-fk-row { display: grid; grid-template-columns: 1.1fr 70px 90px 1fr; gap: 6px; align-items: center; padding: 10px; border-bottom: 1px solid #f0f0f0; cursor: pointer; background: #fff; }
+                .kpl-fk-row:hover { background: #f7f9ff; }
+                .kpl-fk-row .nm { font-weight: 700; font-size: 14px; color: #111; }
+                .kpl-fk-row .nm .cd { display: flex; gap: 5px; align-items: center; font-size: 11px; font-weight: 400; color: #8a8a8a; margin-top: 2px; }
+                .kpl-fk-row .nm .cd .tm { font-style: normal; color: #d97706; border: 1px solid #f59e0b; border-radius: 4px; padding: 0 4px; font-size: 10px; }
+                .kpl-fk-row .rt { text-align: right; }
+                .kpl-fk-row .rt.up { color: #e0333a; } .kpl-fk-row .rt.down { color: #0aa858; }
+                .kpl-fk-row .st { text-align: right; color: #e0333a; font-weight: 700; background: #f3f7fd; align-self: stretch; display: flex; align-items: center; justify-content: flex-end; padding: 0 6px; }
+                .kpl-fk-row .pl { font-size: 12px; color: #2f6bff; text-align: right; }
+                .kpl-sd-arrow { background: #fff; border: 1px solid #e5e5e5; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: #666; }
+                .kpl-sd-arrow:hover { border-color: #e0333a; color: #e0333a; }
+                .kpl-sd-date { border: 1px solid #d8d8d8; border-radius: 6px; padding: 6px 10px; font-size: 14px; color: #333; background: #fff; }
+                .kpl-sd-summary { display: flex; gap: 10px; background: #fff; border-radius: 6px; padding: 12px 10px; margin: 6px 8px; }
+                .kpl-sd-summary .cell { flex: 1; text-align: center; }
+                .kpl-sd-summary .lbl { font-size: 12px; color: #8a8a8a; margin-bottom: 4px; }
+                .kpl-sd-summary b { font-size: 17px; }
+                .kpl-sd-summary b.up { color: #e0333a; }
+                .kpl-sd-summary b.down { color: #0aa858; }
             `;
             document.head.appendChild(style);
         }

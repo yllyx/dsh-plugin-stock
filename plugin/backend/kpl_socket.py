@@ -877,6 +877,84 @@ class KplSocketAPI:
                 continue
         return themes
 
+    def get_daban_list(self, pid_type: int = 1, order_type: int = 1, sort_type: int = 1,
+                       count: int = 50, wait_s: float = 4.0) -> Optional[Dict[str, Any]]:
+        """cmd 2103: 打板股票列表（打板页"风向标" tab 同源，订阅式）。
+        Req{pidType1 orderType2 sortType3 index4 count5 市场开关7-10}；
+        Resp{回显字段 + items20{stockId1 name2 stockTag3 financingTag4 backZT5 warnTag6 quotas100} indexes21 maxSize22 date23}。
+        订阅式：发送后持接收锁等 wait_s 收服务端推送（防 drain 吃帧）；盘后/周末无推送返回 None。
+        quotas 为服务端动态列（打板页列头=涨幅/涨速/板块），锚定待盘中实测。"""
+        sess = self._session
+        if not sess or not sess.alive or sess.sock is None:
+            return None
+        body = (pb_uint(1, pid_type) + pb_uint(2, order_type) + pb_uint(3, sort_type)
+                + pb_uint(4, 0) + pb_uint(5, count)
+                + pb_uint(7, 1) + pb_uint(8, 1) + pb_uint(9, 1) + pb_uint(10, 1))
+        import re as _re
+        with self._lock:
+            try:
+                with sess._recv_lock:
+                    sess._send_lock.acquire()
+                    try:
+                        sess.sock.sendall(build_frame(2103, body, kind=4, seq=sess._next_seq()))
+                    finally:
+                        sess._send_lock.release()
+                    end = time.time() + wait_s
+                    buf = b""
+                    items: List[Dict[str, Any]] = []
+                    date_s = ""
+                    while time.time() < end:
+                        try:
+                            d = sess.sock.recv(262144)
+                        except socket.timeout:
+                            continue
+                        except Exception:
+                            sess._alive = False
+                            return None
+                        if not d:
+                            sess._alive = False
+                            return None
+                        buf += d
+                        pos = 0
+                        while pos < len(buf):
+                            f, used = try_parse_frame(buf[pos:])
+                            if f is None:
+                                break
+                            pos += used
+                            if f.get("cmd") != 2103:
+                                continue
+                            body2 = f.get("body") or b""
+                            m = _re.search(rb"2103-0/\d+", body2)
+                            st = m.end() if m else 0
+                            for fno, wt, v in pb_flat(body2[st:]):
+                                if fno == 20 and isinstance(v, bytes):
+                                    it: Dict[str, Any] = {"quotas": []}
+                                    for f2, w2, v2 in pb_flat(v):
+                                        if f2 == 1 and isinstance(v2, bytes):
+                                            it["stockId"] = v2.decode("utf8", "replace")
+                                        elif f2 == 2 and isinstance(v2, bytes):
+                                            it["name"] = v2.decode("utf8", "replace")
+                                        elif f2 == 3 and isinstance(v2, bytes):
+                                            it["stockTag"] = v2.decode("utf8", "replace")
+                                        elif f2 == 4 and w2 == 0:
+                                            it["financingTag"] = v2
+                                        elif f2 == 5 and w2 == 0:
+                                            it["backZT"] = v2
+                                        elif f2 == 100 and isinstance(v2, bytes):
+                                            it["quotas"] = [q.decode("utf8", "replace") if isinstance(q, bytes) else str(q)
+                                                            for q in [x for _, _, x in pb_flat(v2)]]
+                                    if it.get("name"):
+                                        items.append(it)
+                                elif fno == 23 and isinstance(v, bytes):
+                                    date_s = v.decode("utf8", "replace")
+                            buf = buf[pos:]
+                if not items:
+                    return None
+                return {"items": items, "date": date_s}
+            except Exception as e:
+                logger.debug(f"KPL 2103 接收异常: {e}")
+                return None
+
     def get_theme_stat(self, theme_id: int) -> Optional[Dict[str, Any]]:
         """cmd 3010: 题材个股统计。响应带 ASCII 前缀（global|.../3010-0/{id}）须剥离；
         服务端实时计算较慢（实测 ~9s），timeout 须 ≥15s，调用方勿放关键路径。"""

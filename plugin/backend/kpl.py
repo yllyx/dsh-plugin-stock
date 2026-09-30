@@ -677,8 +677,12 @@ class KplClient:
         futs["poprank"] = pool.submit(self.get_pop_rank, 1 if _trading else 13, 1, 0, 5)
         # 3.7 严重异动提醒（StockBidYiDong/GetPianLiZhi_Index，偏离值监控）
         futs["yidong"] = pool.submit(self.get_yidong_alert)
-        # 4. 最强风口 —— apphwshhq ZhiShuRanking/QiangDu_Article（盘中才有数据）
-        futs["qd"] = pool.submit(self.call, HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, False)
+        # 3.8 风向标（socket 2103 订阅式，盘中实时；盘后走快照，会话死时跳过不阻塞）
+        futs["daban"] = pool.submit(self.get_daban)
+        # 3.9 市场风口（StockFengKData/GetFengKList，服务端含历史）
+        futs["fengkou"] = pool.submit(self.get_fengkou)
+        # 4. 最强风口 —— Index/GetInfo ZQFKList（App 同源全时段，get_qiangdu 内含快照兜底）
+        futs["qd"] = pool.submit(self.get_qiangdu)
         # 5. 市场风口热词 —— apparticle ForumsTuyere/GetHotSearch
         futs["tuyere"] = pool.submit(self.call, HOST_ART, "ForumsTuyere", "GetHotSearch", {}, False)
         # 6. 市场情绪（今日/昨日 涨停家数/封板率/跌停数）—— 复用情绪历史前两条
@@ -724,20 +728,30 @@ class KplClient:
             out["yidong_day"] = yd.get("day")
         except Exception:
             out["yidong"] = []
-        out["qiangdu"] = ((futs["qd"].result() or {}).get("List")) or []
+        try:
+            out["qiangdu"] = (futs["qd"].result() or {}).get("list") or []
+        except Exception:
+            out["qiangdu"] = []
+        try:
+            out["daban"] = futs["daban"].result() or {}
+        except Exception:
+            out["daban"] = {}
+        try:
+            out["fengkou"] = (futs["fengkou"].result() or {}).get("rows") or []
+        except Exception:
+            out["fengkou"] = []
         out["tuyere_words"] = ((futs["tuyere"].result() or {}).get("List")) or []
         sent = futs["sent"].result() or []
         out["sentiment"] = {
             "today": sent[0] if len(sent) > 0 else {},
             "yesterday": sent[1] if len(sent) > 1 else {},
         }
-        # 7. 近期活跃板块（题材库 socket 数据按涨幅取前6）
+        # 7. 近期活跃板块（App 同源：Index/GetInfo 的 BaceFaceList 恒 4 条热门板块，
+        #    [板块名, 涨幅, 801/803板块id]——2026-09-27 mitmproxy 抓包实锤，勿再走 3009 涨幅榜）
         try:
-            tk_items = [t for t in ((futs["tika"].result() or {}).get("items")) or []
-                        if isinstance(t.get("pct"), (int, float))]
-            tk_items.sort(key=lambda t: t["pct"], reverse=True)
-            out["active_plates"] = [{"name": t["name"], "rate": t["pct"], "id": t.get("id")}
-                                    for t in tk_items[:6]]
+            bf = self._active_plates_raw()
+            out["active_plates"] = [{"name": n, "rate": float(r), "plateId": pid}
+                                    for n, r, pid in bf]
         except Exception:
             out["active_plates"] = []
         pool.shutdown(wait=False)
@@ -773,6 +787,205 @@ class KplClient:
                            for s in (x.get("Stocks") or []) if isinstance(s, dict)],
             } for x in lst]
         return {"items": items, "index": index, "has_more": len(lst) >= st}
+
+    _themedet_stale: dict = {}
+    _themedet_refreshing: set = set()
+    _themedet_disk_loaded = False
+    _themedet_disk_last: float = 0.0
+
+    def get_fengkou(self, day: str = "") -> Dict[str, Any]:
+        """市场风口（App 下钻页同源 StockFengKData/GetFengKList）。
+        ⭐ App 真实参数（2026-09-28 mitmproxy 抓包）：域=apphis.kaipanla.com（HIS 系），
+        biz={Index:0, st:500, Order:17, **Day:YYYYMMDD 无横线, Time:"1500"**(回放时刻=收盘快照)}。
+        Day 缺省时 App 由客户端定位最近交易日——插件同样从今天往回找（最多 7 天，跳过周末，
+        节假日自动落空到下一候选）。历史深度实测 ≥09-22（546 条）。
+        响应 List 条目：[代码,名称,"0",涨跌幅,0,主力买入,主力卖出(-负),主力净额,风口概念,0,
+        标签(基金/游资),概念,上榜时间戳]；本地按主力净额降序重排+按代码去重。"""
+        key = f"fengkou:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        got = None
+        if not day:
+            # 盘中实时（App 同款）：apphwhq 域 无 Day 无 Time，返回今日推送
+            d = self.call(HOST_HQ2, "StockFengKData", "GetFengKList",
+                          {"Index": "0", "st": "500", "Order": "17"}, authed=False)
+            got = d if (d or {}).get("List") else None
+        # 历史日期（App 同款）：apphis 域 + Day 无横线 + Time=1500 收盘快照
+        if not got and day:
+            d = self.call("https://apphis.kaipanla.com/w1/api/index.php", "StockFengKData",
+                          "GetFengKList",
+                          {"Index": "0", "st": "500", "Order": "17",
+                           "Day": day.replace("-", ""), "Time": "1500"}, authed=False)
+            got = d if (d or {}).get("List") else None
+        if not got:
+            return {"rows": [], "day": day, "day_arr": [], "total": 0}
+        lst = got.get("List") or []
+        rows, seen = [], set()
+        for r in lst:
+            if not isinstance(r, (list, tuple)) or len(r) < 13:
+                continue
+            code = str(r[0])
+            if code in seen:
+                continue
+            seen.add(code)
+            try:
+                net = float(r[7])
+            except Exception:
+                net = 0.0
+            try:
+                rate = float(r[3])
+            except Exception:
+                rate = None
+            rows.append({"code": code, "name": str(r[1]), "rate": rate,
+                         "net": net, "concept": str(r[8] or ""),
+                         "tag": str(r[10] or ""), "ts": r[12]})
+        rows.sort(key=lambda r: -r["net"])
+        day_s = str(got.get("Day") or used_day or "")
+        if len(day_s) == 8:
+            day_s = f"{day_s[:4]}-{day_s[4:6]}-{day_s[6:]}"
+        out = {"rows": rows, "day": day_s, "day_arr": (got or {}).get("DayArr") or [],
+               "total": (got or {}).get("Count") or len(rows)}
+        if rows:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_daban(self) -> Dict[str, Any]:
+        """风向标（App 首页风向标模块+打板页顶部情绪条 同源 Index/GetInfo）：
+        CWeatherVaneList = 风向标 6 卡（SZ 上涨 3 + XD 下跌 3，[代码,名称,涨幅,板块]）；
+        DaBanList = 打板情绪条（涨停板/封板率/跌停股 今日/昨日 + 涨跌家数/量能）。"""
+        key = "daban"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        d = self._getinfo_full()
+        cw = d.get("CWeatherVaneList") or {}
+        db = d.get("DaBanList") or {}
+
+        def norm(items):
+            out = []
+            for r in items or []:
+                if isinstance(r, (list, tuple)) and len(r) >= 4:
+                    out.append({"code": str(r[0]), "name": str(r[1]),
+                                "rate": r[2], "plate": str(r[3] or "")})
+            return out
+
+        data = {
+            "sz": norm(cw.get("SZ")),           # 上涨风向标 3
+            "xd": norm(cw.get("XD")),           # 下跌风向标 3
+            "head": {
+                "zt": [db.get("tZhangTing"), db.get("lZhangTing")],      # 涨停板 今/昨
+                "fbl": [db.get("tFengBan"), db.get("lFengBan")],         # 封板率% 今/昨
+                "dt": [db.get("tDieTing"), db.get("lDieTing")],          # 跌停股 今/昨
+                "szjs": db.get("SZJS"), "xdjs": db.get("XDJS"),          # 涨/跌家数
+                "szln": db.get("szln"), "qscln": db.get("qscln"),        # 沪/沪深量能
+            },
+            "day": d.get("Day") or "", "source": "getinfo",
+        }
+        if data.get("sz") or data.get("xd") or data.get("head", {}).get("zt", [None])[0]:
+            self._cache[key] = {"data": data, "ts": time.time()}
+        return data
+
+    def _getinfo_full(self, max_age: float = 60.0) -> Dict[str, Any]:
+        """Index/GetInfo View 全量（App 打板页高频轮询同款接口）：
+        BaceFaceList(近期活跃板块) / CWeatherVaneList(风向标 SZ+XD) / DaBanList(打板情绪条) /
+        ZQFKList(最强风口) / PLZList(严重异动) 等。缓存 60s（对齐 App 轮询节奏）。"""
+        now = time.time()
+        c = getattr(self, "_getinfo_cache", None)
+        if c and now - c[0] < max_age:
+            return c[1]
+        d = self.call(HOST_HQ2, "Index", "GetInfo",
+                      {"View": "1,2,3,4,5,6,7,8,9,10,11"}, authed=False) or {}
+        self._getinfo_cache = (now, d)
+        return d
+
+    def _active_plates_raw(self):
+        """近期活跃板块原始数据：Index/GetInfo 的 BaceFaceList（App 同源恒 4 条）。"""
+        d = self._getinfo_full()
+        return d.get("BaceFaceList") or []
+
+    def get_sector_detail(self, plate_id: str) -> Dict[str, Any]:
+        """板块详情（App 近期活跃板块点入的页面，VNA=803037 这类 801/803 板块）。
+        数据：2501 股票池 + BaceFaceList 板块涨幅。
+        ⭐ quotas 列锚定（2026-09-27 用 App 概要值逐列求和自校准实锤）：
+          q1=现价 q2=涨跌% q3=成交额 q4=换手率 q9=主力净额 q21=涨停封单。
+        App 概要的强度/排名/大单封单无数据源，如实缺席；默认按涨幅降序（用户要求）。"""
+        pid = str(plate_id)
+        key = f"sectordet:{pid}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        out: Dict[str, Any] = {"plateId": pid}
+        rate = None
+        for n, r, p in self._active_plates_raw():
+            if str(p) == pid:
+                out["name"] = n
+                rate = float(r)
+                break
+        out.setdefault("name", "")
+        out["rate"] = rate
+        # 股票池（2501）
+        import kpl_socket as _ks
+        alive = self._themedet_quotes_alive()
+        stocks: List[Dict[str, Any]] = []
+        if alive:
+            try:
+                pool = _ks.get_kpl_socket().get_sector_pool(pid, quota_type=2, count=100)
+                for it in (pool or {}).get("items") or []:
+                    q = it.get("quotas") or []
+                    code = str(it.get(1) or "")
+                    nm = str(it.get(2) or "")
+                    if not nm:
+                        # 名称缺失兜底两级：插件名称缓存 → market_pool 全 A 股名称表
+                        nm = self._remember_name("stocks", code, "")
+                        if not nm:
+                            try:
+                                from screener import market_pool
+                                nm = market_pool.get_name(code)
+                                if nm:
+                                    self._remember_name("stocks", code, nm)
+                            except Exception:
+                                pass
+                    try:
+                        rate_v = float(q[2]) if len(q) > 2 else None
+                    except Exception:
+                        rate_v = None
+                    row = {"code": code, "name": nm, "price": q[1] if len(q) > 1 else "",
+                           "rate": rate_v,
+                           "amount": q[3] if len(q) > 3 else "",
+                           "mainNet": q[9] if len(q) > 9 else "",
+                           "ztSeal": q[21] if len(q) > 21 else ""}
+                    stocks.append(row)
+                    if nm:
+                        self._remember_name("stocks", code, nm)
+                if stocks:
+                    self._flush_names()
+                    # App 默认：涨幅降序
+                    stocks.sort(key=lambda s: (s.get("rate") is None,
+                                               -(s["rate"] or 0)), )
+            except Exception as e:
+                logger.debug(f"板块详情 2501 失败({pid}): {e}")
+        else:
+            out["pool_pending"] = True
+        # 概要（与 App 对齐：涨幅/涨停数/主力净额/涨停封单/成交额；由池内数据推导）
+        if stocks:
+            def _f(v):
+                try:
+                    return float(v)
+                except Exception:
+                    return 0.0
+            out["summary"] = {
+                "stock_num": len(stocks),
+                "rate": rate,
+                "zt_num": sum(1 for s in stocks
+                              if isinstance(s.get("rate"), (int, float)) and s["rate"] >= 9.8),
+                "main_net": round(sum(_f(s.get("mainNet")) for s in stocks) / 1e8, 2),
+                "zt_seal": round(sum(_f(s.get("ztSeal")) for s in stocks) / 1e8, 2),
+                "amount_sum": round(sum(_f(s.get("amount")) for s in stocks) / 1e8, 2),
+            }
+        out["stocks"] = stocks
+        self._cache[key] = {"data": out, "ts": time.time()}
+        return out
 
     def get_theme_detail(self, news_id) -> Dict[str, Any]:
         """主题详情（点击最新主题条目）：ThemeNews/GetInfo（apparticle）。
@@ -1025,8 +1238,10 @@ class KplClient:
         return data
 
     def get_qiangdu(self) -> Dict[str, Any]:
-        """最强风口（App 同源 ZhiShuRanking/QiangDu_Article，盘中数据）。
-        盘后/拉空时回退当日快照（复刻 App 盘后仍显示当日数据的行为）。"""
+        """最强风口（App 首页模块同源 Index/GetInfo 的 ZQFKList，
+        [代码,名称,强度,涨幅,概念(顿号分隔)]——2026-09-28 实锤：QiangDu_Article 盘后清空，
+        ZQFKList 全时段有数据且与板块详情"强度"同体系）。
+        盘后快照 kpl_qd_snapshot.json 双兜底（App 盘后保留当日数据同款）。"""
         key = "qiangdu"
         hit = self._cache.get(key)
         if hit and time.time() - hit["ts"] < 30:
@@ -1036,45 +1251,36 @@ class KplClient:
 
         def _load_snap():
             try:
-                snap = json.loads(snap_path.read_text(encoding="utf-8"))
-                if snap.get("day") == today:
-                    return snap.get("list") or []
+                sn = json.loads(snap_path.read_text(encoding="utf-8"))
+                if sn.get("list"):
+                    return sn.get("list") or [], sn.get("day") or ""
             except Exception:
                 pass
-            return []
+            return [], ""
 
-        def _save_snap(lst):
+        def _save_snap(l):
             try:
-                snap_path.write_text(json.dumps({"day": today, "list": lst}, ensure_ascii=False),
-                                     encoding="utf-8")
+                snap_path.write_text(json.dumps({"day": today, "list": l},
+                                                ensure_ascii=False), encoding="utf-8")
             except Exception as e:
                 logger.debug(f"最强风口快照落盘失败: {e}")
 
-        def _fetch():
-            d = self.call(HOST_HQ, "ZhiShuRanking", "QiangDu_Article", {}, False)
-            lst = (d or {}).get("List") or []
-            sent = self.get_sentiment_history() or []
-            sentiment = {
-                "today": sent[0] if len(sent) > 0 else {},
-                "yesterday": sent[1] if len(sent) > 1 else {},
-            }
-            if lst:
-                _save_snap(lst)
-                return {"list": lst, "cached": False, "day": today, "sentiment": sentiment}
-            return {"list": _load_snap(), "cached": True, "day": today, "sentiment": sentiment}
-
-        data = _fetch()
-        if data.get("list"):
-            self._cache[key] = {"data": data, "ts": time.time()}
-        return data
-
-    # ---- 题材详情 SWR 陈旧缓存（内存+磁盘双层；与 poprank 同模式）----
-    # 痛点：详情链路含 2501/3010 socket 调用，会话死时内联重连要 40-80s（"等半天"根因）。
-    # 策略：①陈旧秒回+后台刷新 ②socket 死时短路跳过行情（标 quotes_pending 后台补全）
-    _themedet_stale: dict = {}
-    _themedet_refreshing: set = set()
-    _themedet_disk_loaded = False
-    _themedet_disk_last: float = 0.0
+        # 主源：GetInfo ZQFKList（全时段）
+        d = self._getinfo_full()
+        zq = d.get("ZQFKList") or []
+        lst = []
+        for r in zq:
+            if isinstance(r, (list, tuple)) and len(r) >= 5:
+                lst.append([r[0], r[1], r[2], r[3], str(r[4] or "").replace("、", "/")])
+        sent = self.get_sentiment_history() or []
+        sentiment = {"today": sent[0] if len(sent) > 0 else {},
+                     "yesterday": sent[1] if len(sent) > 1 else {}}
+        if lst:
+            _save_snap(lst)
+            return {"list": lst, "cached": False, "day": today, "sentiment": sentiment}
+        snap_list, snap_day = _load_snap()
+        return {"list": snap_list, "cached": True, "day": snap_day or today,
+                "sentiment": sentiment}
 
     @staticmethod
     def _themedet_disk_path():
