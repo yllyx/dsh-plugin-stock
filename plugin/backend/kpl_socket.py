@@ -955,6 +955,82 @@ class KplSocketAPI:
                 logger.debug(f"KPL 2103 接收异常: {e}")
                 return None
 
+    def get_stock_quotas(self, stock_ids: List[str], wait_s: float = 6.0,
+                         capture_path=None) -> Optional[Dict[str, List[str]]]:
+        """cmd 3001: GroupStockQuotas 订阅式批量行情（题材详情个股行情数值列通道）。
+        Req{stockIds repeated string = 10}；订阅 ack 后服务端**盘中持续推送** quotas
+        动态列（盘后无推送）。返回 {stockId: quotas[]}；capture_path 用于盘中捕获
+        原始推送帧（解析器校准样本，待盘中实测补全）。"""
+        sess = self._session
+        if not sess or not sess.alive or sess.sock is None:
+            return None
+        body = b"".join(pb_str(10, sid) for sid in stock_ids)
+        with self._lock:
+            try:
+                with sess._recv_lock:
+                    sess._send_lock.acquire()
+                    try:
+                        sess.sock.sendall(build_frame(3001, body, kind=4, seq=sess._next_seq()))
+                    finally:
+                        sess._send_lock.release()
+                    end = time.time() + wait_s
+                    buf = b""
+                    out: Dict[str, List[str]] = {}
+                    raw_frames = []
+                    while time.time() < end:
+                        try:
+                            d2 = sess.sock.recv(262144)
+                        except socket.timeout:
+                            continue
+                        except Exception:
+                            sess._alive = False
+                            break
+                        if not d2:
+                            sess._alive = False
+                            break
+                        buf += d2
+                        pos = 0
+                        while pos < len(buf):
+                            f, used = try_parse_frame(buf[pos:])
+                            if f is None:
+                                break
+                            pos += used
+                            if f.get("cmd") == 110:
+                                logger.debug(f"KPL 3001 拒绝: {(f.get('body') or b'').decode('utf8','replace')[:80]}")
+                                return None
+                            if f.get("cmd") != 3001:
+                                buf = buf[pos:]
+                                continue
+                            b3 = f.get("body") or b""
+                            raw_frames.append(b3)
+                            import re as _re
+                            m = _re.search(rb"3001-0/\d+", b3)
+                            st = m.end() if m else 0
+                            for fno, wt, v in pb_flat(b3[st:]):
+                                if isinstance(v, bytes) and fno in (10, 20):
+                                    # 推送条目（结构待盘中样本校准）
+                                    it = {}
+                                    for f2, w2, v2 in pb_flat(v):
+                                        if isinstance(v2, bytes):
+                                            it[f2] = v2.decode("utf8", "replace")
+                                        else:
+                                            it[f2] = v2
+                                    sid = str(it.get(1) or it.get("stockId") or "")
+                                    if sid:
+                                        out[sid] = it.get("quotas") or it.get("q") or []
+                            buf = buf[pos:]
+                    if capture_path and raw_frames:
+                        try:
+                            with open(capture_path, "ab") as w:
+                                for b3 in raw_frames:
+                                    w.write(len(b3).to_bytes(4, "little") + b3)
+                        except Exception:
+                            pass
+                    return out or None
+            except Exception as e:
+                logger.debug(f"KPL 3001 异常: {e}")
+                return None
+
     def get_theme_stat(self, theme_id: int) -> Optional[Dict[str, Any]]:
         """cmd 3010: 题材个股统计。响应带 ASCII 前缀（global|.../3010-0/{id}）须剥离；
         服务端实时计算较慢（实测 ~9s），timeout 须 ≥15s，调用方勿放关键路径。"""

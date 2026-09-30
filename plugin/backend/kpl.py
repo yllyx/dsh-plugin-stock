@@ -1447,12 +1447,30 @@ class KplClient:
             fixed = self._remember_name("stocks", s["code"], s.get("name") or "")
             if fixed and not s.get("name"):
                 s["name"] = fixed
-        # 实时数值列（socket 2501 题材股票池）+ 统计条（socket 3010）。
-        # ⚡ socket 短路：会话死亡时内联拉取会触发 40-80s 重连扫描（"等半天"根因）——
-        # 死会话直接跳过，标 *_pending 起后台线程补全进缓存；响应永不阻塞。
+        # 实时数值列 + 统计条。
+        # ⚡ socket 短路：会话死亡时内联拉取会触发 40-80s 重连扫描——死会话跳过。
         alive = self._themedet_quotes_alive()
         pending = False
         bid = self._theme_board_id(out["name"])
+        if not bid and alive and stock_list:
+            # 无 BaceFaceList 映射 → 走 3001 按成分股 stockIds 订阅行情（App 同通道）
+            try:
+                import kpl_socket as _ks3001
+                caps = _ks3001.get_kpl_socket().get_stock_quotas(
+                    [str(x["code"]) for x in stock_list], wait_s=6,
+                    capture_path=storage.data_dir / "kpl_3001_capture.bin")
+                if caps:
+                    for x in stock_list:
+                        qq = caps.get(str(x["code"]))
+                        if qq and len(qq) > 4:
+                            # 列锚定待盘中样本校正（通用 21 列序）
+                            x["price"] = qq[1] if len(qq) > 1 else ""
+                            x["rate"] = qq[2] if len(qq) > 2 else ""
+                            x["amount"] = qq[4] if len(qq) > 4 else ""
+                            x["turnover"] = qq[8] if len(qq) > 8 else ""
+                    out["quotes_source"] = "socket3001"
+            except Exception as e:
+                logger.debug(f"题材详情 3001 行情失败({out['name']}): {e}")
         merged = 0
         if bid:
             try:
