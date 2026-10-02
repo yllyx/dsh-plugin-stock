@@ -2789,7 +2789,13 @@ window.__ModuleLoader__.load({
         function useMarketFeed(intervalMs) {
             const [feed, setFeed] = useState(null);
             const load = useCallback(async () => {
-                try { setFeed(await api("/api/kpl/marketfeed")); } catch (e) { /* 保留旧值 */ }
+                try {
+                    const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+                    const timer = ctl ? setTimeout(() => ctl.abort(), 30000) : null;
+                    const resp = await fetch("/api/kpl/marketfeed", { signal: ctl ? ctl.signal : undefined });
+                    if (timer) clearTimeout(timer);
+                    if (resp.ok) setFeed(await resp.json());
+                } catch (e) { /* 超时/失败保留旧值，下轮轮询重试 */ }
             }, []);
             useEffect(() => { load(); }, [load]);
             usePolling(load, intervalMs || 20000, []);
@@ -3270,13 +3276,13 @@ window.__ModuleLoader__.load({
                         key: s, className: "kpl-subtab " + (subMap[s] === sub ? "on" : ""),
                         onClick: () => setSub(subMap[s]),
                     }, s))),
-                sub === "plate" && React.createElement(KplPlateSub, { go }),
-                sub === "stock" && React.createElement(KplStockSub, null),
-                sub === "hk" && React.createElement(KplHkSub, null),
-                sub === "daban" && React.createElement(KplDabanSub, { go }),
-                sub === "sentiment" && React.createElement(KplSentimentSub, null),
-                sub === "live" && React.createElement(KplLiveSub, null),
-                sub === "global" && React.createElement(KplGlobalSub, null));
+                sub === "plate" && React.createElement(KplErrorBoundary, { key: "plate" }, React.createElement(KplPlateSub, { go })),
+                sub === "stock" && React.createElement(KplErrorBoundary, { key: "stock" }, React.createElement(KplStockSub, null)),
+                sub === "hk" && React.createElement(KplErrorBoundary, { key: "hk" }, React.createElement(KplHkSub, { go })),
+                sub === "daban" && React.createElement(KplErrorBoundary, { key: "daban" }, React.createElement(KplDabanSub, { go })),
+                sub === "sentiment" && React.createElement(KplErrorBoundary, { key: "sent" }, React.createElement(KplSentimentSub, null)),
+                sub === "live" && React.createElement(KplErrorBoundary, { key: "live" }, React.createElement(KplLiveSub, null)),
+                sub === "global" && React.createElement(KplErrorBoundary, { key: "global" }, React.createElement(KplGlobalSub, null)));
         }
 
         function KplPlateSub({ go }) {

@@ -319,4 +319,247 @@
 [32m2026-10-02 20:26:12.987[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
 [32m2026-10-02 20:26:12.987[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
 [32m2026-10-02 20:26:13.009[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 36 条重要舆情到数据库[0m
-[32m2026-10-02 20:26:15.183[0m | [1mINFO    
+[32m2026-10-02 20:26:15.183[0m | [1mINFO    [0m | [36mkpl[0m:[36m_loop[0m:[36m2332[0m - [1mKPL 首页缓存预热完成[0m
+[32m2026-10-02 20:26:18.160[0m | [1mINFO    [0m | [36mscreener[0m:[36mdb_load_all[0m:[36m238[0m - [1mK线库载入 5247 只（6.1s，1477574 行）[0m
+[32m2026-10-02 20:26:36.675[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:26:56.510[0m | [1mINFO    [0m | [36mscreener[0m:[36mload_local_tdx[0m:[36m405[0m - [1m本地通达信载入 5247 只（38.2s，目录 D:\app\tdx\vipdoc）[0m
+[32m2026-10-02 20:26:57.546[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:27:01.128[0m | [1mINFO    [0m | [36mkpl_socket[0m:[36mconnect[0m:[36m542[0m - [1mKPL Socket: 已鉴权连接 124.71.166.244:8080[0m
+[32m2026-10-02 20:27:49.320[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:28:10.070[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:28:38.730[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:29:01.896[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:29:29.495[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:30:06.345[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:30:27.038[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:30:53.145[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:31:13.168[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 20:31:13.599[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 20:31:15.243[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 20:31:15.243[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 20:31:15.261[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 36 条重要舆情到数据库[0m
+[32m2026-10-02 20:31:26.326[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:32:22.764[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:32:44.291[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:33:37.736[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:33:58.870[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:34:52.442[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:35:13.514[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:35:35.035[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:35:55.978[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:36:15.459[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 20:36:16.214[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 20:36:16.740[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 20:36:16.740[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 20:36:16.774[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 39 条重要舆情到数据库[0m
+[32m2026-10-02 20:36:16.775[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 20:36:20.414[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:37:01.033[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:37:22.056[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:37:45.947[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:38:07.688[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:38:32.545[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:39:03.082[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:39:25.609[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:39:59.286[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:40:20.514[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:40:46.414[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:41:17.318[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 20:41:17.535[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 20:41:17.845[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:41:18.201[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 20:41:18.201[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 20:41:18.218[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 41 条重要舆情到数据库[0m
+[32m2026-10-02 20:41:18.219[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 20:42:08.605[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:42:30.192[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:43:21.553[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:43:44.273[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:44:14.246[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:44:35.036[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:44:56.613[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:45:43.175[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:46:09.972[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:46:18.432[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 20:46:18.896[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 20:46:19.369[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 20:46:19.369[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 20:46:19.389[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 42 条重要舆情到数据库[0m
+[32m2026-10-02 20:46:19.390[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 20:46:34.995[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:47:30.397[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:47:57.489[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:48:24.202[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:48:48.463[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:49:11.599[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:49:50.035[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:50:17.375[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:50:44.253[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:51:19.657[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 20:51:19.902[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 20:51:21.413[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 20:51:21.413[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 20:51:21.431[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 42 条重要舆情到数据库[0m
+[32m2026-10-02 20:51:21.432[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 20:51:45.093[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:52:08.598[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:52:33.837[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:53:01.997[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:53:23.477[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:54:00.017[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:54:20.708[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:54:45.083[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:55:15.864[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:56:07.085[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:56:21.599[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 20:56:22.061[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 20:56:22.616[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 20:56:22.617[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 20:56:22.633[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 43 条重要舆情到数据库[0m
+[32m2026-10-02 20:56:22.634[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 20:56:29.064[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:57:19.778[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:57:41.570[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:58:14.045[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:58:42.300[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:59:34.328[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 20:59:54.988[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:00:45.771[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:01:06.538[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:01:22.774[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:01:22.961[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:01:23.271[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:01:23.272[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:01:23.287[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 43 条重要舆情到数据库[0m
+[32m2026-10-02 21:01:23.288[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 21:01:27.434[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:01:57.445[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:02:49.556[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:03:10.778[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:03:33.925[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:03:58.618[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:04:51.775[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:05:13.272[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:05:35.829[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:06:01.489[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:06:23.440[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:06:23.609[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:06:25.593[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 60 条舆情[0m
+[32m2026-10-02 21:06:25.608[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 41 条重要舆情到数据库[0m
+[32m2026-10-02 21:06:25.609[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 21:06:56.895[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:07:20.090[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:07:44.130[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:08:07.719[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:09:01.119[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:09:24.748[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:10:01.688[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:10:28.071[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:11:19.379[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:11:25.773[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:11:25.988[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:11:31.055[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:11:31.056[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:11:31.074[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 45 条重要舆情到数据库[0m
+[32m2026-10-02 21:11:31.075[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 1 条个性化舆情[0m
+[32m2026-10-02 21:11:40.604[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:12:35.800[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:13:02.975[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:13:28.046[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:14:00.541[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:14:21.538[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:14:59.734[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:15:22.344[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:15:46.032[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:16:12.569[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:16:31.317[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:16:31.544[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:16:33.368[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:16:33.368[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:16:33.391[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 45 条重要舆情到数据库[0m
+[32m2026-10-02 21:16:33.392[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 2 条个性化舆情[0m
+[32m2026-10-02 21:17:04.008[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:17:32.475[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:18:24.042[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:18:46.315[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:19:13.208[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:19:40.412[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:20:02.502[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:20:40.937[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:21:04.646[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:21:33.429[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:21:33.576[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:21:33.780[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:21:35.418[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:21:35.418[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:21:35.436[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 45 条重要舆情到数据库[0m
+[32m2026-10-02 21:21:35.436[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 2 条个性化舆情[0m
+[32m2026-10-02 21:22:37.433[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:23:05.959[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:23:57.213[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:24:19.697[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:24:53.219[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:25:18.148[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:26:01.606[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:26:12.077[0m | [1mINFO    [0m | [36mevolution_loop[0m:[36mevolution_loop[0m:[36m320[0m - [1m进化任务开始: calendar[0m
+[32m2026-10-02 21:26:12.078[0m | [1mINFO    [0m | [36mevolution_loop[0m:[36mevolution_loop[0m:[36m322[0m - [1m进化任务完成: calendar → {'stale': False, 'fetched': 0, 'max_event_date': '2026-10-31', 'include_past': 0}[0m
+[32m2026-10-02 21:26:28.724[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:26:35.639[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:26:36.996[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:26:37.726[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:26:37.726[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:26:37.747[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 45 条重要舆情到数据库[0m
+[32m2026-10-02 21:26:37.749[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 3 条个性化舆情[0m
+[32m2026-10-02 21:26:57.731[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:27:19.945[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:27:41.652[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:28:38.824[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:29:02.673[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:29:54.209[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:30:15.528[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:30:40.231[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:31:13.118[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:31:34.648[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:31:37.912[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:31:38.370[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:31:39.167[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:31:39.167[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:31:39.185[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 46 条重要舆情到数据库[0m
+[32m2026-10-02 21:31:39.186[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 3 条个性化舆情[0m
+[32m2026-10-02 21:32:12.173[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:32:33.406[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:33:00.754[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:33:27.022[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:34:05.537[0m | [1mINFO    [0m | [36mws_manager[0m:[36mconnect[0m:[36m26[0m - [1mWebSocket 已连接，当前连接数: 1[0m
+[32m2026-10-02 21:34:18.513[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:34:39.742[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:35:36.219[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:35:53.875[0m | [1mINFO    [0m | [36mws_manager[0m:[36mdisconnect[0m:[36m32[0m - [1mWebSocket 已断开，当前连接数: 0[0m
+[32m2026-10-02 21:36:03.823[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:36:28.967[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:36:39.427[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:36:39.613[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:36:40.161[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:36:40.161[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:36:40.181[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 48 条重要舆情到数据库[0m
+[32m2026-10-02 21:36:40.181[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 4 条个性化舆情[0m
+[32m2026-10-02 21:37:00.712[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:37:22.454[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:37:57.094[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:38:22.699[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:38:48.916[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:39:14.821[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:40:06.695[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:40:29.824[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:41:21.515[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:41:40.448[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1meastmoney 获取到 30 条新闻[0m
+[32m2026-10-02 21:41:40.712[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1msina 获取到 30 条新闻[0m
+[32m2026-10-02 21:41:41.382[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m262[0m - [1mfed 获取到 20 条新闻[0m
+[32m2026-10-02 21:41:41.383[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mfetch_all_sources[0m:[36m270[0m - [1m总共获取到 80 条舆情[0m
+[32m2026-10-02 21:41:41.402[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mprocess_news[0m:[36m312[0m - [1m保存了 45 条重要舆情到数据库[0m
+[32m2026-10-02 21:41:41.404[0m | [1mINFO    [0m | [36msentiment_monitor[0m:[36mbroadcast_sentiment[0m:[36m383[0m - [1m推送了 4 条个性化舆情[0m
+[32m2026-10-02 21:41:43.563[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:42:15.780[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:42:44.549[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:43:38.709[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
+[32m2026-10-02 21:43:59.622[0m | [33m[1mWARNING [0m | [36mdata_source[0m:[36mconnect[0m:[36m70[0m - [33m[1m所有服务器连接失败[0m
