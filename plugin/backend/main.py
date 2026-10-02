@@ -1540,6 +1540,13 @@ async def kpl_marketfeed():
     return await asyncio.to_thread(get_feed().snapshot)
 
 
+@app.get("/api/kpl/dabanlists")
+async def kpl_dabanlists():
+    """打板页三列表（2103 拉取式：pidType 1=竞价 2=即将涨停 3=风向标；休市静默）"""
+    from kpl_marketfeed import get_daban_lists
+    return await asyncio.to_thread(get_daban_lists)
+
+
 @app.get("/api/kpl/mkttrend")
 async def kpl_mkttrend():
     """主指数分时（3003 拉取式，直播 tab 分时图+板块 tab 顶部横滑卡同源）"""

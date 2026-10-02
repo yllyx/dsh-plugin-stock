@@ -2897,6 +2897,7 @@ window.__ModuleLoader__.load({
             const ladder = feedData(feed, "ladder");
             const ztlist = feedData(feed, "ztlist");
             const wind = feedData(feed, "windvane");
+            const dbcount = feedData(feed, "dabancount");
             const h = head.data || {};
             const radarItems = (radar.data && radar.data.items) || [];
             const lad = (ladder.data && ladder.data.ladder) || [];
@@ -2904,9 +2905,73 @@ window.__ModuleLoader__.load({
             const wu = (wind.data && wind.data.up) || [];
             const wd = (wind.data && wind.data.down) || [];
             const empty = !head.data && !radar.data;
+            // 打板页四子 tab（App 同款）：竞价/即将涨停/风向标/涨停
+            const [dtab, setDtab] = useState("jj");
+            const [dbLists, setDbLists] = useState(null);
+            useEffect(() => {
+                if (dtab === "fxb") return;   // 风向标用 windvane 槽位
+                let alive = true;
+                api("/api/kpl/dabanlists").then((d) => { if (alive) setDbLists(d); }).catch(() => { if (alive) setDbLists({ lists: {} }); });
+                return () => { alive = false; };
+            }, [dtab]);
+            const cnt = (dbcount.data && dbcount.data.counts) || [];
+            const badge = (i) => cnt[i] != null ? React.createElement("span", { className: "kpl-dt-badge" }, cnt[i]) : null;
+            const listRows = (dbLists && dbLists.lists && dbLists.lists[dtab === "jj" ? "jj" : "jjzt"] || { items: [] }).items || [];
+            const silent = dbLists && dbLists.silent;
             return React.createElement("div", { className: "kpl-mkt-wrap" },
                 empty && React.createElement("div", { className: "kpl-mkt-empty" },
                     "正在建立行情连接（约 40 秒），数据到达后自动显示"),
+                React.createElement("div", { className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-dtabs" },
+                        [["jj", "竞价"], ["jjzt", "即将涨停"], ["fxb", "风向标"], ["zt", "涨停"]].map(function (pair, i) {
+                            return React.createElement("span", {
+                                key: pair[0], className: "kpl-dtab" + (dtab === pair[0] ? " on" : ""),
+                                onClick: function () { setDtab(pair[0]); },
+                            }, pair[1], badge(i));
+                        })),
+                    dtab === "jj" && (silent ? React.createElement("div", { className: "kpl-mkt-empty sm" },
+                        "竞价榜为交易时段数据（9:25-9:30 集合竞价），休市无数据")
+                        : listRows.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
+                            listRows.slice(0, 20).map((r, i) =>
+                                React.createElement("div", { key: i, className: "row" },
+                                    React.createElement("div", { className: "nm" },
+                                        React.createElement("b", null, r.name || "--"),
+                                        React.createElement("span", { className: "cd" }, r.code || ""),
+                                        r.financingTag ? React.createElement("span", { className: "d3tag" }, "融") : null,
+                                        r.stockTag ? React.createElement("span", { className: "d3tag" }, r.stockTag === "1" ? "游" : r.stockTag) : null),
+                                    React.createElement("div", { className: "pct up" }, (r.quotas && r.quotas[0]) || "--"),
+                                    React.createElement("div", { className: "price" }, (r.quotas && r.quotas[1]) || "--"),
+                                    React.createElement("div", { className: "why" }, (r.quotas && r.quotas[2]) || ""))))
+                            : React.createElement("div", { className: "kpl-mkt-empty sm" }, "数据加载中…")),
+                    dtab === "jjzt" && (silent ? React.createElement("div", { className: "kpl-mkt-empty sm" },
+                        "即将涨停榜为交易时段数据，休市无数据")
+                        : listRows.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
+                            listRows.slice(0, 20).map((r, i) =>
+                                React.createElement("div", { key: i, className: "row" },
+                                    React.createElement("div", { className: "nm" },
+                                        React.createElement("b", null, r.name || "--"),
+                                        React.createElement("span", { className: "cd" }, r.code || "")),
+                                    React.createElement("div", { className: "pct up" }, (r.quotas && r.quotas[0]) || "--"),
+                                    React.createElement("div", { className: "price" }, (r.quotas && r.quotas[1]) || "--"),
+                                    React.createElement("div", { className: "why" }, (r.quotas && r.quotas[2]) || ""))))
+                            : React.createElement("div", { className: "kpl-mkt-empty sm" }, "数据加载中…")),
+                    dtab === "fxb" && React.createElement("div", { className: "kpl-mkt-wind" },
+                        wu.concat(wd).slice(0, 20).map((r, i) => React.createElement("div", { key: i, className: "wrow" },
+                            React.createElement("span", { className: "nm" }, r.name),
+                            React.createElement("span", { className: "plate" }, r.plate || ""),
+                            React.createElement("span", { className: "pct " + (Number(r.pct) >= 0 ? "up" : "down") },
+                                Number(r.pct).toFixed(2) + "%")))),
+                    dtab === "zt" && (ztItems.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
+                        ztItems.slice(0, 30).map((r, i) =>
+                            React.createElement("div", { key: i, className: "row" },
+                                React.createElement("div", { className: "nm" },
+                                    React.createElement("b", null, r.name || "--"),
+                                    React.createElement("span", { className: "cd" }, r.code || "")),
+                                React.createElement("div", { className: "pct up" },
+                                    r.pct != null ? Number(r.pct).toFixed(2) + "%" : "--"),
+                                React.createElement("div", { className: "price" }, r.price != null ? fmtPrice(r.price) : "--"),
+                                React.createElement("div", { className: "why" }, r.ztReason || (r.state === 2 ? "涨停" : "")))))
+                        : React.createElement("div", { className: "kpl-mkt-empty sm" }, "涨停列表数据加载中…"))),
                 React.createElement("div", { className: "kpl-mkt-sec" },
                     React.createElement("div", { className: "kpl-mkt-sec-t" }, "打板情绪"),
                     React.createElement("div", { className: "kpl-mkt-mood3" },
@@ -2934,20 +2999,7 @@ window.__ModuleLoader__.load({
                         React.createElement("span", { className: "h up" }, r.h + "板"),
                         React.createElement("span", { className: "names" },
                             (r.stocks || []).map(s => s.name).join("、") || "--")))) : null,
-                ztItems.length ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-sec-t" },
-                        "涨停列表", React.createElement("span", { className: "kpl-mkt-tips" },
-                            (ztlist.data && ztlist.data.total) + " 只")),
-                    React.createElement("div", { className: "kpl-mkt-ztlist" },
-                        ztItems.slice(0, 30).map((r, i) =>
-                            React.createElement("div", { key: i, className: "row" },
-                                React.createElement("div", { className: "nm" },
-                                    React.createElement("b", null, r.name || "--"),
-                                    React.createElement("span", { className: "cd" }, r.code || "")),
-                                React.createElement("div", { className: "pct up" },
-                                    r.pct != null ? Number(r.pct).toFixed(2) + "%" : "--"),
-                                React.createElement("div", { className: "price" }, r.price != null ? fmtPrice(r.price) : "--"),
-                                React.createElement("div", { className: "why" }, r.ztReason || (r.state === 2 ? "涨停" : "")))))) : null,
+
                 (wu.length || wd.length) ? React.createElement("div", { className: "kpl-mkt-sec" },
                     React.createElement("div", { className: "kpl-mkt-sec-t" }, "风向标"),
                     React.createElement("div", { className: "kpl-mkt-wind" },
@@ -2984,6 +3036,10 @@ window.__ModuleLoader__.load({
             const cur = idxes.find(x => x.num === idx) || idxes[0] || null;
             const qx = o.qx != null ? Math.round(Number(o.qx) * 100) : null;
             const broadcast = (zts.data && zts.data.broadcast) || "";
+            const situ = feedData(feed, "ztsitu");
+            const tip = feedData(feed, "zdtip");
+            const situV = (situ.data && situ.data.v) || [];
+            const tipText = (tip.data && tip.data.tip) || "";
             return React.createElement("div", { className: "kpl-mkt-wrap" },
                 React.createElement("div", { className: "kpl-mkt-sec" },
                     React.createElement("div", { className: "kpl-mkt-idxtabs" },
@@ -3042,6 +3098,18 @@ window.__ModuleLoader__.load({
                         React.createElement(KplTrendCanvas, {
                             points: zts.data.series.map(s => ({ v: Number(s.n) || 0 })),
                             preClose: null, height: 90 })) : null,
+                situV.length ? React.createElement("div", { className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨停形势"),
+                    React.createElement("div", { className: "kpl-mkt-duo" },
+                        [["封板", situV[0]], ["炸板", situV[1]], ["涨停", situV[2]], ["跌停", situV[3]],
+                         ["封板率%", situV[4]], ["连板率%", situV[5]], ["晋级率%", situV[6]], ["炸板率%", situV[7]],
+                         ["昨封炸", situV[8]], ["昨表现", situV[9]], ["今日表现", situV[10]]].map(function (pair, i) {
+                            return React.createElement("div", { key: i, className: "cell" },
+                                React.createElement("div", { className: "lbl" }, pair[0]),
+                                React.createElement("div", { className: "val" }, pair[1] != null ? pair[1] : "--"));
+                        }))) : null,
+                tipText ? React.createElement("div", { className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-mkt-broadcast", style: { color: "#e03131" } }, tipText)) : null,
                 broadcast ? React.createElement("div", { className: "kpl-mkt-sec" },
                     React.createElement("div", { className: "kpl-mkt-sec-t" }, "盘面播报"),
                     React.createElement("div", { className: "kpl-mkt-broadcast" }, broadcast)) : null,
@@ -4845,6 +4913,10 @@ window.__ModuleLoader__.load({
                 .kpl-page { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
                 /* ---- 行情菜单订阅面（kpl-mkt-*：显式色值白底，KPL CSS 铁律） ---- */
                 .kpl-mkt-wrap { display: flex; flex-direction: column; gap: 8px; }
+                .kpl-dtabs { display: flex; gap: 18px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+                .kpl-dtab { font-size: 14px; color: #666; cursor: pointer; position: relative; padding: 2px 2px 6px; }
+                .kpl-dtab.on { color: #e03131; font-weight: 700; border-bottom: 2px solid #e03131; }
+                .kpl-dt-badge { position: absolute; top: -8px; right: -22px; background: #e03131; color: #fff; font-size: 10px; border-radius: 8px; padding: 0 5px; line-height: 15px; }
                 .kpl-mkt-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
                 .kpl-mkt-card { min-width: 128px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; text-align: center; }
                 .kpl-mkt-card .lbl { font-size: 11px; color: #999; }

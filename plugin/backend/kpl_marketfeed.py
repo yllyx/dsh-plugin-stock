@@ -44,7 +44,9 @@ SUB_CMDS = [2100, 2101, 2106, 2107, 2108, 2109, 2110, 2111,
 # 2121 涨停股票列表（打板 tab"涨停"列表，QxZtSituationStockReq{bsType1,orderType2,sortType3}）
 # 带参订阅：请求体非 pb.Empty，与 SUB_CMDS 分开发送
 ZT_LIST_CMD = 2121
-PARAM_CMDS = [ZT_LIST_CMD, 3004, 3007]   # 带参订阅（与 pb.Empty 订阅分开发送）
+PARAM_CMDS = [ZT_LIST_CMD, 3004, 3007, 2102, 2103]   # 带参订阅（与 pb.Empty 订阅分开发送）
+DABAN_LIST_CMD = 2103   # 打板页列表（PatternPresenter：竞价/即将涨停/风向标三 pidType）
+DABAN_COUNT_CMD = 2102  # 打板页计数徽标（DaBanListCountResp counts 数组）
 
 
 def _zt_list_body() -> bytes:
@@ -58,6 +60,25 @@ def _stock_rank_body() -> bytes:
     return (pb_uint(1, 1) + pb_uint(2, 1) + pb_uint(5, 1) + pb_uint(6, 1)
             + pb_uint(7, 1) + pb_uint(8, 1) + pb_uint(9, 1)
             + pb_uint(20, 0) + pb_uint(21, 50))
+
+
+def _daban_count_body() -> bytes:
+    """2102 DaBanListCountReq{filterType1,filterCX2,filterZB3,filterCYB4,filterKCB5}
+    filter 布尔语义 1=过滤（App 打板页四子 tab 徽标计数）。"""
+    from kpl_socket import pb_uint
+    return pb_uint(1, 0) + pb_uint(2, 0) + pb_uint(3, 0) + pb_uint(4, 0) + pb_uint(5, 0)
+
+
+def _daban_list_body(pid_type: int = 1, sort_type: int = 1, order_type: int = 1,
+                     index: int = 0, count: int = 30) -> bytes:
+    """2103 DaBanStockListReq（App PatternPresenter 字节码序）：
+    pidType1, sortType2, orderType3, index4, count5, cxType6, stType7, zbType8,
+    cybType9, kcbType10；filter 布尔 1=过滤。pidType 枚举 ⏸ 盘中锚定（推定 1=竞价
+    2=即将涨停 3=风向标，涨停 tab=2120）。"""
+    from kpl_socket import pb_uint
+    return (pb_uint(1, pid_type) + pb_uint(3, order_type) + pb_uint(2, sort_type)
+            + pb_uint(7, 0) + pb_uint(6, 0) + pb_uint(8, 0) + pb_uint(9, 0) + pb_uint(10, 0)
+            + pb_uint(4, index) + pb_uint(5, count))
 
 
 def _plate_rank_body(plate_type: int = 1, count: int = 30) -> bytes:
@@ -338,6 +359,30 @@ def _parse_cmd_tree(cmd: int, t: dict) -> Optional[dict]:
                 })
             items.sort(key=lambda x: x.get("ztTime") or 0)
             return {"day": t.get("4"), "total": t.get("5"), "items": items}
+        if cmd == DABAN_COUNT_CMD:   # 打板页计数徽标（DaBanListCountResp）
+            counts = t.get("2")
+            if isinstance(counts, list):
+                counts = [int(x) for x in counts if isinstance(x, int)]
+            elif isinstance(counts, int):
+                counts = [counts]
+            else:
+                counts = []
+            return {"counts": counts}
+        if cmd == DABAN_LIST_CMD:    # 打板页列表（DaBanStockListResp，2026-10-02 字节码定案）
+            items = []
+            for it in _kv_rows(t.get("20")):
+                quotas = []
+                for f2, _w, v2 in _flat(it) if isinstance(it, dict) else []:
+                    if f2 == 100 and isinstance(v2, bytes):
+                        quotas.append(v2.decode("utf8", "replace"))
+                items.append({
+                    "code": it.get("1"), "name": it.get("2"),
+                    "stockTag": it.get("3"), "financingTag": it.get("4"),
+                    "backZT": it.get("5"), "warnTag": it.get("6"),
+                    "quotas": quotas,
+                })
+            return {"date": t.get("23"), "maxSize": t.get("22"),
+                    "indexes": t.get("21"), "items": items}
         if cmd == 3004:      # 个股 tab 全市场榜单（RealtimeLHBResp）
             items = []
             for it in _kv_rows(t.get("41")):
@@ -426,6 +471,44 @@ def get_plate_rank(client) -> dict:
 INDEX_NAMES = ["SH", "SZ", "CYB"]   # 3003 currNums 顺序：上证/深证/创业板
 
 
+def get_daban_lists(max_age: float = 30) -> Dict[str, Any]:
+    """打板页三列表拉取式（2103 RPC 直发：pidType 1=竞价 2=即将涨停 3=风向标 ⏸ 枚举待盘中锚定）。
+    订阅面 2103 槽位只存最后推送的 pidType（三类互踩），列表按需走独立 RPC。
+    休市静默 → 返回 {"lists": {}, "silent": True}。"""
+    import time as _t
+    cache = getattr(get_daban_lists, "_c", None)
+    now = _t.time()
+    if cache and now - cache[0] < max_age:
+        return cache[1]
+    from kpl_socket import get_kpl_socket, build_frame
+    api = get_kpl_socket()
+    out: Dict[str, Any] = {"lists": {}, "silent": False, "ts": int(now)}
+    s = api._session
+    alive = bool(s and s.alive)
+    if not alive:
+        api.ensure_session(timeout_s=8)   # 短超时：不阻塞页面
+        s = api._session
+        alive = bool(s and s.alive)
+    if alive:
+        for pid, name in ((1, "jj"), (2, "jjzt"), (3, "fxb")):
+            try:
+                with s._send_lock:
+                    s.sock.sendall(build_frame(DABAN_LIST_CMD,
+                                               _daban_list_body(pid_type=pid, count=30),
+                                               kind=4, seq=s._next_seq()))
+                hit = s._wait_cmd(DABAN_LIST_CMD, timeout_s=4)
+                if hit:
+                    parsed = parse_cmd(DABAN_LIST_CMD, hit)
+                    if parsed and parsed.get("items"):
+                        out["lists"][name] = parsed
+            except Exception as e:
+                logger.debug(f"dabanlist pid={pid}: {e}")
+    if not out["lists"]:
+        out["silent"] = True
+    get_daban_lists._c = (now, out)
+    return out
+
+
 def get_index_trend(max_age: float = 30) -> Dict[str, Any]:
     """3003 主指数分时（拉取式，App 直播 tab 大盘分时图 + 板块 tab 顶部横滑卡同源）。
     currNums=[0,1,2]；价格 4 位定点；带 30s 缓存 + 陈旧兜底。"""
@@ -461,12 +544,19 @@ class MarketFeed:
         self._snap_ts = 0.0
         self._snap_lock = threading.Lock()
         self._ka_started = False
+        # 订阅全程锁：prewarm 线程与首个端点请求并发进入 ensure_subscribed 会
+        # 双建会话同 device 互踢，存活会话的 sub_cmds 缺带参 cmd（2026-10-02 实锤）
+        self._es_lock = threading.Lock()
 
     def _api(self):
         from kpl_socket import get_kpl_socket
         return get_kpl_socket()
 
     def ensure_subscribed(self, connect: bool = True):
+        with self._es_lock:
+            return self._ensure_subscribed_locked(connect)
+
+    def _ensure_subscribed_locked(self, connect: bool = True):
         api = self._api()
         api.subscribe(SUB_CMDS)          # 登记 desired_subs（重连自动重发）
         if not api.session_alive():
@@ -478,8 +568,10 @@ class MarketFeed:
             s.send_subscriptions(SUB_CMDS)
             # 带参订阅单独发：send_subscriptions 只发 pb.Empty
             for cmd, body_fn in ((ZT_LIST_CMD, _zt_list_body),
-                                 (3004, _stock_rank_body), (3007, _plate_rank_body)):
-                if cmd not in s.sub_cmds:  # 3004/3007 已不在 SUB_CMDS，此处必然首发
+                                 (3004, _stock_rank_body), (3007, _plate_rank_body),
+                                 (DABAN_COUNT_CMD, _daban_count_body),
+                                 (DABAN_LIST_CMD, _daban_list_body)):
+                if cmd not in s.sub_cmds:  # 带参 cmd 不在 SUB_CMDS，此处必然首发
                     try:
                         from kpl_socket import build_frame
                         with s._send_lock:
@@ -513,7 +605,9 @@ class MarketFeed:
                 # 但重发限频 ≥180s：盘后服务端静默时 ages 永远缺失，不限频会每 25s 刷帧
                 last_param_resend = getattr(self, "_param_resend_ts", {})
                 for cmd, body_fn in ((ZT_LIST_CMD, _zt_list_body),
-                                     (3004, _stock_rank_body), (3007, _plate_rank_body)):
+                                     (3004, _stock_rank_body), (3007, _plate_rank_body),
+                                     (DABAN_COUNT_CMD, _daban_count_body),
+                                     (DABAN_LIST_CMD, _daban_list_body)):
                     if not (s.alive and cmd in s.sub_cmds):
                         continue
                     if now - last_param_resend.get(cmd, 0) < 180:
@@ -554,7 +648,8 @@ class MarketFeed:
                  2108: "weights", 2109: "north", 2110: "zdstat", 2111: "zdtip",
                  2114: "zddist", 2115: "overview", 2116: "ztseries", 2117: "ladder",
                  2126: "windvane", ZT_LIST_CMD: "ztlist",
-                 3004: "stockrank", 3007: "platerank"}
+                 3004: "stockrank", 3007: "platerank",
+                 DABAN_COUNT_CMD: "dabancount", DABAN_LIST_CMD: "dabanlist"}
         now = time.time()
         # 首次订阅/会话新建后推送尚未落库：覆盖不足一半时等 4s 再读一轮
         got = sum(1 for c in names if s and c in s.sub_latest)
