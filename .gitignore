@@ -14,3 +14,6 @@ plugin/backend/config.json
 node_modules/
 *.tgz
 .DS_Store
+
+# 后端运行日志（运行时持续写入，不入库）
+plugin/backend/*.log
