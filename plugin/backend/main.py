@@ -168,6 +168,10 @@ async def lifespan(app: FastAPI):
     import threading as _ths
     def _kpl_prewarm():
         k = kpl_api.get_kpl()
+        try:
+            k.get_home_feed()   # 首页聚合预热（磁盘缓存空时同步冷拉一次，前端首开即有数据）
+        except Exception as e:
+            logger.warning(f"home 预热失败: {e}")
         k.prewarm_poprank()
         k.prewarm_themes()
         # 行情菜单订阅面：会话就绪后完成 2100-2126 订阅（feed 保活线程随订阅启动）

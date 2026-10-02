@@ -176,14 +176,18 @@ class KplClient:
         return self._client
 
     def _rate_wait(self, host: str = ""):
-        """按域限速：同域请求保持最小间隔，跨域并行（App 即每域独立连接）"""
+        """按域限速：同域请求保持最小间隔，跨域并行。
+        ⭐ 锁内只记账（把本域下次可发时刻登记好），锁外 sleep——旧实现持锁 sleep
+        使所有域所有线程串行排队，home feed 一轮 12 请求被拖到 30s+（审计 H3）。"""
+        wait = 0.0
         with self._lock:
             now = time.time()
             last = self._last_req_by_host.get(host, 0.0)
-            wait = last + MIN_INTERVAL - now
-            if wait > 0:
-                time.sleep(wait)
-            self._last_req_by_host[host] = time.time()
+            start_at = max(now, last + MIN_INTERVAL)
+            wait = start_at - now
+            self._last_req_by_host[host] = start_at
+        if wait > 0:
+            time.sleep(wait)
 
     def is_logged_in(self) -> bool:
         uid = config.get("kpl_user_id")
@@ -651,15 +655,77 @@ class KplClient:
     # ---------- 首页聚合（复刻 App 首页信息流，模块接口均为 2026-09-22 实测） ----------
 
     def get_home_feed(self, force: bool = False) -> Optional[Dict[str, Any]]:
-        """首页各模块聚合：大盘解读/最新主题/AI快讯/最强风口/市场风口/市场情绪/活跃板块/推荐文章"""
+        """首页各模块聚合：大盘解读/最新主题/AI快讯/最强风口/市场风口/市场情绪/活跃板块/推荐文章。
+        ⭐ 三层速度对齐 App：内存 SWR(20s) → 磁盘缓存秒显(kpl_home_cache.json) → 同步冷拉。
+        磁盘层让后端重启/冷启动时首页也秒显上次数据（App 同款本地缓存行为），后台自动刷新。"""
         if force:
             self.invalidate("homefeed")
-        return self._cached_swr("homefeed", 20, self._fetch_home_feed)
+        now = time.time()
+        hit = self._cache.get("homefeed")
+        if hit and now - hit["ts"] < 20:
+            return hit["data"]
+        if hit:
+            if not hit.get("refreshing"):
+                hit["refreshing"] = True
+                threading.Thread(target=self._bg_refresh_homefeed, daemon=True,
+                                 name="kpl-swr-homefeed").start()
+            return hit["data"]
+        disk = self._load_home_disk()
+        if disk:
+            self._cache["homefeed"] = {"data": disk, "ts": now, "refreshing": True}
+            threading.Thread(target=self._bg_refresh_homefeed, daemon=True,
+                             name="kpl-swr-homefeed").start()
+            return disk
+        data = self._fetch_home_feed()
+        if data is not None:
+            self._cache["homefeed"] = {"data": data, "ts": time.time()}
+            self._save_home_disk(data)
+        return data
+
+    def _home_disk_path(self):
+        from storage import storage as _st
+        return _st.data_dir / "kpl_home_cache.json"
+
+    def _load_home_disk(self) -> Optional[Dict[str, Any]]:
+        try:
+            sn = json.loads(self._home_disk_path().read_text(encoding="utf-8"))
+            if sn.get("data") and time.time() - float(sn.get("ts") or 0) < 7 * 86400:
+                return sn["data"]
+        except Exception:
+            pass
+        return None
+
+    def _save_home_disk(self, data: Dict[str, Any]) -> None:
+        try:
+            tmp = self._home_disk_path().with_suffix(".tmp")
+            tmp.write_text(json.dumps({"ts": time.time(), "data": data},
+                                      ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self._home_disk_path())
+        except Exception as e:
+            logger.debug(f"home 磁盘缓存: {e}")
+
+    def _bg_refresh_homefeed(self) -> None:
+        try:
+            data = self._fetch_home_feed()
+            if data is not None:
+                self._cache["homefeed"] = {"data": data, "ts": time.time(),
+                                           "refreshing": False}
+                self._save_home_disk(data)
+            elif "homefeed" in self._cache:
+                self._cache["homefeed"]["refreshing"] = False
+        except Exception:
+            if "homefeed" in self._cache:
+                self._cache["homefeed"]["refreshing"] = False
+
+    _home_pool: List = []   # 模块级单例线程池占位（类属性）
 
     def _fetch_home_feed(self) -> Optional[Dict[str, Any]]:
         from concurrent.futures import ThreadPoolExecutor
         out: Dict[str, Any] = {}
-        pool = ThreadPoolExecutor(max_workers=6)
+        if not KplClient._home_pool or KplClient._home_pool[0]._shutdown:
+            ex = ThreadPoolExecutor(max_workers=8)
+            KplClient._home_pool = [ex]
+        pool = KplClient._home_pool[0]
         futs = {}
         # 1. 大盘解读(Type=39) + 推荐文章 —— applhb UserInfo/AppNews
         futs["news"] = pool.submit(self.call, HOST_LHB, "UserInfo", "AppNews", {"st": "30", "Index": "0"}, False)

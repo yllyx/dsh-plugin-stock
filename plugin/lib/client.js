@@ -1783,10 +1783,15 @@ window.__ModuleLoader__.load({
 
         // 首页数据 SWR 缓存（模块级）：切回开盘啦 Tab 秒显旧数据，后台静默刷新
         const _kplHomeCache = { ov: null, home: null };
+        // localStorage 持久层：刷新页面也秒显上次数据（App 同款本地缓存行为）
+        const _kplHomeLS = {
+            get(k) { try { const v = localStorage.getItem("dsh-stock:" + k); return v ? JSON.parse(v) : null; } catch { return null; } },
+            set(k, v) { try { if (v) localStorage.setItem("dsh-stock:" + k, JSON.stringify(v)); } catch { /* */ } },
+        };
 
         function KplHomePage({ go, status, reloadStatus }) {
-            const [ov, setOv] = useState(() => _kplHomeCache.ov);
-            const [home, setHome] = useState(() => _kplHomeCache.home);
+            const [ov, setOv] = useState(() => _kplHomeCache.ov || _kplHomeLS.get("ov"));
+            const [home, setHome] = useState(() => _kplHomeCache.home || _kplHomeLS.get("home"));
             const [explainOpen, setExplainOpen] = useState(false);
             const load = useCallback(async () => {
                 // 并行拉取（原先串行 await 拖慢首屏）
@@ -1794,8 +1799,8 @@ window.__ModuleLoader__.load({
                     api("/api/kpl/overview").catch(() => null),
                     api("/api/kpl/home").catch(() => null),
                 ]);
-                if (o) { _kplHomeCache.ov = o; setOv(o); }
-                if (h) { _kplHomeCache.home = h; setHome(h); }
+                if (o) { _kplHomeCache.ov = o; _kplHomeLS.set("ov", o); setOv(o); }
+                if (h) { _kplHomeCache.home = h; _kplHomeLS.set("home", h); setHome(h); }
             }, []);
             usePolling(load, 30000, []);
             const statusLoaded = !!status;
