@@ -1899,6 +1899,176 @@ class KplClient:
             self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    # ---------- 行情·情绪 tab（App MarketMoodFragment/MoodFragment 完整复刻，2026-10-02 逆向）----------
+
+    _mood_pool: List = []   # 情绪页并行拉取线程池单例（类属性）
+    _mood_refreshing: bool = False
+
+    def _mood_disk_path(self):
+        from storage import storage as _st
+        return _st.data_dir / "kpl_mood_cache.json"
+
+    def get_mood_page(self, day: str = "") -> Dict[str, Any]:
+        """行情·情绪 tab 聚合（权威映射 kanpan_spec/docs/mood_page_map.md）。
+        App 架构：历史/盘后=HIS 域 HTTP（本接口，休市 today 域只回反爬占位串）；
+        当日盘中=socket 订阅（marketfeed 2100/2106/2114 等）。day 缺省=最近前一交易日
+        （与 App 休市显示最近交易日缓存同款）。
+        ⭐ 三层速度对齐 App：内存 60s → 磁盘秒显(kpl_mood_cache.json)+后台刷新 → 同步冷拉
+        （apphis 域 11 请求×2.5s 限速，冷拉 ~25s，磁盘层把首开变秒开）。"""
+        from trade_calendar import get_cal
+        day = day or time.strftime("%Y-%m-%d")
+        try:
+            if not get_cal().is_trading_day(day):
+                prev = get_cal().prev_trading_day(day)
+                if prev:
+                    day = prev
+        except Exception:
+            pass
+        key = f"mood:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        # 磁盘层：同交易日 7 天内有效 → 秒回 + 后台刷新
+        disk = None
+        try:
+            p = self._mood_disk_path()
+            if p.exists():
+                dj = json.loads(p.read_text(encoding="utf-8"))
+                if dj.get("day") == day and time.time() - dj.get("ts", 0) < 7 * 86400:
+                    disk = dj.get("data")
+        except Exception as e:
+            logger.debug(f"mood 磁盘缓存读: {e}")
+        if disk is not None:
+            self._cache[key] = {"data": disk, "ts": time.time() - 3600}
+            if not KplClient._mood_refreshing:
+                KplClient._mood_refreshing = True
+                threading.Thread(target=self._bg_refresh_mood, args=(day,), daemon=True).start()
+            return disk
+        data = self._fetch_mood(day)
+        if data:
+            self._cache[key] = {"data": data, "ts": time.time()}
+            self._save_mood_disk(data)
+        return data or {"day": day}
+
+    def _bg_refresh_mood(self, day: str) -> None:
+        try:
+            data = self._fetch_mood(day)
+            if data:
+                self._cache[f"mood:{day}"] = {"data": data, "ts": time.time()}
+                self._save_mood_disk(data)
+        except Exception as e:
+            logger.debug(f"mood 后台刷新: {e}")
+        finally:
+            KplClient._mood_refreshing = False
+
+    def _save_mood_disk(self, data: Dict[str, Any]) -> None:
+        try:
+            tmp = self._mood_disk_path().with_suffix(".tmp")
+            tmp.write_text(json.dumps({"ts": time.time(), "day": data.get("day"),
+                                       "data": data}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self._mood_disk_path())
+        except Exception as e:
+            logger.debug(f"mood 磁盘缓存写: {e}")
+
+    def _fetch_mood(self, day: str) -> Optional[Dict[str, Any]]:
+        HIS_K = "https://apphis.kaipanla.com/w1/api/index.php"
+        from concurrent.futures import ThreadPoolExecutor
+        if not KplClient._mood_pool or KplClient._mood_pool[0]._shutdown:
+            KplClient._mood_pool = [ThreadPoolExecutor(max_workers=11)]
+        pool = KplClient._mood_pool[0]
+        HDP = "HisHomeDingPan"
+        f = {
+            "head": pool.submit(self.call, HIS_K, HDP, "HisDaBanHeadInfo", {"Day": day}, False),
+            "zdtj": pool.submit(self.call, HIS_K, HDP, "MarketZDTJ", {"Date": day, "FBJS": "1"}, False),
+            "cap": pool.submit(self.call, HIS_K, HDP, "MarketSCLN", {"Date": day.replace("-", ""), "Type": "0"}, False),
+            "ztexpr": pool.submit(self.call, HIS_K, HDP, "ZhangTingExpression", {"Day": day, "Is_New": "1"}, False),
+            "line": pool.submit(self.call, HIS_K, "HisMarketSentiment", "GetSentimentChart", {"date": day}, False),
+            "line5": pool.submit(self.call, HIS_K, "HisMarketSentiment", "GetSentimentChart", {"date": day, "five_days": "1"}, False),
+            "live": pool.submit(self.call, HIS_K, "HisMarketSentiment", "GetLiveNews", {"date": day}, False),
+            "senthist": pool.submit(self.get_sentiment_history),
+            "withdraw": pool.submit(self.call, HIS_K, HDP, "SharpWithdrawal", {"Day": day, "Is_New": "1"}, False),
+            "wind": pool.submit(self.call, HIS_K, HDP, "HisWeatherVane", {"Day": day}, False),
+            "weight": pool.submit(self.call, HIS_K, HDP, "WeightPerformance", {"Day": day}, False),
+            "nb": pool.submit(self.call, HIS_K, HDP, "NorthboundFundsB", {"Day": day}, False),
+        }
+        g = lambda k: f[k].result()
+        info = lambda k: (g(k) or {}).get("info") or {}
+        # ⭐ 响应层级两种：MarketZDTJ/MarketSCLN/ZhangTingExpression/SharpWithdrawal/
+        #   WeightPerformance/NorthboundFundsB 包 info；HisDaBanHeadInfo=顶层 nums、
+        #   HisWeatherVane=顶层 top/bottom、GetSentimentChart=顶层 points、GetLiveNews=顶层 list（实测）
+
+        # 涨跌统计 11 档（App 同款聚合：key N=(N-1,N]% 涨幅桶，1/2/3 桶=3~0% 等，2026-10-02 对齐）
+        z = info("zdtj")
+        num = lambda k: int(z.get(str(k)) or 0)
+        bars = []
+        if z:
+            bars = [
+                {"lbl": "涨停", "v": num("ZT"), "cls": "up"},
+                {"lbl": ">10%", "v": num(11), "cls": "up"},
+                {"lbl": "10~7%", "v": num(8) + num(9) + num(10), "cls": "up"},
+                {"lbl": "7~3%", "v": num(4) + num(5) + num(6) + num(7), "cls": "up"},
+                {"lbl": "3~0%", "v": num(1) + num(2) + num(3), "cls": "up"},
+                {"lbl": "平", "v": num(0), "cls": "flat"},
+                {"lbl": "0~3%", "v": num(-1) + num(-2) + num(-3), "cls": "down"},
+                {"lbl": "3~7%", "v": num(-4) + num(-5) + num(-6) + num(-7), "cls": "down"},
+                {"lbl": "7~10%", "v": num(-8) + num(-9) + num(-10), "cls": "down"},
+                {"lbl": "10%<", "v": num(-11), "cls": "down"},
+                {"lbl": "跌停", "v": num("DT"), "cls": "down"},
+            ]
+        # 涨停表现：天梯+连板率（App ZTExpressionEntity 阈值：二板<15低/≥25高，余<30低/≥45高）
+        e = info("ztexpr") or []
+        expr = {}
+        if isinstance(e, list) and len(e) >= 14:
+            f1 = lambda x: float(x) if x is not None else 0.0
+            grade2 = lambda v: "低" if v < 15 else ("中" if v < 25 else "高")
+            gradeN = lambda v: "低" if v < 30 else ("中" if v < 45 else "高")
+            gradeZb = lambda v: "低" if v < 25 else ("中" if v < 37 else "高")
+            gradePerf = lambda v: "低" if v < 1 else ("中" if v < 3.5 else "高")
+            gradePb = lambda v: "低" if v < -1 else ("中" if v < 1 else "高")
+            expr = {
+                "ladder": [int(e[0] or 0), int(e[1] or 0), int(e[2] or 0), int(e[3] or 0), int(e[4] or 0)],
+                "lbRates": [
+                    {"v": f1(e[5]), "g": grade2(f1(e[5]))},
+                    {"v": f1(e[6]), "g": gradeN(f1(e[6]))},
+                    {"v": f1(e[7]), "g": gradeN(f1(e[7]))},
+                    {"v": f1(e[8]), "g": gradeN(f1(e[8]))}],
+                "breakRate": {"v": f1(e[9]), "g": gradeZb(f1(e[9]))},
+                "rows": [
+                    {"lbl": "昨日涨停今表现", "v": f1(e[10]), "g": gradePerf(f1(e[10]))},
+                    {"lbl": "昨日连板今表现", "v": f1(e[11]), "g": gradePerf(f1(e[11]))},
+                    {"lbl": "昨日破板今表现", "v": f1(e[12]), "g": gradePb(f1(e[12]))}],
+                "text": e[13] if len(e) > 13 else "",
+            }
+        # 大幅回撤
+        wd = []
+        for it in (info("withdraw") or []):
+            if isinstance(it, list) and len(it) >= 7:
+                wd.append({"code": it[0], "name": it[1], "pct": it[2],
+                           "drawdown": it[3], "high": it[4], "plates": str(it[6] or "")})
+        hn = g("head") or {}
+        cap = info("cap") or {}
+        wind = g("wind") or {}
+        out = {
+            "day": day,
+            "head": hn.get("nums") if isinstance(hn, dict) else None,
+            "zdtj": {"bars": bars, "sjzt": z.get("SJZT"), "sjdt": z.get("SJDT"),
+                     "szjs": z.get("SZJS"), "xdjs": z.get("XDJS"),
+                     "stzt": z.get("STZT"), "stdt": z.get("STDT")} if z else None,
+            "cap": {"last": cap.get("last"), "ycln": cap.get("ycln"), "yclnstr": cap.get("yclnstr"),
+                    "csbl": cap.get("csbl"), "color": cap.get("color"),
+                    "pre": cap.get("s_zrcs"), "trends": cap.get("trends") or []} if cap else None,
+            "ztexpr": expr or None,
+            "mood_line": (g("line") or {}).get("points") or [],
+            "mood_line5": (g("line5") or {}).get("points") or [],
+            "live_news": (g("live") or {}).get("list") or [],
+            "lb_strength": (g("senthist") or []),
+            "withdrawal": wd,
+            "windvane": {"top": wind.get("top") or [], "bottom": wind.get("bottom") or []},
+            "weights": info("weight") or {},
+            "northbound": info("nb") or None,
+        }
+        return out or None
+
     def get_kpl_stock_trend(self, code: str) -> Dict[str, Any]:
         """个股分时（App 个股详情分时图同源 StockL2Data/GetStockTrend）：
         trend=[[时间,现价,均价,量,阶段]...]+昨收/开盘/最高/最低。30s 缓存。"""

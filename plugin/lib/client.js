@@ -3306,7 +3306,7 @@ window.__ModuleLoader__.load({
                 sub === "stock" && React.createElement(KPL_G.stock, null),
                 sub === "hk" && React.createElement(KPL_G.hk, { go }),
                 sub === "daban" && React.createElement(KPL_G.daban, { go }),
-                sub === "sentiment" && React.createElement(KPL_G.sentiment, null),
+                sub === "sentiment" && React.createElement(KPL_G.sentiment, { go }),
                 sub === "live" && React.createElement(KPL_G.live, null),
                 sub === "global" && React.createElement(KPL_G.global, null));
         }
@@ -3430,102 +3430,335 @@ window.__ModuleLoader__.load({
                 info && info.zt_count != null ? React.createElement("div", { className: "kpl-sector-zt" }, `涨停 ${info.zt_count}`) : null);
         }
 
-        /* ---- 情绪页（首页市场情绪下钻 与 行情·情绪子页 共用；App 情绪 tab 同源）---- */
+        /* ---- 情绪页（App 行情·情绪 tab=MarketMoodFragment·数据分析 1:1 复刻，2026-10-02 逆向）----
+         * 数据 /api/kpl/mood?day=（HIS 域 HTTP 聚合，模块映射见 kanpan_spec/docs/mood_page_map.md）。
+         * App 实拍顺序：温度计→涨跌统计→市场量能→涨停表现→活跃股走势+播报→连板强度→大幅回撤→风向标→权重表现。
+         * 隐藏规则同 App：北向资金 status==0 隐藏；"历史数据"悬浮按钮 ◀▶ 切交易日。 */
 
-        function KplSentimentBody({ daban, overview }) {
-            const head = (daban && daban.head) || {};
-            const szjs = Number((daban && daban.szjs) || 0), xdjs = Number((daban && daban.xdjs) || 0);
+        function kplMoodGrade(g) {   // App ZTExpressionEntity.getTextColor：低=绿 高=红 中=灰
+            return g === "高" ? "#e03131" : (g === "低" ? "#2f9e44" : "#868e96");
+        }
+
+        // 温度计（综合强度 0-100：渐变条+刻度+右侧大数字，App 同款）
+        function KplMoodThermo({ v }) {
+            const w = Math.min(100, Math.max(0, Number(v) || 0));
+            const ticks = [];
+            for (let i = 0; i <= 100; i += 10) ticks.push(React.createElement("span", { key: i }, i));
+            return React.createElement("div", { className: "kpl-mood-thermo" },
+                React.createElement("div", { className: "lft" },
+                    React.createElement("div", { className: "tube" },
+                        React.createElement("div", { className: "fill", style: { width: Math.max(6, w * 0.86 + 6) + "%" } })),
+                    React.createElement("div", { className: "scale" }, ticks)),
+                React.createElement("div", { className: "num" },
+                    React.createElement("b", null, v != null && v !== "" ? v : "--"),
+                    React.createElement("div", { className: "lbl" }, "综合强度")));
+        }
+
+        // 涨跌统计 11 档柱状（App 同款：上数值/中柱/下标签，红灰绿 + 红绿比例条 + 涨跌家数）
+        function KplMoodZdBars({ z }) {
+            const bars = (z && z.bars) || [];
+            if (!bars.length) return null;
+            const max = Math.max.apply(null, bars.map(b => b.v).concat([1]));
+            const szjs = Number(z.szjs || 0), xdjs = Number(z.xdjs || 0);
             const tot = szjs + xdjs;
-            const redPct = tot > 0 ? (szjs / tot * 100).toFixed(1) : "50.0";
-            const hist = ((overview && overview.sentiment_history) || []).slice(0, 10);
-            const strong = hist.length > 0 ? hist[0].strong : null;
-            // 温度计渐变条（综合强度 0-100）
-            const w = Math.min(100, Math.max(0, Number(strong) || 0));
-            return React.createElement("div", { className: "kpl-sent2" },
-                // 综合强度温度计（App：渐变温度条 + 大数字）
-                React.createElement("div", { className: "kpl-sent2-thermo" },
-                    React.createElement("div", { className: "bar" },
-                        React.createElement("div", { className: "fill", style: { width: (w * 0.62 + 8) + "%" } })),
-                    React.createElement("div", { className: "num" },
-                        React.createElement("b", null, strong != null ? strong : "--"),
-                        React.createElement("div", { className: "lbl" }, "综合强度"))),
-                // 涨跌统计（实际涨跌停 + 家数红绿条 + 平盘）
-                React.createElement("div", { className: "kpl-sent2-card" },
-                    React.createElement("div", { className: "t" }, "涨跌统计"),
-                    React.createElement("div", { className: "r" },
-                        React.createElement("span", { className: "lab" }, "实际涨跌停："),
-                        React.createElement("b", { className: "up" }, head.zt ? head.zt[0] : "--"),
-                        " : ",
-                        React.createElement("b", { className: "down" }, head.dt ? head.dt[0] : "--")),
-                    React.createElement("div", { className: "kpl-sent2-bar" },
-                        React.createElement("div", { className: "red", style: { width: redPct + "%" } },
-                            "涨" + szjs + "家"),
-                        React.createElement("div", { className: "green", style: { width: (100 - redPct) + "%" } },
-                            "跌" + xdjs + "家")),
-                    React.createElement("div", { className: "r2" },
-                        React.createElement("span", null, "平盘：", (daban && daban.ppjs) || "--"),
-                        React.createElement("span", null, "连板高度：", hist.length > 0 && hist[0].lbgd != null ? hist[0].lbgd : "--"))),
-                // 市场量能（今日总量/沪深京）
-                React.createElement("div", { className: "kpl-sent2-card" },
-                    React.createElement("div", { className: "t" }, "市场量能"),
-                    React.createElement("div", { className: "r3" },
-                        React.createElement("span", null, "上证量能：",
-                            React.createElement("b", null, (daban && daban.szln) ? (Number(daban.szln) / 1e8).toFixed(0) + "亿" : "--")),
-                        React.createElement("span", null, "沪深京量能：",
-                            React.createElement("b", null, (daban && daban.qscln) ? (Number(daban.qscln) / 1e8).toFixed(0) + "亿" : "--")))),
-                // 历史情绪序列（近 10 日）
-                React.createElement("div", { className: "kpl-sent2-card" },
-                    React.createElement("div", { className: "t" }, "历史情绪"),
-                    hist.map((d2, i) =>
-                        React.createElement("div", { key: i, className: "hrow" },
-                            React.createElement("span", { className: "day" }, d2.Day),
-                            React.createElement("span", { className: "strong" }, "强度 " + d2.strong),
-                            React.createElement("span", null, "涨停 " + d2.ztjs),
-                            React.createElement("span", null, "连板高度 " + d2.lbgd)))),
-                React.createElement("div", { className: "kpl-qd2-day" }, "涨跌统计分布图开发中"));
+            const redPct = tot > 0 ? szjs / tot * 100 : 50;
+            return React.createElement("div", { className: "kpl-mood-zdbars" },
+                React.createElement("div", { className: "row" },
+                    bars.map((b, i) => React.createElement("div", { key: i, className: "col" },
+                        React.createElement("div", { className: "v " + b.cls }, b.v),
+                        React.createElement("div", { className: "bar " + b.cls,
+                            style: { height: Math.max(3, Math.round(b.v / max * 150)) + "px" } }),
+                        React.createElement("div", { className: "lbl" + (b.v != null ? "" : " dim") }, b.lbl)))),
+                React.createElement("div", { className: "ratio" },
+                    React.createElement("div", { className: "red", style: { width: redPct + "%" } }),
+                    React.createElement("div", { className: "mid" }),
+                    React.createElement("div", { className: "green", style: { width: (100 - redPct) + "%" } })),
+                React.createElement("div", { className: "rn" },
+                    React.createElement("span", { className: "up" }, "涨" + szjs + "家"),
+                    React.createElement("span", { className: "down" }, "跌" + xdjs + "家")));
+        }
+
+        // 连板强度点线图（strong 历史序列，红点橙线；App 同款 >75 过热 <25 过冷）
+        function KplMoodDots({ series }) {
+            const ref = useRef(null);
+            useEffect(() => {
+                const cv = ref.current;
+                if (!cv || !series || !series.length) return;
+                const dpr = window.devicePixelRatio || 1;
+                const W = cv.clientWidth || 320, H = 170;
+                cv.width = W * dpr; cv.height = H * dpr;
+                const ctx = cv.getContext("2d");
+                ctx.scale(dpr, dpr);
+                ctx.clearRect(0, 0, W, H);
+                const vs = series.map(d => Number(d.strong) || 0);
+                let hi = Math.max.apply(null, vs.concat([100])), lo = 0;
+                const x = i => 8 + i / Math.max(1, vs.length - 1) * (W - 16);
+                const y = v => 8 + (hi - v) / (hi - lo) * (H - 20);
+                [0, 25, 50, 75, 100].forEach(g => {
+                    ctx.strokeStyle = g === 25 || g === 75 ? "#ffd8a8" : "#eee";
+                    ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+                    ctx.beginPath(); ctx.moveTo(0, y(g)); ctx.lineTo(W, y(g)); ctx.stroke();
+                });
+                ctx.setLineDash([]);
+                ctx.strokeStyle = "#f59f00"; ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                vs.forEach((v, i) => { if (i) ctx.lineTo(x(i), y(v)); else ctx.moveTo(x(0), y(v)); });
+                ctx.stroke();
+                ctx.fillStyle = "#e03131";
+                vs.forEach((v, i) => {
+                    ctx.beginPath(); ctx.arc(x(i), y(v), 2.6, 0, Math.PI * 2); ctx.fill();
+                });
+            }, [series]);
+            return React.createElement("canvas", { ref, className: "kpl-mkt-trend", style: { height: "170px" } });
+        }
+
+        function KplMoodBody({ startDay, go }) {
+            const [data, setData] = useState(null);
+            const [error, setError] = useState(null);
+            const [day, setDay] = useState(startDay || "");
+            const [mode5, setMode5] = useState(false);
+            const load = useCallback(async (d) => {
+                try {
+                    setError(null);
+                    setData(await api("/api/kpl/mood" + (d ? "?day=" + encodeURIComponent(d) : "")));
+                } catch (e) { setError(e && e.message ? e.message : String(e)); }
+            }, []);
+            useEffect(() => { load(day); }, [load, day]);
+            usePolling(() => load(day), 60000, [day]);
+            const d = data || {};
+            const z = d.zdtj || null;
+            const head = d.head || {};
+            const cap = d.cap || null;
+            const expr = d.ztexpr || null;
+            const wd = d.withdrawal || [];
+            const wv = d.windvane || { top: [], bottom: [] };
+            const wts = d.weights || {};
+            const news = d.live_news || [];
+            const hist = d.lb_strength || [];
+            const nb = d.northbound;
+            const dayLbl = d.day ? d.day.slice(5).replace("-", "-") : "--";
+            const fmtYi = (v) => { const n = Number(v); return isFinite(n) && n ? (n / 1e4).toFixed(0) + "亿" : "--"; };
+            const pct2 = (v) => (v >= 0 ? "+" : "") + Number(v).toFixed(2) + "%";
+            // 日期步进（后端按交易日历归一，▶ 今日禁用=App 同款）
+            const today = new Date();
+            const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+            const stepDay = (dd, n) => {
+                const t = new Date(dd + "T00:00:00");
+                t.setDate(t.getDate() + n);
+                return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+            };
+            const curDay = d.day || day || todayStr;
+            const capTrends = (cap && cap.trends || []).map(t => ({ v: Number(t[4]) || 0 }));
+            const moodPts = ((mode5 && d.mood_line5 && d.mood_line5.length ? d.mood_line5 : d.mood_line) || []).map(p => ({ v: Number(p.value) || 0 }));
+            let moodHi = null, moodLo = null;
+            moodPts.forEach(p => {
+                if (moodHi == null || p.v > moodHi) moodHi = p.v;
+                if (moodLo == null || p.v < moodLo) moodLo = p.v;
+            });
+            const news0 = news.length ? news[0] : null;
+            const newsTime = news0 ? fmtTs(Number(news0.time)) : "";
+            const weightCards = (wts.SZ || []).slice(0, 3).concat((wts.XD || []).slice(0, 3));
+            const nbShow = nb && Number(nb.status) > 0 && String(nb.totalB) !== "88";
+            return React.createElement("div", { className: "kpl-mood" },
+                error && React.createElement("div", { className: "kpl-empty" },
+                    "加载失败：" + error,
+                    React.createElement("div", { className: "kpl-mkt-tips" },
+                        React.createElement("span", { className: "kpl-mood-retry", onClick: () => load(day) }, "点击重试"))),
+                !data && !error && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
+                data && React.createElement("div", null,
+                    // ① 温度计
+                    React.createElement("div", { className: "kpl-mood-sec plain" },
+                        React.createElement(KplMoodThermo, { v: hist.length ? hist[0].strong : null })),
+                    // ② 涨跌统计
+                    z ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "涨跌统计"),
+                        React.createElement("div", { className: "sjzt" },
+                            "实际涨跌停：",
+                            React.createElement("b", { className: "up" }, z.sjzt != null ? z.sjzt : "--"), " : ",
+                            React.createElement("b", { className: "down" }, z.sjdt != null ? z.sjdt : "--"),
+                            React.createElement("span", { className: "tip" }, " (过滤ST股)")),
+                        React.createElement(KplMoodZdBars, { z: z })) : null,
+                    // ③ 市场量能
+                    cap ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "市场量能 ",
+                            React.createElement("span", { className: "day" }, dayLbl),
+                            React.createElement("span", { className: "more" }, "历史量能")),
+                        React.createElement("div", { className: "cap-row1" }, "沪深京 | 实际量能 ",
+                            React.createElement("b", null, fmtYi(cap.last))),
+                        React.createElement("div", { className: "cap-row2" },
+                            React.createElement("i", { className: "dot" }), "今日 | 预测量能 ",
+                            React.createElement("b", { className: "up" }, cap.yclnstr || "--")),
+                        React.createElement(KplTrendCanvas, { points: capTrends, preClose: 0, height: 160 }),
+                        React.createElement("div", { className: "axis-x" },
+                            React.createElement("span", null, "09:30"),
+                            React.createElement("span", null, "11:30/13:00"),
+                            React.createElement("span", null, "15:00")),
+                        React.createElement("div", { className: "note" },
+                            "注:红色代表当日预测量能增量，绿色代表缩量",
+                            React.createElement("span", { className: "ovl" }, "◎ 叠加上证（盘中）"))) : null,
+                    // ④ 涨停表现
+                    expr ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "涨停表现",
+                            React.createElement("span", { className: "more" }, "更多")),
+                        React.createElement("div", { className: "kpl-mood-three" },
+                            React.createElement("div", { className: "cell" },
+                                React.createElement("div", { className: "lbl" }, "涨停板"),
+                                React.createElement("div", { className: "vv" },
+                                    React.createElement("b", { className: "up" }, z && z.sjzt != null ? z.sjzt : "--"), " / ",
+                                    React.createElement("span", { className: "old" }, head.lZhangTing != null ? head.lZhangTing : "--")),
+                                React.createElement("div", { className: "sub" },
+                                    React.createElement("span", null, "今日"), React.createElement("span", null, "昨日"))),
+                            React.createElement("div", { className: "cell" },
+                                React.createElement("div", { className: "lbl" }, "封板率"),
+                                React.createElement("div", { className: "vv" },
+                                    React.createElement("b", { className: "up" }, head.tFengBan != null ? Math.round(Number(head.tFengBan)) + "%" : "--"), " / ",
+                                    React.createElement("span", { className: "old" }, head.lFengBan != null ? Math.round(Number(head.lFengBan)) + "%" : "--")),
+                                React.createElement("div", { className: "sub" },
+                                    React.createElement("span", null, "今日"), React.createElement("span", null, "昨日"))),
+                            React.createElement("div", { className: "cell" },
+                                React.createElement("div", { className: "lbl" }, "跌停板"),
+                                React.createElement("div", { className: "vv" },
+                                    React.createElement("b", { className: "down" }, z && z.sjdt != null ? z.sjdt : "--"), " / ",
+                                    React.createElement("span", { className: "old" }, head.lDieTing != null ? head.lDieTing : "--")),
+                                React.createElement("div", { className: "sub" },
+                                    React.createElement("span", null, "今日"), React.createElement("span", null, "昨日")))),
+                        React.createElement("div", { className: "kpl-mood-ladder" },
+                            React.createElement("div", { className: "lr head" },
+                                ["一板", "二板", "三板", "四板", "高度板"].map((t, i) =>
+                                    React.createElement("span", { key: i }, t))),
+                            React.createElement("div", { className: "lr nums" },
+                                expr.ladder.map((v, i) => React.createElement("span", { key: i }, v))),
+                            React.createElement("div", { className: "lr rates" },
+                                React.createElement("span", null, "连板率"),
+                                expr.lbRates.map((r, i) => React.createElement("span", { key: i, className: "g" },
+                                    Math.round(r.v) + "% ",
+                                    React.createElement("i", { style: { color: kplMoodGrade(r.g) } }, r.g))))),
+                        React.createElement("div", { className: "kpl-mood-rows" },
+                            React.createElement("div", { className: "mrow" },
+                                React.createElement("span", null, "今日涨停破板率"),
+                                React.createElement("span", { className: "val" },
+                                    React.createElement("b", { style: { color: kplMoodGrade(expr.breakRate.g) } },
+                                        Number(expr.breakRate.v).toFixed(2) + "%"),
+                                    React.createElement("i", { className: "g" }, " (" + expr.breakRate.g + ")"),
+                                    React.createElement("em", { className: "arr" }, ">"))),
+                            expr.rows.map((r, i) => React.createElement("div", { key: i, className: "mrow" },
+                                React.createElement("span", null, r.lbl),
+                                React.createElement("span", { className: "val" },
+                                    React.createElement("b", { style: { color: r.v >= 0 ? "#e03131" : "#2f9e44" } }, pct2(r.v)),
+                                    React.createElement("i", { className: "g" }, " (" + r.g + ")"),
+                                    React.createElement("em", { className: "arr" }, ">")))))) : null,
+                    // ⑤ 活跃股走势 + 播报
+                    moodPts.length ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "活跃股走势 ",
+                            React.createElement("span", { className: "day" }, dayLbl)),
+                        React.createElement(KplTrendCanvas, { points: moodPts, preClose: 0, height: 170 }),
+                        moodHi != null ? React.createElement("div", null,
+                            React.createElement("span", { className: "kpl-mood-hi" }, "峰值 " + pct2(moodHi)),
+                            React.createElement("span", { className: "kpl-mood-lo" }, "谷值 " + pct2(moodLo))) : null,
+                        React.createElement("div", { className: "axis-x" },
+                            React.createElement("span", null, "09:30"),
+                            React.createElement("span", null, "11:30/13:00"),
+                            React.createElement("span", null, "15:00")),
+                        React.createElement("div", { className: "note row" },
+                            React.createElement("span", null, "注:涨幅>2%代表短线活跃，<-1%代表冰点。"),
+                            React.createElement("span", { className: "sw" },
+                                React.createElement("span", { className: mode5 ? "" : "on", onClick: () => setMode5(false) }, "当日"),
+                                " | ",
+                                React.createElement("span", { className: mode5 ? "on" : "", onClick: () => setMode5(true) }, "5日"))),
+                        news0 ? React.createElement("div", { className: "kpl-mood-broadcast" },
+                            React.createElement("b", null, newsTime), " " + news0.comment) : null) : null,
+                    // ⑥ 连板强度
+                    hist.length ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "连板强度"),
+                        React.createElement("div", { className: "cap-lg" },
+                            React.createElement("span", { className: "lg red" }, "连板强度：",
+                                React.createElement("b", null, hist[0].strong)),
+                            React.createElement("span", { className: "lg green" }, "大幅回撤：",
+                                React.createElement("b", null, wd.length)),
+                            React.createElement("span", { className: "rt" }, dayLbl)),
+                        React.createElement(KplMoodDots, { series: hist.slice(0, 60).slice().reverse() }),
+                        React.createElement("div", { className: "note" }, "注:连板强度>75代表情绪过热，<25代表过冷")) : null,
+                    // ⑦ 大幅回撤
+                    wd.length ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "大幅回撤 ",
+                            React.createElement("span", { className: "cnt" }, wd.length + "个"),
+                            React.createElement("span", { className: "more" }, "更多")),
+                        React.createElement("div", { className: "kpl-mood-wd" },
+                            React.createElement("div", { className: "wr head" },
+                                React.createElement("span", null, "股票名称"),
+                                React.createElement("span", null, "涨幅"),
+                                React.createElement("span", { className: "hl" }, "当日回撤"),
+                                React.createElement("span", null, "板块")),
+                            wd.map((r, i) => React.createElement("div", {
+                                key: r.code + i, className: "wr",
+                                onClick: () => go && go({ page: "stock", stock: { code: r.code, name: r.name } }),
+                            },
+                                React.createElement("span", { className: "nm" },
+                                    React.createElement("b", null, r.name),
+                                    React.createElement("i", { className: "cd" }, r.code)),
+                                React.createElement("span", { className: "pct" },
+                                    React.createElement("b", { className: "down" }, Number(r.pct).toFixed(2) + "%")),
+                                React.createElement("span", { className: "hl dd" },
+                                    React.createElement("b", { className: "down" }, Number(r.drawdown).toFixed(2) + "%")),
+                                React.createElement("span", { className: "plates" },
+                                    r.plates.split("、").map((p, j) => React.createElement("span", { key: j }, p, " ▾"))))))) : null,
+                    // ⑧ 风向标
+                    (wv.top || []).length ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "风向标",
+                            React.createElement("span", { className: "more" }, "更多")),
+                        React.createElement("div", { className: "kpl-mood-cards" },
+                            wv.top.map((r, i) => React.createElement("div", {
+                                key: "t" + i, className: "card",
+                                onClick: () => go && go({ page: "stock", stock: { code: r[0], name: r[1] } }),
+                            },
+                                React.createElement("div", { className: "plate" }, r[3]),
+                                React.createElement("div", { className: "nm" }, r[1]),
+                                React.createElement("div", { className: "pct up" }, Number(r[2]).toFixed(2) + "%"))),
+                            wv.bottom.map((r, i) => React.createElement("div", {
+                                key: "b" + i, className: "card",
+                                onClick: () => go && go({ page: "stock", stock: { code: r[0], name: r[1] } }),
+                            },
+                                React.createElement("div", { className: "plate" }, r[3]),
+                                React.createElement("div", { className: "nm" }, r[1]),
+                                React.createElement("div", { className: "pct down" }, Number(r[2]).toFixed(2) + "%"))))) : null,
+                    // ⑨ 权重表现
+                    weightCards.length ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "权重表现",
+                            React.createElement("span", { className: "more" }, "更多")),
+                        React.createElement("div", { className: "kpl-mood-cards" },
+                            weightCards.map((r, i) => React.createElement("div", { key: i, className: "card big" },
+                                React.createElement("div", { className: "plate" }, r[1]),
+                                React.createElement("div", { className: "pct " + (r[2] >= 0 ? "up" : "down") }, Number(r[2]).toFixed(2) + "%"),
+                                React.createElement("div", { className: "leader" },
+                                    r[4], " ",
+                                    React.createElement("b", { className: r[5] >= 0 ? "up" : "down" }, Number(r[5]).toFixed(2) + "%")))))) : null,
+                    // ⑩ 北向资金（App 同款隐藏规则：status==0 或 "88" 哨兵 → 不渲染）
+                    nbShow ? React.createElement("div", { className: "kpl-mood-sec" },
+                        React.createElement("div", { className: "sec-t" }, "北向资金"),
+                        React.createElement("div", { className: "cap-row2" }, "北向资金：",
+                            React.createElement("b", null, String(nb.totalB) + "亿"),
+                            React.createElement("span", { className: "tip" }, " " + (nb.sign || "")))) : null),
+                // 悬浮"历史数据"（App 右下同款，◀▶ 切交易日）
+                React.createElement("div", { className: "kpl-mood-histbar" },
+                    React.createElement("span", { className: "nav", onClick: () => setDay(stepDay(curDay, -1)) }, "◀"),
+                    React.createElement("span", { className: "d" }, "📅 " + dayLbl),
+                    curDay >= todayStr ? React.createElement("span", { className: "nav dis" }, "▶")
+                        : React.createElement("span", { className: "nav", onClick: () => setDay(stepDay(curDay, 1)) }, "▶")));
         }
 
         function KplSentimentPage({ go }) {
-            const [daban, setDaban] = useState(null);
-            const [ov, setOv] = useState(null);
-            const [loading, setLoading] = useState(true);
-            useEffect(() => {
-                let alive = true;
-                Promise.all([
-                    api("/api/kpl/daban").catch(() => null),
-                    api("/api/kpl/overview").catch(() => null),
-                ]).then(([a, b]) => {
-                    if (!alive) return;
-                    setDaban(a); setOv(b); setLoading(false);
-                });
-                return () => { alive = false; };
-            }, []);
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement(KplPageHeader, { title: "市场情绪", onBack: () => go({ page: "back" }) }),
-                loading && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
-                !loading && React.createElement(KplSentimentBody, { daban: daban, overview: ov }));
+                React.createElement(KplMoodBody, { go }));
         }
 
-        function KplSentimentSub() {
-            // 与首页"市场情绪"下钻共用同一页体（App 行情·情绪 tab 同源）
-            const [daban, setDaban] = useState(null);
-            const [ov, setOv] = useState(null);
-            const [loading, setLoading] = useState(true);
-            useEffect(() => {
-                let alive = true;
-                Promise.all([
-                    api("/api/kpl/daban").catch(() => null),
-                    api("/api/kpl/overview").catch(() => null),
-                ]).then(([a, b]) => {
-                    if (!alive) return;
-                    setDaban(a); setOv(b); setLoading(false);
-                });
-                return () => { alive = false; };
-            }, []);
+        function KplSentimentSub({ go }) {
+            // App 行情·情绪 tab = MarketMoodFragment·数据分析单页（双 tab 仅独立 Activity 场景）
             return React.createElement("div", { className: "kpl-page" },
-                loading && React.createElement("div", { className: "kpl-empty" }, "加载中…"),
-                !loading && React.createElement(KplSentimentBody, { daban: daban, overview: ov }));
+                React.createElement(KplMoodBody, { go }));
         }
+
+
 
         function KplGlobalSub() {
             const [data, setData] = useState(null);
@@ -5433,6 +5666,123 @@ window.__ModuleLoader__.load({
                 .kpl-lhb-row .datecol { font-size: 10px; color: #666; line-height: 1.3; }
                 .kpl-lhb-row .nm .blue { color: #1c5fbb; }
                 .kpl-lhb-agency { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                /* ==== 情绪页 kpl-mood-*（App MarketMoodFragment 1:1，显式白底） ==== */
+                .kpl-mood { display: flex; flex-direction: column; gap: 10px; padding-bottom: 46px; position: relative; }
+                .kpl-mood-sec { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                .kpl-mood-sec.plain { background: transparent; border: none; }
+                .kpl-mood-sec .sec-t { font-size: 14px; font-weight: 700; color: #111; border-left: 3px solid #1c6ef2; padding-left: 7px; margin-bottom: 9px; display: flex; align-items: baseline; gap: 7px; }
+                .kpl-mood-sec .sec-t .day { color: #1c5fbb; font-size: 13px; font-weight: 600; }
+                .kpl-mood-sec .sec-t .cnt { color: #2f9e44; font-size: 12px; font-weight: 600; }
+                .kpl-mood-sec .sec-t .more { margin-left: auto; color: #999; font-size: 12px; font-weight: 400; }
+                .kpl-mood-sec .note { color: #999; font-size: 11px; margin-top: 7px; }
+                .kpl-mood-sec .note.row { display: flex; justify-content: space-between; align-items: center; }
+                .kpl-mood-sec .note .sw { color: #999; font-size: 12px; white-space: nowrap; }
+                .kpl-mood-sec .note .sw .on { color: #1c5fbb; font-weight: 700; }
+                .kpl-mood-sec .note .ovl { float: right; color: #666; }
+                .kpl-mood-sec .axis-x { display: flex; justify-content: space-between; color: #bbb; font-size: 10px; margin-top: 3px; }
+                .kpl-mood-sec .tip { color: #999; font-weight: 400; font-size: 11px; }
+                /* 温度计 */
+                .kpl-mood-thermo { display: flex; align-items: center; gap: 14px; padding: 8px 4px; }
+                .kpl-mood-thermo .lft { flex: 1; }
+                .kpl-mood-thermo .tube { height: 30px; border: 1px solid #e5e5e5; border-radius: 16px; background: linear-gradient(90deg, #b3e04a 0%, #ffe94a 45%, #ffa63e 70%, #d9d9d9 70%); background-size: 100% 100%; position: relative; overflow: hidden; }
+                .kpl-mood-thermo .tube .fill { position: absolute; right: 0; top: 0; bottom: 0; background: #d9d9d9; }
+                .kpl-mood-thermo .scale { display: flex; justify-content: space-between; color: #999; font-size: 10px; padding: 4px 8px 0; }
+                .kpl-mood-thermo .num { text-align: center; min-width: 64px; }
+                .kpl-mood-thermo .num b { font-size: 34px; color: #f08c00; font-weight: 800; line-height: 1.1; }
+                .kpl-mood-thermo .num .lbl { color: #666; font-size: 13px; }
+                /* 涨跌统计 11 档 */
+                .kpl-mood-zdbars .row { display: flex; align-items: flex-end; gap: 3px; }
+                .kpl-mood-zdbars .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+                .kpl-mood-zdbars .col .v { font-size: 11px; font-weight: 700; }
+                .kpl-mood-zdbars .col .v.up { color: #e03131; }
+                .kpl-mood-zdbars .col .v.down { color: #2f9e44; }
+                .kpl-mood-zdbars .col .v.flat { color: #868e96; }
+                .kpl-mood-zdbars .col .bar { width: 70%; max-width: 26px; border-radius: 2px; }
+                .kpl-mood-zdbars .col .bar.up { background: #e03131; }
+                .kpl-mood-zdbars .col .bar.down { background: #2f9e44; }
+                .kpl-mood-zdbars .col .bar.flat { background: #ced4da; }
+                .kpl-mood-zdbars .col .lbl { font-size: 10px; color: #666; white-space: nowrap; }
+                .kpl-mood-zdbars .sjzt { color: #333; font-size: 14px; margin-bottom: 8px; }
+                .kpl-mood-zdbars .sjzt b.up { font-size: 16px; }
+                .kpl-mood-zdbars .sjzt b.down { font-size: 16px; }
+                .kpl-mood-zdbars .ratio { display: flex; height: 12px; border-radius: 6px; overflow: hidden; margin-top: 10px; gap: 6px; }
+                .kpl-mood-zdbars .ratio .red { background: #e03131; }
+                .kpl-mood-zdbars .ratio .green { background: #2f9e44; }
+                .kpl-mood-zdbars .ratio .mid { width: 26px; background: #dee2e6; clip-path: polygon(0 0, 100% 0, 78% 100%, 22% 100%); }
+                .kpl-mood-zdbars .rn { display: flex; justify-content: space-between; font-size: 15px; font-weight: 700; margin-top: 4px; }
+                .kpl-mood-zdbars .rn .up { color: #e03131; }
+                .kpl-mood-zdbars .rn .down { color: #2f9e44; }
+                .kpl-mood-sjzt-line { color: #333; font-size: 14px; margin-bottom: 6px; }
+                /* 量能 */
+                .kpl-mood-sec .cap-row1 { font-size: 14px; color: #111; font-weight: 600; }
+                .kpl-mood-sec .cap-row1 b { font-weight: 800; }
+                .kpl-mood-sec .cap-row2 { font-size: 14px; color: #111; font-weight: 600; margin: 6px 0; }
+                .kpl-mood-sec .cap-row2 .dot { display: inline-block; width: 12px; height: 12px; background: #e03131; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+                .kpl-mood-sec .cap-row2 b { color: #e03131; }
+                .kpl-mood-sec .cap-lg { display: flex; gap: 16px; align-items: baseline; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+                .kpl-mood-sec .cap-lg .lg.red { color: #e03131; }
+                .kpl-mood-sec .cap-lg .lg.red b { color: #111; }
+                .kpl-mood-sec .cap-lg .lg.green { color: #2f9e44; }
+                .kpl-mood-sec .cap-lg .lg.green b { color: #111; }
+                .kpl-mood-sec .cap-lg .rt { margin-left: auto; color: #666; font-weight: 400; }
+                .kpl-mood-hi, .kpl-mood-lo { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; margin: 3px 6px 0 0; }
+                .kpl-mood-hi { background: #e03131; color: #fff; }
+                .kpl-mood-lo { background: #2f9e44; color: #fff; }
+                /* 涨停表现 */
+                .kpl-mood-three { display: flex; }
+                .kpl-mood-three .cell { flex: 1; text-align: center; padding: 4px 0; }
+                .kpl-mood-three .cell + .cell { border-left: 1px solid #eee; }
+                .kpl-mood-three .lbl { font-size: 13px; color: #333; }
+                .kpl-mood-three .vv { font-size: 15px; margin: 3px 0; color: #999; }
+                .kpl-mood-three .vv b { font-size: 19px; }
+                .kpl-mood-three .vv .old { color: #999; }
+                .kpl-mood-three .sub { display: flex; justify-content: center; gap: 18px; color: #999; font-size: 11px; }
+                .kpl-mood-ladder { border: 1px solid #eee; border-radius: 6px; margin-top: 10px; overflow: hidden; }
+                .kpl-mood-ladder .lr { display: flex; text-align: center; }
+                .kpl-mood-ladder .lr > span { flex: 1; padding: 7px 2px; border-left: 1px solid #f0f0f0; font-size: 12px; }
+                .kpl-mood-ladder .lr > span:first-child { border-left: none; }
+                .kpl-mood-ladder .lr.head { background: #fafafa; color: #666; }
+                .kpl-mood-ladder .lr.nums span { font-size: 22px; font-weight: 700; color: #111; }
+                .kpl-mood-ladder .lr.rates span { color: #666; }
+                .kpl-mood-ladder .lr.rates .g i { font-style: normal; margin-left: 2px; }
+                .kpl-mood-rows { margin-top: 4px; }
+                .kpl-mood-rows .mrow { display: flex; justify-content: space-between; align-items: center; padding: 13px 2px; border-bottom: 1px solid #f5f5f5; font-size: 14px; color: #111; }
+                .kpl-mood-rows .mrow:last-child { border-bottom: none; }
+                .kpl-mood-rows .mrow .val b { font-weight: 700; }
+                .kpl-mood-rows .mrow .val .g { font-style: normal; color: #999; font-size: 13px; }
+                .kpl-mood-rows .mrow .arr { color: #ccc; font-style: normal; margin-left: 8px; }
+                /* 播报条 */
+                .kpl-mood-broadcast { background: #eef3fb; border-radius: 8px; padding: 10px 12px; color: #333; font-size: 13px; line-height: 1.6; margin-top: 10px; }
+                .kpl-mood-broadcast b { color: #111; }
+                /* 大幅回撤表 */
+                .kpl-mood-wd { display: flex; flex-direction: column; }
+                .kpl-mood-wd .wr { display: grid; grid-template-columns: 1.5fr .8fr .9fr 1.3fr; align-items: center; padding: 9px 4px; border-bottom: 1px solid #f5f5f5; }
+                .kpl-mood-wd .wr:last-child { border-bottom: none; }
+                .kpl-mood-wd .wr.head { color: #999; font-size: 12px; padding: 4px; }
+                .kpl-mood-wd .nm b { font-size: 14px; color: #111; display: block; }
+                .kpl-mood-wd .nm .cd { font-style: normal; color: #999; font-size: 11px; }
+                .kpl-mood-wd .pct, .kpl-mood-wd .dd { font-size: 14px; font-weight: 700; text-align: center; }
+                .kpl-mood-wd .hl { background: #e7f1ff; border-radius: 4px; padding: 7px 2px; text-align: center; }
+                .kpl-mood-wd .wr.head .hl { background: #e7f1ff; }
+                .kpl-mood-wd .plates { text-align: center; font-size: 11px; line-height: 1.5; }
+                .kpl-mood-wd .plates span { display: block; color: #1c5fbb; }
+                /* 风向标/权重 2×3 卡片 */
+                .kpl-mood-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+                .kpl-mood-cards .card { border: 1px solid #eee; border-radius: 8px; text-align: center; padding: 9px 2px; cursor: pointer; }
+                .kpl-mood-cards .card .plate { color: #999; font-size: 11px; }
+                .kpl-mood-cards .card .nm { color: #1c5fbb; font-size: 13px; font-weight: 600; margin: 3px 0; }
+                .kpl-mood-cards .card .pct { font-size: 15px; font-weight: 700; }
+                .kpl-mood-cards .card .pct.up { color: #e03131; }
+                .kpl-mood-cards .card .pct.down { color: #2f9e44; }
+                .kpl-mood-cards .card.big .plate { font-size: 13px; color: #333; }
+                .kpl-mood-cards .card.big .leader { font-size: 11px; color: #666; margin-top: 2px; }
+                .kpl-mood-cards .card.big .leader b { font-weight: 700; }
+                /* 悬浮历史数据条 */
+                .kpl-mood-histbar { position: sticky; bottom: 8px; align-self: flex-end; display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid #e5e5e5; border-radius: 18px; box-shadow: 0 2px 10px rgba(0,0,0,.10); padding: 6px 12px; z-index: 5; }
+                .kpl-mood-histbar .nav { color: #1c5fbb; font-size: 14px; cursor: pointer; user-select: none; padding: 0 2px; }
+                .kpl-mood-histbar .nav.dis { color: #ccc; cursor: default; }
+                .kpl-mood-histbar .d { color: #1c5fbb; font-size: 13px; font-weight: 700; }
+                .kpl-mood-retry { color: #1c5fbb; cursor: pointer; text-decoration: underline; }
                 .kpl-lhb-agsum { font-size: 13px; color: #111; margin-bottom: 6px; }
                 .kpl-lhb-agsum b { margin-left: 4px; }
                 .kpl-lhb-bars { width: 100%; display: block; margin-bottom: 6px; }

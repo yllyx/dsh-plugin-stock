@@ -1615,6 +1615,13 @@ async def kpl_hk_stocks():
     return await asyncio.to_thread(kpl_api.get_kpl().get_hk_stocks)
 
 
+@app.get("/api/kpl/mood")
+async def kpl_mood(day: str = ""):
+    """行情·情绪 tab 聚合（App MarketMoodFragment 完整复刻，2026-10-02 逆向）。
+    day 缺省=最近前一交易日；历史/盘后走 HIS 域 HTTP（App 历史模式同款）。"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_mood_page, day)
+
+
 @app.get("/api/kpl/fenbi/{code}")
 async def kpl_fenbi(code: str):
     """分时成交逐笔（App"分时成交"列表同源）"""
