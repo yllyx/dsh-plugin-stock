@@ -1811,6 +1811,7 @@ window.__ModuleLoader__.load({
                 ["📊 龙虎榜", () => go({ page: "lhb" })],
                 ["🌡 市场情绪", () => go({ page: "market", sub: "sentiment" })],
                 ["📝 复盘啦", () => {}],
+                ["⚡ 闪电避雷", () => go({ page: "avoid" })],
                 ["📚 题材库", () => go({ page: "market", sub: "plate" })],
                 ["🛒 商品现货", () => {}],
                 ["📰 快讯", () => go({ page: "market", sub: "live" })],
@@ -3958,6 +3959,85 @@ window.__ModuleLoader__.load({
                             React.createElement("div", { className: "numcol up" }, r.ztSeal || "--"))))) : null);
         }
 
+        /* ---- 闪电避雷（3011 潜在风险 + 3012 ST/退市股，App LightningProtection 同源） ---- */
+
+        function KplAvoidPage({ go }) {
+            const [data, setData] = useState(null);
+            const [tab, setTab] = useState("illegal");
+            const [error, setError] = useState(null);
+            const load = useCallback(async () => {
+                try { setData(await api("/api/kpl/avoid-risks")); setError(null); }
+                catch (e) { setError(e.message); }
+            }, []);
+            useEffect(() => { load(); }, [load]);
+            usePolling(load, 120000, []);
+            const risks = (data && data.risks) || {};
+            const RISK_TABS = [
+                ["illegal", "违规披露", "illegal"], ["audit", "审计风险", "audit"],
+                ["netAsset", "净资产", "netAsset"], ["revenue", "营收", "revenue"],
+                ["business", "经营能力", "business"],
+            ];
+            const cur = risks[tab] || [];
+            const stStocks = (data && data.st_stocks) || [];
+            const tsStocks = (data && data.ts_stocks) || [];
+            const row = (r, i) => React.createElement("div", {
+                key: r.code + "_" + i, className: "kpl-lhb-row stk",
+                onClick: () => go && go({ page: "stock", stock: { code: r.code, name: r.name || r.code } }),
+            },
+                React.createElement("div", { className: "nm" },
+                    React.createElement("b", null, r.name || "--"),
+                    React.createElement("span", { className: "cd" }, r.code || "")),
+                React.createElement("div", { className: "concept" }, r.date || "--"),
+                React.createElement("div", { className: "pctcol" },
+                    React.createElement("span", { className: Number(r.pct) >= 0 ? "up" : "down" },
+                        r.pct != null ? Number(r.pct).toFixed(2) + "%" : "--")),
+                React.createElement("div", { className: "concept sm" }, r.reason || "--"));
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "闪电避雷", onBack: () => go({ page: "back" }) }),
+                (data && data.excelName) ? React.createElement("div", { className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "每日避雷清单"),
+                    React.createElement("div", { className: "kpl-mkt-broadcast" }, data.excelName),
+                    data.excelUrl ? React.createElement("a", {
+                        href: data.excelUrl, target: "_blank", rel: "noreferrer",
+                        style: { color: "#1c5fbb", fontSize: "12px" },
+                    }, "下载 Excel 附件 ›") : null) : null,
+                error && React.createElement("div", { className: "kpl-empty" }, "加载失败：" + error),
+                !data && !error && React.createElement("div", { className: "kpl-empty" }, "正在加载…"),
+                data && React.createElement("div", { className: "kpl-subtabs" },
+                    RISK_TABS.map(function (pair) {
+                        const n = (risks[pair[2]] || []).length;
+                        return React.createElement("span", {
+                            key: pair[0], className: "kpl-subtab " + (tab === pair[0] ? "on" : ""),
+                            onClick: function () { setTab(pair[0]); },
+                        }, pair[1], n ? "(" + n + ")" : "");
+                    })),
+                data && cur.length ? React.createElement("div", { className: "kpl-lhb-scroll" },
+                    React.createElement("div", { className: "kpl-lhb-table stk" },
+                        React.createElement("div", { className: "kpl-lhb-head av" },
+                            React.createElement("span", { className: "sticky" }, "股票名称"),
+                            React.createElement("span", null, "风险日期"),
+                            React.createElement("span", { className: "r" }, "至今涨跌"),
+                            React.createElement("span", null, "风险原因")),
+                        cur.map(row)))
+                    : (data ? React.createElement("div", { className: "kpl-empty" }, "该类暂无风险股票") : null),
+                data && React.createElement("div", { className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-mkt-sec-t" },
+                        "ST 股(", stStocks.length, ") / 退市整理(", tsStocks.length, ")"),
+                    React.createElement("div", { className: "kpl-mkt-wplates" },
+                        stStocks.slice(0, 40).map(function (x, i) {
+                            return React.createElement("span", {
+                                key: i, className: "wp down",
+                                onClick: function () { go && go({ page: "stock", stock: { code: x.code, name: x.code } }); },
+                            }, x.code);
+                        }),
+                        tsStocks.map(function (x, i) {
+                            return React.createElement("span", {
+                                key: "t" + i, className: "wp up",
+                                onClick: function () { go && go({ page: "stock", stock: { code: x.code, name: x.code } }); },
+                            }, x.code);
+                        }))));
+        }
+
         function KplRecommendPage() {
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement("div", { className: "kpl-placeholder" }, "👍 推荐功能二期提供"));
@@ -4164,6 +4244,7 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "sectorDetail") content = React.createElement(KplSectorDetailPage, { plateId: drill.plateId, name: drill.name, go });
                 else if (drill.page === "fengkou") content = React.createElement(KplFengkouPage, { go });
                 else if (drill.page === "market") content = React.createElement(KplMarketPage, { go, initialSub: drill.sub });
+                else if (drill.page === "avoid") content = React.createElement(KplAvoidPage, { go });
                 else if (drill.page === "sentiment") content = React.createElement(KplSentimentPage, { go });
                 else if (drill.page === "poprank") content = React.createElement(KplPopRankPage, { go });
                 else if (drill.page === "qiangdu") content = React.createElement(KplQiangduPage, { go });
@@ -5029,6 +5110,7 @@ window.__ModuleLoader__.load({
                 .kpl-qd2-daynav .arrow { color: #999; cursor: pointer; font-size: 14px; padding: 2px 8px; user-select: none; }
                 .kpl-qd2-daynav .arrow.dis { color: #ccc; }
                 .kpl-qd2-daynav .d { font-size: 15px; font-weight: 700; color: #1c5fbb; }
+                .kpl-lhb-head.av, .kpl-lhb-row.av { grid-template-columns: 1.2fr .8fr .7fr 1.3fr; }
                 .kpl-lhb-head.fk, .kpl-lhb-row.fk { grid-template-columns: 1.3fr .9fr .7fr 1.2fr; }
                 .kpl-lhb-head.fk2, .kpl-lhb-row.fk2 { grid-template-columns: 1.4fr 1fr .8fr; }
                 .kpl-lhb-head.sdp, .kpl-lhb-row.sdp { grid-template-columns: 1.3fr .7fr .75fr .8fr .9fr .9fr; }

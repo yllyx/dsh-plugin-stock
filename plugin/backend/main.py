@@ -1540,6 +1540,12 @@ async def kpl_marketfeed():
     return await asyncio.to_thread(get_feed().snapshot)
 
 
+@app.get("/api/kpl/avoid-risks")
+async def kpl_avoid_risks():
+    """闪电避雷（3011 潜在风险 excel+五类明细 / 3012 ST+退市股列表，App LightningProtection 同源）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_avoid_risks)
+
+
 @app.get("/api/kpl/dabanlists")
 async def kpl_dabanlists():
     """打板页三列表（2103 拉取式：pidType 1=竞价 2=即将涨停 3=风向标；休市静默）"""

@@ -1173,6 +1173,70 @@ class KplSocketAPI:
 
     # ---- 指数简略行情 ----
 
+    # ---- 避雷（3011 潜在风险 excel+五类明细 / 3012 ST+退市股列表）----
+
+    def get_avoid_risks(self, rtype: int = 1, is_kph: bool = False) -> Optional[Dict[str, Any]]:
+        """cmd 3011：AvoidRisksReq{type1, isKph2} → AvoidRisksResp。
+        type=1 开盘红频道（LightningProtectionViewModel 实测）；返回 excel 附件
+        + stWarning 五类风险(净资产1/营收2/经营能力3/违规披露4/审计5)
+        + delistingWarning(面值1/市值2)。休市/无数据返回 None。"""
+        body = pb_uint(1, rtype) + pb_bool(2, is_kph)
+        resp = self._session_rpc(3011, body, timeout_s=8)
+        if resp is None:
+            return None
+        from kpl_marketfeed import pb_tree   # 延迟导入避免循环依赖
+        try:
+            t = pb_tree(strip_push_prefix_bytes(resp))
+        except Exception:
+            t = pb_tree(resp)
+        st = t.get("10") if isinstance(t.get("10"), dict) else {}
+
+        def _rows(key):
+            arr = st.get(key)
+            if arr is None:
+                return []
+            arr = arr if isinstance(arr, list) else [arr]
+            out = []
+            for it in arr:
+                if isinstance(it, dict):
+                    out.append({"code": it.get("1"), "name": it.get("2"),
+                                "date": it.get("3"), "reason": it.get("4"),
+                                "pct": it.get("5"), "ts": it.get("7")})
+            return out
+
+        dw = t.get("11") if isinstance(t.get("11"), dict) else {}
+
+        def _dw(key):
+            arr = dw.get(key)
+            if arr is None:
+                return []
+            arr = arr if isinstance(arr, list) else [arr]
+            return [it for it in arr if isinstance(it, dict)]
+
+        titles = t.get("12") if isinstance(t.get("12"), dict) else {}
+        return {"type": t.get("1"), "excelName": t.get("2"), "excelUrl": t.get("3"),
+                "risks": {"netAsset": _rows("1"), "revenue": _rows("2"),
+                          "business": _rows("3"), "illegal": _rows("4"), "audit": _rows("5")},
+                "delisting": {"price": _dw("1"), "marketValue": _dw("2")},
+                "titles": titles}
+
+    def get_avoid_risk_stocks(self) -> Optional[Dict[str, Any]]:
+        """cmd 3012（pb.Empty）：AvoidRisksStockResp{st1, ts2}，Item{stockId1, ts2}。"""
+        resp = self._session_rpc(3012, b"", timeout_s=8)
+        if resp is None:
+            return None
+        from kpl_marketfeed import pb_tree
+        try:
+            t = pb_tree(strip_push_prefix_bytes(resp))
+        except Exception:
+            t = pb_tree(resp)
+
+        def _list(v):
+            arr = v if isinstance(v, list) else ([v] if isinstance(v, dict) else [])
+            return [{"code": it.get("1"), "ts": it.get("2")}
+                    for it in arr if isinstance(it, dict)]
+        return {"st": _list(t.get("1")), "ts": _list(t.get("2"))}
+
     def get_index_simple(self, codes: List[str]) -> Optional[List[Dict[str, Any]]]:
         """cmd 3006: 指数简略行情（多只）"""
         body = b"".join(pb_str(1, code) for code in codes)
@@ -1189,6 +1253,16 @@ class KplSocketAPI:
 
 
 _kpl_sock: Optional[KplSocketAPI] = None
+
+
+def strip_push_prefix_bytes(body: bytes) -> bytes:
+    """剥推送 body 的 4B mini 头 + ASCII 前缀（长度以 mini 头 bytes[2:4] 为权威）。"""
+    if len(body) < 6:
+        return body
+    plen = int.from_bytes(body[2:4], "big")
+    if 0 < plen < 200 and len(body) >= 4 + plen:
+        return body[4 + plen:]
+    return body
 
 
 def get_kpl_socket() -> KplSocketAPI:

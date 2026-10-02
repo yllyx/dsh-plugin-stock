@@ -1500,6 +1500,32 @@ class KplClient:
         finally:
             self._plate_names_building = False
 
+    def get_avoid_risks(self) -> Dict[str, Any]:
+        """闪电避雷（App LightningProtection 页同源）：3011 潜在风险（excel+五类明细）
+        + 3012 ST/退市股列表。120s 缓存。"""
+        key = "avoidrisks"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 120:
+            return hit["data"]
+        import kpl_socket as _ks
+        out: Dict[str, Any] = {}
+        try:
+            r = _ks.get_kpl_socket().get_avoid_risks(rtype=1)
+            if r:
+                out.update(r)
+        except Exception as e:
+            logger.debug(f"avoid_risks: {e}")
+        try:
+            st = _ks.get_kpl_socket().get_avoid_risk_stocks()
+            if st:
+                out["st_stocks"] = st.get("st") or []
+                out["ts_stocks"] = st.get("ts") or []
+        except Exception as e:
+            logger.debug(f"avoid_risk_stocks: {e}")
+        if out:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
     def get_lhb_business_detail(self, bid: str) -> Dict[str, Any]:
         """营业部详情（App 下钻 H5 DepkDetails 同源）：
         GetOneBusinessInfo（名称/关联营业部 AssocNum/上榜次数 UpNum/订阅态）
