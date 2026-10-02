@@ -3435,6 +3435,8 @@ window.__ModuleLoader__.load({
          * App 实拍顺序：温度计→涨跌统计→市场量能→涨停表现→活跃股走势+播报→连板强度→大幅回撤→风向标→权重表现。
          * 隐藏规则同 App：北向资金 status==0 隐藏；"历史数据"悬浮按钮 ◀▶ 切交易日。 */
 
+        const CAP_TYPE_NAMES = { "4": "沪深京", "0": "沪深", "1": "上证", "3": "北证", "2": "创业板", "5": "科创板" };
+
         function kplMoodGrade(g) {   // App ZTExpressionEntity.getTextColor：低=绿 高=红 中=灰
             return g === "高" ? "#e03131" : (g === "低" ? "#2f9e44" : "#868e96");
         }
@@ -3517,6 +3519,9 @@ window.__ModuleLoader__.load({
             const [error, setError] = useState(null);
             const [day, setDay] = useState(startDay || "");
             const [mode5, setMode5] = useState(false);
+            const [capType, setCapType] = useState("4");
+            const [capDrop, setCapDrop] = useState(false);
+            const [capData, setCapData] = useState(null);
             const load = useCallback(async (d) => {
                 try {
                     setError(null);
@@ -3525,6 +3530,12 @@ window.__ModuleLoader__.load({
             }, []);
             useEffect(() => { load(day); }, [load, day]);
             usePolling(() => load(day), 60000, [day]);
+            useEffect(() => {
+                let alive = true;
+                api("/api/kpl/mood/capacity?type=" + capType + (day ? "&day=" + encodeURIComponent(day) : ""))
+                    .then((x) => { if (alive) setCapData(x); }).catch(() => { /* 保留旧值 */ });
+                return () => { alive = false; };
+            }, [capType, day]);
             const d = data || {};
             const z = d.zdtj || null;
             const head = d.head || {};
@@ -3582,13 +3593,21 @@ window.__ModuleLoader__.load({
                     cap ? React.createElement("div", { className: "kpl-mood-sec" },
                         React.createElement("div", { className: "sec-t" }, "市场量能 ",
                             React.createElement("span", { className: "day" }, dayLbl),
+                            React.createElement("span", { className: "filter", title: "切换指数",
+                                onClick: () => setCapDrop(!capDrop) }, "☱ 指数"),
                             React.createElement("span", { className: "more" }, "历史量能")),
-                        React.createElement("div", { className: "cap-row1" }, "沪深京 | 实际量能 ",
-                            React.createElement("b", null, fmtYi(cap.last))),
+                        capDrop ? React.createElement("div", { className: "kpl-mood-capdrop" },
+                            [["4", "沪深京"], ["0", "沪深"], ["1", "上证"], ["3", "北证"], ["2", "创业板"], ["5", "科创板"]].map((t) =>
+                                React.createElement("span", {
+                                    key: t[0], className: t[0] === capType ? "on" : "",
+                                    onClick: () => { setCapType(t[0]); setCapDrop(false); },
+                                }, t[1]))) : null,
+                        React.createElement("div", { className: "cap-row1" }, (CAP_TYPE_NAMES[capType] || "沪深京") + " | 实际量能 ",
+                            React.createElement("b", null, fmtYi((capData && capData.last) != null ? capData.last : cap.last))),
                         React.createElement("div", { className: "cap-row2" },
                             React.createElement("i", { className: "dot" }), "今日 | 预测量能 ",
-                            React.createElement("b", { className: "up" }, cap.yclnstr || "--")),
-                        React.createElement(KplTrendCanvas, { points: capTrends, preClose: 0, height: 160 }),
+                            React.createElement("b", { className: "up" }, (capData && capData.yclnstr) || cap.yclnstr || "--")),
+                        React.createElement(KplTrendCanvas, { points: ((capData && capData.trends) || cap.trends || []).map((t) => ({ v: Number(t[4]) || 0 })), preClose: 0, height: 160 }),
                         React.createElement("div", { className: "axis-x" },
                             React.createElement("span", null, "09:30"),
                             React.createElement("span", null, "11:30/13:00"),
@@ -3599,7 +3618,7 @@ window.__ModuleLoader__.load({
                     // ④ 涨停表现
                     expr ? React.createElement("div", { className: "kpl-mood-sec" },
                         React.createElement("div", { className: "sec-t" }, "涨停表现",
-                            React.createElement("span", { className: "more" }, "更多")),
+                            React.createElement("span", { className: "more lnk", onClick: () => go({ page: "mood_zte", day: d.day }) }, "更多")),
                         React.createElement("div", { className: "kpl-mood-three" },
                             React.createElement("div", { className: "cell" },
                                 React.createElement("div", { className: "lbl" }, "涨停板"),
@@ -3682,7 +3701,7 @@ window.__ModuleLoader__.load({
                     wd.length ? React.createElement("div", { className: "kpl-mood-sec" },
                         React.createElement("div", { className: "sec-t" }, "大幅回撤 ",
                             React.createElement("span", { className: "cnt" }, wd.length + "个"),
-                            React.createElement("span", { className: "more" }, "更多")),
+                            React.createElement("span", { className: "more lnk", onClick: () => go({ page: "mood_withdraw", day: d.day }) }, "更多")),
                         React.createElement("div", { className: "kpl-mood-wd" },
                             React.createElement("div", { className: "wr head" },
                                 React.createElement("span", null, "股票名称"),
@@ -3724,7 +3743,7 @@ window.__ModuleLoader__.load({
                     // ⑨ 权重表现
                     weightCards.length ? React.createElement("div", { className: "kpl-mood-sec" },
                         React.createElement("div", { className: "sec-t" }, "权重表现",
-                            React.createElement("span", { className: "more" }, "更多")),
+                            React.createElement("span", { className: "more lnk", onClick: () => go({ page: "mood_weights", day: d.day }) }, "更多")),
                         React.createElement("div", { className: "kpl-mood-cards" },
                             weightCards.map((r, i) => React.createElement("div", { key: i, className: "card big" },
                                 React.createElement("div", { className: "plate" }, r[1]),
@@ -3759,6 +3778,170 @@ window.__ModuleLoader__.load({
         }
 
 
+
+        /* ---- 情绪页下钻（2026-10-03 逆向 App 三下钻页）----
+         * 涨停表现=ZhangTingExpressionActivity（梯头 DailyLimitIndex+MarketStockZDNum；明细通道 2120/DailyLimitPerformance ⏸10-08 校准）
+         * 大幅回撤=MaximumRetreatActivity（SharpWithdrawalList 已实测）
+         * 权重表现=WeightPerformanceListActivity（全行业表；涨速/成交额列 ⏸10-08 抓包） */
+
+        function KplMoodDayNav({ day, onPrev, onNext, nextDis }) {
+            return React.createElement("div", { className: "kpl-mdd-daynav" },
+                React.createElement("span", { className: "nav", onClick: onPrev }, "◀"),
+                React.createElement("span", { className: "d" }, day || "--"),
+                nextDis ? React.createElement("span", { className: "nav dis" }, "▶")
+                    : React.createElement("span", { className: "nav", onClick: onNext }, "▶"));
+        }
+
+        function KplZtePage({ go, day: initDay }) {
+            const [d, setD] = useState(null);
+            const [error, setError] = useState(null);
+            const [day, setDay] = useState(initDay || "");
+            const [tab, setTab] = useState("1");
+            const load = useCallback(async (dd) => {
+                try { setError(null); setD(await api("/api/kpl/mood/ztdetail" + (dd ? "?day=" + encodeURIComponent(dd) : ""))); }
+                catch (e) { setError(e && e.message ? e.message : String(e)); }
+            }, []);
+            useEffect(() => { load(day); }, [load, day]);
+            const today = new Date();
+            const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+            const step = (n) => {
+                const t = new Date((d && d.day || day || todayStr) + "T00:00:00");
+                t.setDate(t.getDate() + n);
+                setDay(t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"));
+            };
+            const ladder = (d && d.ladder) || [];
+            const tabNames = [["1", "一板"], ["2", "二板"], ["3", "三板"], ["4", "四板"], ["5", "更高"]];
+            const rows = (d && d.lists && d.lists[tab]) || [];
+            const children = [React.createElement(KplPageHeader, { key: "h", title: "涨停表现", onBack: () => go({ page: "back" }) })];
+            children.push(React.createElement("div", { key: "top", className: "kpl-mdd-head" },
+                React.createElement("div", { className: "sj" },
+                    React.createElement("span", { className: "lbl" }, "涨停"),
+                    React.createElement("b", { className: "up" }, d && d.sjzt != null ? d.sjzt : "--")),
+                React.createElement("span", { className: "sl" }, "/"),
+                React.createElement("div", { className: "sj" },
+                    React.createElement("span", { className: "lbl" }, "跌停"),
+                    React.createElement("b", { className: "down" }, d && d.sjdt != null ? d.sjdt : "--")),
+                React.createElement(KplMoodDayNav, { day: d && d.day, onPrev: () => step(-1), onNext: () => step(1), nextDis: (d && d.day || "") >= todayStr })));
+            children.push(React.createElement("div", { key: "tabs", className: "kpl-mdd-tabs" },
+                tabNames.map((tn, i) => React.createElement("span", {
+                    key: tn[0], className: "ttab" + (tab === tn[0] ? " on" : ""),
+                    onClick: () => setTab(tn[0]),
+                }, tn[1],
+                    ladder[i] != null ? React.createElement("i", { className: "badge" }, ladder[i]) : null))));
+            children.push(React.createElement("div", { key: "tbl", className: "kpl-lhb-scroll" },
+                React.createElement("div", { className: "kpl-lhb-table stk" },
+                    React.createElement("div", { className: "kpl-lhb-head zte" },
+                        React.createElement("span", { className: "sticky" }, "股票名称"),
+                        React.createElement("span", null, "涨停时间"),
+                        React.createElement("span", null, "涨停原因"),
+                        React.createElement("span", { className: "r" }, "封单")),
+                    rows.length ? rows.map((r, i) => React.createElement("div", {
+                        key: r[0] + i, className: "kpl-lhb-row zte",
+                        onClick: () => go({ page: "stock", stock: { code: r[0], name: r[1] } }),
+                    },
+                        React.createElement("div", { className: "nm sticky" },
+                            React.createElement("b", null, r[1]),
+                            React.createElement("span", { className: "cd" }, r[0])),
+                        React.createElement("div", { className: "numcol" }, r[4] ? fmtTs(Number(r[4])) : "--"),
+                        React.createElement("div", { className: "concept" }, r[5] || "--"),
+                        React.createElement("div", { className: "moneycol" }, r[6] != null ? fmtAmount(r[6]) : "--")))
+                        : React.createElement("div", { className: "kpl-mdd-empty" },
+                            d ? (d.note || "暂无数据") : "加载中…"))));
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(ErrorBox, { error }),
+                children);
+        }
+
+        function KplWithdrawPage({ go, day: initDay }) {
+            const [d, setD] = useState(null);
+            const [error, setError] = useState(null);
+            const [day, setDay] = useState(initDay || "");
+            const load = useCallback(async (dd) => {
+                try { setError(null); setD(await api("/api/kpl/mood/withdrawlist" + (dd ? "?day=" + encodeURIComponent(dd) : ""))); }
+                catch (e) { setError(e && e.message ? e.message : String(e)); }
+            }, []);
+            useEffect(() => { load(day); }, [load, day]);
+            const today = new Date();
+            const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+            const step = (n) => {
+                const t = new Date((d && d.day || day || todayStr) + "T00:00:00");
+                t.setDate(t.getDate() + n);
+                setDay(t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"));
+            };
+            const rows = (d && d.rows) || [];
+            const children = [React.createElement(KplPageHeader, { key: "h", title: "大幅回撤", onBack: () => go({ page: "back" }) })];
+            children.push(React.createElement("div", { key: "top", className: "kpl-mdd-head" },
+                React.createElement("div", { className: "sj" },
+                    React.createElement("span", { className: "lbl" }, "回撤股"),
+                    React.createElement("b", null, d && d.num != null ? d.num : (rows.length || "--"))),
+                React.createElement(KplMoodDayNav, { day: d && d.day, onPrev: () => step(-1), onNext: () => step(1), nextDis: (d && d.day || "") >= todayStr })));
+            children.push(React.createElement("div", { key: "tbl", className: "kpl-lhb-scroll" },
+                React.createElement("div", { className: "kpl-lhb-table stk" },
+                    React.createElement("div", { className: "kpl-lhb-head wdd" },
+                        React.createElement("span", { className: "sticky" }, "股票名称"),
+                        React.createElement("span", null, "当日涨幅"),
+                        React.createElement("span", { className: "hl" }, "当日回撤"),
+                        React.createElement("span", { className: "r" }, "高点涨幅")),
+                    rows.length ? rows.map((r, i) => React.createElement("div", {
+                        key: r.code + i, className: "kpl-lhb-row wdd",
+                        onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }),
+                    },
+                        React.createElement("div", { className: "nm sticky" },
+                            React.createElement("b", null, r.name),
+                            React.createElement("span", { className: "cd" }, r.code)),
+                        React.createElement("div", { className: "pctcol" },
+                            React.createElement("b", { className: r.pct >= 0 ? "up" : "down" }, Number(r.pct).toFixed(2) + "%")),
+                        React.createElement("div", { className: "moneycol hl" },
+                            React.createElement("b", { className: "down" }, Number(r.drawdown).toFixed(2) + "%")),
+                        React.createElement("div", { className: "pctcol" },
+                            React.createElement("b", { className: "up" }, Number(r.high).toFixed(2) + "%"))))
+                        : React.createElement("div", { className: "kpl-mdd-empty" }, d ? "暂无数据" : "加载中…"))));
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(ErrorBox, { error }),
+                children);
+        }
+
+        function KplWeightsPage({ go, day: initDay }) {
+            const [d, setD] = useState(null);
+            const [error, setError] = useState(null);
+            const [day, setDay] = useState(initDay || "");
+            const load = useCallback(async (dd) => {
+                try { setError(null); setD(await api("/api/kpl/mood/weightslist" + (dd ? "?day=" + encodeURIComponent(dd) : ""))); }
+                catch (e) { setError(e && e.message ? e.message : String(e)); }
+            }, []);
+            useEffect(() => { load(day); }, [load, day]);
+            const today = new Date();
+            const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+            const step = (n) => {
+                const t = new Date((d && d.day || day || todayStr) + "T00:00:00");
+                t.setDate(t.getDate() + n);
+                setDay(t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0"));
+            };
+            const rows = ((d && d.rows) || []).slice().sort((a, b) => (Number(b.pct) || 0) - (Number(a.pct) || 0));
+            const children = [React.createElement(KplPageHeader, { key: "h", title: "权重表现", onBack: () => go({ page: "back" }) })];
+            children.push(React.createElement("div", { key: "top", className: "kpl-mdd-head" },
+                React.createElement(KplMoodDayNav, { day: d && d.day, onPrev: () => step(-1), onNext: () => step(1), nextDis: (d && d.day || "") >= todayStr })));
+            children.push(React.createElement("div", { key: "tbl", className: "kpl-lhb-scroll" },
+                React.createElement("div", { className: "kpl-lhb-table stk" },
+                    React.createElement("div", { className: "kpl-lhb-head wtl" },
+                        React.createElement("span", { className: "sticky" }, "板块名称"),
+                        React.createElement("span", { className: "hl" }, "涨幅"),
+                        React.createElement("span", null, "涨速"),
+                        React.createElement("span", { className: "r" }, "成交额")),
+                    rows.length ? rows.map((r, i) => React.createElement("div", { key: r.id + i, className: "kpl-lhb-row wtl" },
+                        React.createElement("div", { className: "nm sticky" },
+                            React.createElement("b", null, r.name),
+                            React.createElement("span", { className: "cd" }, r.id)),
+                        React.createElement("div", { className: "pctcol hl" },
+                            React.createElement("b", { className: r.pct >= 0 ? "up" : "down" }, Number(r.pct).toFixed(2) + "%")),
+                        React.createElement("div", { className: "pctcol" }, r.speed != null ? Number(r.speed).toFixed(2) + "%" : "--"),
+                        React.createElement("div", { className: "moneycol" }, r.amount != null ? fmtAmount(r.amount) : "--")))
+                        : React.createElement("div", { className: "kpl-mdd-empty" }, d ? "暂无数据" : "加载中…"))));
+            if (d && d.note) children.push(React.createElement("div", { key: "note", className: "kpl-mkt-tips", style: { padding: "8px 12px" } }, d.note));
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(ErrorBox, { error }),
+                children);
+        }
 
         function KplGlobalSub() {
             const [data, setData] = useState(null);
@@ -4776,6 +4959,9 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "sentiment") content = React.createElement(KplSentimentPage, { go });
                 else if (drill.page === "poprank") content = React.createElement(KplPopRankPage, { go });
                 else if (drill.page === "qiangdu") content = React.createElement(KplQiangduPage, { go });
+                else if (drill.page === "mood_zte") content = React.createElement(KplZtePage, { go, day: drill.day });
+                else if (drill.page === "mood_withdraw") content = React.createElement(KplWithdrawPage, { go, day: drill.day });
+                else if (drill.page === "mood_weights") content = React.createElement(KplWeightsPage, { go, day: drill.day });
                 else if (drill.page === "daban") content = React.createElement(KplDabanPage, { go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
@@ -5783,6 +5969,31 @@ window.__ModuleLoader__.load({
                 .kpl-mood-histbar .nav.dis { color: #ccc; cursor: default; }
                 .kpl-mood-histbar .d { color: #1c5fbb; font-size: 13px; font-weight: 700; }
                 .kpl-mood-retry { color: #1c5fbb; cursor: pointer; text-decoration: underline; }
+                .kpl-mood-sec .sec-t .filter { color: #1c5fbb; font-size: 12px; font-weight: 600; cursor: pointer; }
+                .kpl-mood-sec .sec-t .more.lnk { cursor: pointer; }
+                .kpl-mood-capdrop { display: flex; flex-wrap: wrap; gap: 6px; background: #f7f9fc; border: 1px solid #e5e9f2; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+                .kpl-mood-capdrop span { padding: 4px 12px; border-radius: 14px; background: #fff; border: 1px solid #e5e5e5; color: #333; font-size: 12px; cursor: pointer; }
+                .kpl-mood-capdrop span.on { background: #e03131; border-color: #e03131; color: #fff; }
+                /* 下钻页 kpl-mdd-* */
+                .kpl-mdd-head { display: flex; align-items: center; gap: 10px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+                .kpl-mdd-head .sj { text-align: center; }
+                .kpl-mdd-head .sj .lbl { display: block; color: #666; font-size: 12px; }
+                .kpl-mdd-head .sj b { font-size: 22px; font-weight: 800; }
+                .kpl-mdd-head .sl { color: #ccc; font-size: 16px; }
+                .kpl-mdd-head .kpl-mdd-daynav { margin-left: auto; display: flex; align-items: center; gap: 10px; background: #f5f8fd; border: 1px solid #dbe6f5; border-radius: 8px; padding: 6px 10px; }
+                .kpl-mdd-daynav .nav { color: #1c5fbb; font-size: 13px; cursor: pointer; user-select: none; }
+                .kpl-mdd-daynav .nav.dis { color: #ccc; cursor: default; }
+                .kpl-mdd-daynav .d { color: #1c5fbb; font-size: 14px; font-weight: 700; }
+                .kpl-mdd-tabs { display: flex; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px 10px 0 0; border-bottom: none; padding: 0 6px; }
+                .kpl-mdd-tabs .ttab { position: relative; flex: 1; text-align: center; padding: 11px 2px; font-size: 14px; color: #333; cursor: pointer; border-bottom: 2px solid transparent; }
+                .kpl-mdd-tabs .ttab.on { color: #e03131; font-weight: 700; border-bottom-color: #e03131; }
+                .kpl-mdd-tabs .ttab .badge { position: relative; top: -8px; margin-left: 2px; font-style: normal; font-size: 10px; color: #fff; background: #e03131; border-radius: 9px; padding: 0 5px; }
+                .kpl-lhb-head.zte, .kpl-lhb-row.zte { grid-template-columns: 1.5fr .9fr 1.1fr .9fr; }
+                .kpl-lhb-head.wdd, .kpl-lhb-row.wdd { grid-template-columns: 1.5fr .8fr .9fr .8fr; }
+                .kpl-lhb-head.wtl, .kpl-lhb-row.wtl { grid-template-columns: 1.5fr .8fr .8fr .9fr; }
+                .kpl-lhb-head .hl { background: #e7f1ff; }
+                .kpl-lhb-row .hl { background: #e7f1ff; border-radius: 3px; padding: 4px 2px; }
+                .kpl-mdd-empty { padding: 26px 12px; text-align: center; color: #999; background: #fff; font-size: 12px; }
                 .kpl-lhb-agsum { font-size: 13px; color: #111; margin-bottom: 6px; }
                 .kpl-lhb-agsum b { margin-left: 4px; }
                 .kpl-lhb-bars { width: 100%; display: block; margin-bottom: 6px; }

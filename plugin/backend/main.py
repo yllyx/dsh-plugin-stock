@@ -1622,6 +1622,30 @@ async def kpl_mood(day: str = ""):
     return await asyncio.to_thread(kpl_api.get_kpl().get_mood_page, day)
 
 
+@app.get("/api/kpl/mood/capacity")
+async def kpl_mood_capacity(day: str = "", type: str = "4"):
+    """情绪页·市场量能按指数切换（App 筛选弹窗；Type: 0沪深 1上证 2创业板 3北证 4沪深京 5科创板）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_mood_capacity, day, type)
+
+
+@app.get("/api/kpl/mood/ztdetail")
+async def kpl_mood_ztdetail(day: str = ""):
+    """情绪页·涨停表现下钻（App ZhangTingExpressionActivity：梯头+实际涨跌停+五梯队明细）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_mood_ztdetail, day)
+
+
+@app.get("/api/kpl/mood/withdrawlist")
+async def kpl_mood_withdrawlist(day: str = ""):
+    """情绪页·大幅回撤下钻全表（App MaximumRetreatActivity；SharpWithdrawalList）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_mood_withdrawlist, day)
+
+
+@app.get("/api/kpl/mood/weightslist")
+async def kpl_mood_weightslist(day: str = ""):
+    """情绪页·权重表现下钻（App WeightPerformanceListActivity：全行业表+权重板块族）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_mood_weightslist, day)
+
+
 @app.get("/api/kpl/fenbi/{code}")
 async def kpl_fenbi(code: str):
     """分时成交逐笔（App"分时成交"列表同源）"""

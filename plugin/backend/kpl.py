@@ -1980,7 +1980,7 @@ class KplClient:
         f = {
             "head": pool.submit(self.call, HIS_K, HDP, "HisDaBanHeadInfo", {"Day": day}, False),
             "zdtj": pool.submit(self.call, HIS_K, HDP, "MarketZDTJ", {"Date": day, "FBJS": "1"}, False),
-            "cap": pool.submit(self.call, HIS_K, HDP, "MarketSCLN", {"Date": day.replace("-", ""), "Type": "0"}, False),
+            "cap": pool.submit(self.call, HIS_K, HDP, "MarketSCLN", {"Date": day.replace("-", ""), "Type": "4"}, False),  # Type=4 沪深京（App 默认，2026-10-03 Type 枚举实测定案）
             "ztexpr": pool.submit(self.call, HIS_K, HDP, "ZhangTingExpression", {"Day": day, "Is_New": "1"}, False),
             "line": pool.submit(self.call, HIS_K, "HisMarketSentiment", "GetSentimentChart", {"date": day}, False),
             "line5": pool.submit(self.call, HIS_K, "HisMarketSentiment", "GetSentimentChart", {"date": day, "five_days": "1"}, False),
@@ -2068,6 +2068,141 @@ class KplClient:
             "northbound": info("nb") or None,
         }
         return out or None
+
+    # ---------- 情绪页下钻（2026-10-03 逆向：MarketCapacityMoreDialog/ZhangTingExpression/MaximumRetreat/WeightPerformanceList）----------
+
+    def _mood_norm_day(self, day: str) -> str:
+        from trade_calendar import get_cal
+        day = day or time.strftime("%Y-%m-%d")
+        try:
+            if not get_cal().is_trading_day(day):
+                prev = get_cal().prev_trading_day(day)
+                if prev:
+                    day = prev
+        except Exception:
+            pass
+        return day
+
+    def get_mood_capacity(self, day: str = "", ctype: str = "4") -> Dict[str, Any]:
+        """市场量能按指数切换（App 量能模块筛选弹窗 MarketCapacityMoreDialogFragment）。
+        MarketSCLN Type 实测定案：0=沪深 1=上证 2=创业板 3=北证 4=沪深京(App默认) 5=科创板。60s 缓存。"""
+        day = self._mood_norm_day(day)
+        ctype = str(ctype or "4")
+        key = f"moodcap:{ctype}:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        d = self.call("https://apphis.kaipanla.com/w1/api/index.php", "HisHomeDingPan",
+                      "MarketSCLN", {"Date": day.replace("-", ""), "Type": ctype}, False)
+        info = (d or {}).get("info") or {}
+        out = {"day": day, "type": ctype,
+               "last": info.get("last"), "ycln": info.get("ycln"), "yclnstr": info.get("yclnstr"),
+               "csbl": info.get("csbl"), "color": info.get("color"),
+               "pre": info.get("s_zrcs"), "trends": info.get("trends") or []}
+        if out["trends"]:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_mood_ztdetail(self, day: str = "") -> Dict[str, Any]:
+        """涨停表现下钻（App ZhangTingExpressionActivity 双表页）。
+        头部梯头=DailyLimitIndex{Day}+实际涨跌停=MarketStockZDNum{Date}（字节码 ox0.p5/n2 实锤，已实测）；
+        涨停股列表当日=socket 2120(pb.Empty, ZhangTingStockListPresenterImpl 实锤)——marketfeed 未订阅，
+        10-08 盘中补；历史=DailyLimitPerformance{Day,PidType,Type,Order,Index,st}（通道实测通，
+        PidType 语义 ZTEChild 一板1~更高5，但响应行数与 App 一板 40 只不符——精确参数待 10-08 盘中抓包校准）。"""
+        day = self._mood_norm_day(day)
+        key = f"moodztd:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 300:
+            return hit["data"]
+        HIS_K = "https://apphis.kaipanla.com/w1/api/index.php"
+        from concurrent.futures import ThreadPoolExecutor
+        if not KplClient._mood_pool or KplClient._mood_pool[0]._shutdown:
+            KplClient._mood_pool = [ThreadPoolExecutor(max_workers=8)]
+        pool = KplClient._mood_pool[0]
+        futs = {
+            "head": pool.submit(self.call, HIS_K, "HisHomeDingPan", "MarketStockZDNum", {"Date": day}, False),
+            "ladder": pool.submit(self.call, HIS_K, "HisHomeDingPan", "DailyLimitIndex", {"Day": day}, False),
+        }
+        lists = {}
+        for pid in range(1, 6):
+            futs[f"p{pid}"] = pool.submit(
+                self.call, HIS_K, "HisHomeDingPan", "DailyLimitPerformance",
+                {"Day": day, "PidType": str(pid), "Type": "0", "Order": "0", "Index": "0", "st": "60"}, False)
+        hd = (futs["head"].result() or {}).get("info") or {}
+        lad = (futs["ladder"].result() or {}).get("info") or []
+        out = {
+            "day": day,
+            "sjzt": hd.get("SJZT"), "sjdt": hd.get("SJDT"),
+            "ladder": lad if isinstance(lad, list) else [],
+            "lists": {}, "pending": True,
+            "note": "涨停股明细通道已接通(socket 2120/DailyLimitPerformance)，参数枚举待 10-08 盘中与 App 抓包校准",
+        }
+        for pid in range(1, 6):
+            d = futs[f"p{pid}"].result() or {}
+            info = d.get("info")
+            rows = info.get("list") if isinstance(info, dict) else info
+            out["lists"][str(pid)] = rows if isinstance(rows, list) else []
+        self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_mood_withdrawlist(self, day: str = "") -> Dict[str, Any]:
+        """大幅回撤全部（App MaximumRetreatActivity；SharpWithdrawalList{Day,Type,Order,Index}
+        字节码 ox0.o2 实锤已实测：info=[code,name,0,"",高点涨幅,回撤,当日涨幅]，顶层 num/date）。"""
+        day = self._mood_norm_day(day)
+        key = f"moodwdl:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 120:
+            return hit["data"]
+        d = self.call("https://apphis.kaipanla.com/w1/api/index.php", "HisHomeDingPan",
+                      "SharpWithdrawalList", {"Day": day, "Type": "0", "Order": "0", "Index": "0"}, False)
+        info = (d or {}).get("info") or []
+        rows = []
+        for it in (info if isinstance(info, list) else []):
+            if isinstance(it, list) and len(it) >= 7:
+                rows.append({"code": it[0], "name": it[1], "high": it[4],
+                             "drawdown": it[5], "pct": it[6]})
+        out = {"day": day, "num": (d or {}).get("num"), "rows": rows}
+        if rows:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_mood_weightslist(self, day: str = "") -> Dict[str, Any]:
+        """权重表现下钻（App WeightPerformanceListActivity：指数条+全行业表 涨幅▼/涨速/成交额）。
+        WeightPerformanceList{Day,Type,Order,Index}=9 个权重板块族（实测定案，非 dd8 全行业表）；
+        全行业表列与主页面 WeightPerformance info.SZ/XD 行一致（涨幅列同源），涨速/成交额列
+        通道=PlateWeightStock{ZSCode}（5 种 ZSCode 盘后全空——两击规则停止，参数值待 10-08 盘中抓包）。"""
+        day = self._mood_norm_day(day)
+        key = f"moodwtl:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 120:
+            return hit["data"]
+        HIS_K = "https://apphis.kaipanla.com/w1/api/index.php"
+        from concurrent.futures import ThreadPoolExecutor
+        if not KplClient._mood_pool or KplClient._mood_pool[0]._shutdown:
+            KplClient._mood_pool = [ThreadPoolExecutor(max_workers=8)]
+        pool = KplClient._mood_pool[0]
+        f1 = pool.submit(self.call, HIS_K, "HisHomeDingPan", "WeightPerformanceList",
+                         {"Day": day, "Type": "0", "Order": "0", "Index": "0"}, False)
+        f2 = pool.submit(self.call, HIS_K, "HisHomeDingPan", "WeightPerformance", {"Day": day}, False)
+        wl = (f1.result() or {}).get("info") or []
+        weight_rows = []
+        for it in (wl if isinstance(wl, list) else []):
+            if isinstance(it, list) and len(it) >= 5:
+                weight_rows.append({"id": it[0], "name": it[1], "pct": it[2],
+                                    "speed": it[3], "amount": it[4]})
+        info = (f2.result() or {}).get("info") or {}
+        allrows = []
+        for k in ("SZ", "XD"):
+            for it in (info.get(k) or []):
+                if isinstance(it, list) and len(it) >= 6:
+                    allrows.append({"id": it[0], "name": it[1], "pct": it[2],
+                                    "leader": it[4], "leader_pct": it[5], "speed": None, "amount": None})
+        out = {"day": day, "weight_families": weight_rows, "rows": allrows,
+               "pending_cols": True,
+               "note": "涨速/成交额列通道 PlateWeightStock{ZSCode} 参数待 10-08 盘中抓包校准"}
+        if allrows or weight_rows:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
 
     def get_kpl_stock_trend(self, code: str) -> Dict[str, Any]:
         """个股分时（App 个股详情分时图同源 StockL2Data/GetStockTrend）：
