@@ -181,6 +181,8 @@ git push origin main --tags
 - **SocketRepository 请求构造全集（observed）**：2029=HKHisHQReq{stockId1,date2} 港股历史K线；2007/2024=HisHQItemReq 历史/超级历史分笔；2251=HisHQReq；402=UnsubIdReq 退订；602=LoginStateReq；610 AuthReq 多 appType9 字段。ux0$b builder：c(cmd)/d(proto)/e(kind)/f(Z)/b(Z)/g(I)
 - **港股 tab（进行中）**：UI=指数卡(恒指/国企/恒生科技横滑)+题材/行业/个股三子 tab+历史+时间轴 09:25-16:10；**HK 板块 id=820xxx 体系**（820246 AI营销…）；指数卡=2106/2107 订阅+IndexSimpleQuotasResp(3006 族)（HKWithStockIndicesPresenter observed）；板块表走 socket（mitm delta=0），3007 plateType≥3 回落 A 股行业 881xxx（实测）→港股表专用 cmd 未定；HTTP GetHKSubject/Industry_Ranking {Type,Index,st,Order}（j00.P，controller=Index）五域探测未中（200 空体/9999）；新域名 appkh/vip 无路由
 - **行情子 tab 自绘**：uiautomator 无 text，坐标 板块81/个股260/港股419/打板570/情绪725/直播880 y=148（1080p）
+- **⭐ apktool 资源解码成功（jadx 卡死换 apktool 2.9.3）**：1322 个 layout XML 全量在 kanpan_spec/apktool_out/res/（public.xml id 映射；"资源混淆"是早期误判）。**工具链定案：资源用 apktool、字节码用 androguard dump_class.py、全 cmd↔类映射用 tools/cmd_class_map.py**
+- **⭐ 2102/2103 非死代码（推翻旧结论）**：打板页四子 tab=竞价/即将涨停/风向标/涨停（ui_map/pattern/）；2102=DaBanListCountReq{filterType,filterCX,filterZB,filterCYB,filterKCB} 计数徽标（休市有响应实测）；2103=DaBanStockListReq{pidType1,sortType2,orderType3,index4,count5,cxType6,stType7,zbType8,cybType9,kcbType10}（filter=布尔 0/1，**旧"110 错误"真因=filter 全填 1 全过滤**）；2120=涨停列表（ZhangTingStockListPresenterImpl）、2121=昨日涨停——cmd_table 标注修正；2103 pidType 枚举 ⏸ 待盘中
 - **域名全集**（dex 提取）见 reverse_session 文档；appkh（港股?）/vip（悬浮球?）暂无路由
 
 ### ⭐ 龙虎榜（2026-09-30 全套复刻，App 底部导航·龙虎榜菜单同源）
