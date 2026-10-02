@@ -163,6 +163,26 @@ git push origin main --tags
 
 **坑（本轮实锤）**：① 3004/3007/3101 带参 cmd **盘后完全静默**（连 110 错误都不回）但**不踢线**——勿把静默当参数错反复盲扫；2100-2126 pb.Empty 族盘后照推；② 曾误判"会话 1s 被踢"为 3004 帧触发——实为 8765 后端进程同 device 互踢残留，**排查互踢先杀 8765 再测**；③ 服务端对**同一会话重复订阅 3004 只推一次**，重订阅静默≠失败；④ DSH 看门狗杀进程后可能不自动拉起（状态卡 running）——手动 DETACHED_PROCESS 拉起 uvicorn 后 DSH 经 isAlreadyRunning 复用
 
+### ⭐ AI 投资分析（悬浮按钮 → 选股 → DSH 会话，2026-10-01）
+
+- **交互流**：插件每页右下角 🤖 悬浮按钮（StockAnalysisFab，挂 WatchlistPanel 根覆盖全部 Tab）→ 选股浮层（搜索 /api/kpl/search-local + KPL 自选 /api/kpl/watchlist + 记账持仓降级 + 手输）→ `POST /stock-plugin/analyze {code,name}` → 服务端创建独立 DSH 会话（出现在会话列表，标题"股票分析：名称(代码)"）→ AI 按引导 prompt 逐个调 kpl_* 工具 → 输出 ①评级(可买/观望/回避) ②理由与风险 ③建议仓位与止损
+- **会话创建机制（dsh-better-sidebar 实战验证的宿主公共 API）**：`ctx.get("agents").create({sessionId, meta:{origin:"plugin", plugin}, agentOptions:{}})` + `handle.agent.followup(createUserMessage({content:[{type:"text",text}], source:{kind:"user"}}))`（唤醒 AI 产生首回合）+ `ctx.get("sessionTitle").rename(handle.agent.session, 标题)`；`createUserMessage` import 自 `@deepseek-ai/dsh-llm`（宿主 node_modules 提供，插件无需声明依赖）。**inject 数组加 "webServer"**（property 访问必须声明；ctx.get 动态获取不需要）
+- **桥 = 宿主 webServer 路由**（无需自建端口）：`ctx.webServer.register({kind:"prefix", path:"/stock-plugin/analyze", handler:(req,res)=>{...}})`（Node 原语 req/res，effect 生命周期自动 dispose）；前端**同源相对路径** fetch（client.js 跑在宿主 web server origin）
+- **kpl_* 分析工具 6 个**（14 工具=8 基础+6 分析，test_apply 已同步）：kpl_quote(/api/kpl/quote) / kpl_kline(/api/kpl/kline，Stock/GetStockChart@applhb 日K 530 根含 OHLC 均线量，前复权) / kpl_timing(/api/kpl/timing，2100 情绪条+2110 涨跌+2115 总览+2117 天梯聚合) / kpl_sentiment(/api/kpl/sentiment，综合强度+风向标+风口) / kpl_lhb_seat(/api/kpl/lhb/stock 席位) / kpl_position(/api/position/overview 记账仓位——用户指定仓位沿用原有)。数据源按用户要求：行情/K线/择时/情绪=开盘啦，仓位=原记账
+- **⚠️ index.js 是服务端插件：改动必须重启 DSH 才生效**（前端 FAB 只需刷新页面）；本地测试 @deepseek-ai/dsh-llm 用仓库根 node_modules junction 指向宿主包（test_apply 的 rmSync 只清 plugin/node_modules 不冲突）
+- **坑**：① bash heredoc 里的 `
+` 经 JSON 转义吃掉一层变成真换行写入文件——跨语言脚本注入换行转义需用 Edit 工具修正；② 宿主 API 探路先看 dsh-better-sidebar（唯一大量使用 agents/webServer 的第三方插件）
+
+### ⭐ 全面逆向工程（2026-10-02 开工：先逆向全部功能→再按 App 复刻；纪要 kanpan_spec/docs/reverse_session_*.md）
+
+- **方法论**：apk-reverse 技能（C:/Users/mark/.zcode/skills/apk-reverse）门禁制——G1 交付句先行、observed/inferred/unverified 证据标签、两击规则。工具链：jadx 1.5.1（**必须用 D:/Program Files/Java/jdk-17.0.2 跑，系统 java8 存根与 jadx 不兼容**；-r --no-src 仅解码资源）+ androguard dump_class.py + adb 系统级 + 自有 socket 客户端直发
+- **类图资产**（ui_map/）：pages.md 页面清单（10887 类枚举，Activity245/Fragment217/Presenter105）；class_buckets.json；**DataBinding 类名=布局文件名**（78 个，避雷页 FragmentLightningProtection* 实锤）
+- **⭐ socket 请求体 AES-GCM 加密机制（重大）**：`SocketRepository` native 方法（libauthSign.so）`initBaxPwd(AssetManager)`=白盒密码表初始化（unidbg 签名器当年已能跑进它，"输出空"=无返回值仅初始化，勿当失败）；`encodeAESGCMMsg/decodeAESGCMMsg` 加解密 body；开关=SR.d==1（`l(I)` 设置）；ux0.x() 加密失败回退明文有日志。**我们明文通道可用=常规 cmd 未启用加密；港股族静默的候选原因是要求加密会话**——突破路径=unidbg 里调 encodeAESGCMMsg
+- **SocketRepository 请求构造全集（observed）**：2029=HKHisHQReq{stockId1,date2} 港股历史K线；2007/2024=HisHQItemReq 历史/超级历史分笔；2251=HisHQReq；402=UnsubIdReq 退订；602=LoginStateReq；610 AuthReq 多 appType9 字段。ux0$b builder：c(cmd)/d(proto)/e(kind)/f(Z)/b(Z)/g(I)
+- **港股 tab（进行中）**：UI=指数卡(恒指/国企/恒生科技横滑)+题材/行业/个股三子 tab+历史+时间轴 09:25-16:10；**HK 板块 id=820xxx 体系**（820246 AI营销…）；指数卡=2106/2107 订阅+IndexSimpleQuotasResp(3006 族)（HKWithStockIndicesPresenter observed）；板块表走 socket（mitm delta=0），3007 plateType≥3 回落 A 股行业 881xxx（实测）→港股表专用 cmd 未定；HTTP GetHKSubject/Industry_Ranking {Type,Index,st,Order}（j00.P，controller=Index）五域探测未中（200 空体/9999）；新域名 appkh/vip 无路由
+- **行情子 tab 自绘**：uiautomator 无 text，坐标 板块81/个股260/港股419/打板570/情绪725/直播880 y=148（1080p）
+- **域名全集**（dex 提取）见 reverse_session 文档；appkh（港股?）/vip（悬浮球?）暂无路由
+
 ### ⭐ 龙虎榜（2026-09-30 全套复刻，App 底部导航·龙虎榜菜单同源）
 
 **数据面 = HTTP `LongHuBang`/`Business`/`Stock`/`UserBusiness` 控制器 @applhb.kaipanla.com（ApiConfig.API_LHB，App 龙虎榜下钻页是 H5：appage/w48/web/DepkDetails.html、StockDetails.html、MySub.html——抓包实锤全部请求参数）**。主列表为原生页但数据同走 HTTP（mitmproxy 324 流量全解）：

@@ -842,7 +842,7 @@ class KplClient:
                          "net": net, "concept": str(r[8] or ""),
                          "tag": str(r[10] or ""), "ts": r[12]})
         rows.sort(key=lambda r: -r["net"])
-        day_s = str(got.get("Day") or used_day or "")
+        day_s = str(got.get("Day") or day or "")   # 回看请求日兜底（曾引用未定义 used_day，NameError 被 homefeed 吞掉表现为"模块无数据"）
         if len(day_s) == 8:
             day_s = f"{day_s[:4]}-{day_s[4:6]}-{day_s[6:]}"
         out = {"rows": rows, "day": day_s, "day_arr": (got or {}).get("DayArr") or [],
@@ -1632,6 +1632,112 @@ class KplClient:
             logger.debug(f"GetOfficev2: {e}")
         out["official"] = self.get_lhb_yixian(day)
         self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_kpl_stock_chart(self, code: str) -> Dict[str, Any]:
+        """个股日 K（App 龙虎榜 H5 K线图同源 Stock/GetStockChart @applhb）：
+        x=日期序列 y=收盘 m5/m10/m20/m30=均线 vol=成交量（~530 根）。
+        供 AI 投资分析工具使用（KPL 数据源，非东财/腾讯）。30s 缓存。"""
+        code = str(code)
+        key = f"kplchart:{code}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        try:
+            d = self.call(HOST_LHB_KPL, "Stock", "GetStockChart",
+                          {"StockID": code, "Index": "0", "st": "530"}, authed=True)
+        except Exception as e:
+            logger.debug(f"GetStockChart: {e}")
+            return {}
+        out = {"code": code, "name": d.get("Name"),
+               "dates": d.get("x") or [], "close": d.get("y") or [],
+               "m5": d.get("m5") or [], "m10": d.get("m10") or [],
+               "m20": d.get("m20") or [], "m30": d.get("m30") or [],
+               "vol": d.get("vol") or []}
+        if out["dates"]:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_kpl_timing(self) -> Dict[str, Any]:
+        """KPL 口径大盘择时聚合（AI 分析工具数据源）：打板情绪条(2100)+涨跌统计(2110)
+        +市场总览(2115)+连板天梯(2117)+涨停分钟序列(2116)+综合强度(ChangeStatistics)。
+        全部开盘啦数据源。60s 缓存。"""
+        key = "kpltiming"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        out: Dict[str, Any] = {}
+        try:
+            from kpl_marketfeed import get_feed
+            snap = get_feed().snapshot()
+            head = ((snap.get("dabanhead") or {}).get("data")) or {}
+            zd = ((snap.get("zdstat") or {}).get("data")) or {}
+            ov = ((snap.get("overview") or {}).get("data")) or {}
+            lad = ((snap.get("ladder") or {}).get("data")) or {}
+            zts = ((snap.get("ztseries") or {}).get("data")) or {}
+            out.update({
+                "zt_fb_dt": {"zt": head.get("zt"), "fbl": head.get("fb"), "dt": head.get("dt")},
+                "rise_down": {"rise": zd.get("rise"), "down": zd.get("down"),
+                              "real_zt": zd.get("realZt"), "real_dt": zd.get("realDt"),
+                              "sign": zd.get("sign")},
+                "market_overview": {
+                    "hs_amount": ov.get("hsAmount"), "hs_pct": ov.get("hsPct"),
+                    "qx_temp": ov.get("qx"), "qx_status": ov.get("qxStatus"),
+                    "forecast_money": ov.get("forecastMoney"),
+                    "strong_today": ov.get("strongTD"), "strong_yest": ov.get("strongYD")},
+                "max_lb": (lad.get("ladder") or [{}])[0].get("h") if lad.get("ladder") else None,
+                "ladder_top3": [{"h": r.get("h"),
+                                 "names": [s.get("name") for s in (r.get("stocks") or [])[:3]]}
+                                for r in (lad.get("ladder") or [])[:3]],
+                "zt_series_tail": (zts.get("series") or [])[-5:],
+                "day": zts.get("day") or out.get("day"),
+            })
+        except Exception as e:
+            logger.debug(f"get_kpl_timing: {e}")
+        # 综合强度（ChangeStatistics strong）与情绪历史
+        try:
+            sent = self.get_sentiment_history() or []
+            if sent:
+                out["sentiment_today"] = sent[0]
+                out["sentiment_yest"] = sent[1] if len(sent) > 1 else {}
+        except Exception:
+            pass
+        if out:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_kpl_sentiment(self) -> Dict[str, Any]:
+        """KPL 口径市场情绪聚合（AI 分析工具数据源）：综合强度温度计+情绪历史
+        +风向标涨跌榜 top3+今日风口（ZQFKList）。"""
+        key = "kplsent"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        out: Dict[str, Any] = {}
+        try:
+            sent = self.get_sentiment_history() or []
+            out["sentiment_today"] = sent[0] if sent else {}
+            out["sentiment_history"] = sent[:5]
+        except Exception:
+            pass
+        try:
+            d = self._getinfo_full()
+            out["wind_vane"] = {"up": (d.get("CWeatherVaneList") or {}).get("SZ") or [],
+                                "down": (d.get("CWeatherVaneList") or {}).get("XD") or []}
+            out["hot_topics"] = [{"code": r[0], "name": r[1], "strength": r[2]}
+                                 for r in (d.get("ZQFKList") or [])[:5]
+                                 if isinstance(r, (list, tuple)) and len(r) >= 3]
+        except Exception:
+            pass
+        try:
+            from kpl_marketfeed import get_feed
+            ov = ((get_feed().snapshot().get("overview") or {}).get("data")) or {}
+            out["qx_temp"] = ov.get("qx")
+            out["qx_status"] = ov.get("qxStatus")
+        except Exception:
+            pass
+        if out:
+            self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
     def get_qiangdu(self) -> Dict[str, Any]:

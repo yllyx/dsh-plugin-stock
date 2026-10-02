@@ -3439,6 +3439,23 @@ window.__ModuleLoader__.load({
             const agencies = (data && data.agencies) || [];
             const business = (data && data.business) || [];
             const adays = (data && data.agency_days) || [];
+            // 股票榜列头排序（App 同款点击列头切换；默认=服务端序）
+            const [sortKey, setSortKey] = useState(null);
+            const [sortDir, setSortDir] = useState(1);
+            const toggleSort = (key) => {
+                if (sortKey === key) setSortDir(-sortDir);
+                else { setSortKey(key); setSortDir(1); }
+            };
+            const sortNum = (v) => { const n = parseFloat(String(v).replace(/[%,]/g, "")); return isFinite(n) ? n : -Infinity; };
+            const sortVal = (s, key) => sortNum(
+                key === "pct" ? s.pct : key === "buy" ? s.buy_in
+                : key === "turn_ratio" ? s.turnover_ratio
+                : key === "turnover" ? s.turnover : s.amplitude);
+            const stockRows = React.useMemo(() => {
+                if (!sortKey) return stocks;
+                return [...stocks].sort((a, b) => (sortVal(a, sortKey) - sortVal(b, sortKey)) * sortDir);
+            }, [stocks, sortKey, sortDir]);
+            const sortArrow = (key) => sortKey === key ? (sortDir === 1 ? "▼" : "▲") : "↕";
             const tabs = [["stock", "股票"], ["agency", "机构"], ["biz", "营业部"], ["sub", "订阅"]];
             const dateText = (data && data.day) || day || "--";
             return React.createElement("div", { className: "kpl-page" },
@@ -3461,25 +3478,43 @@ window.__ModuleLoader__.load({
                     }, label))),
                 error && React.createElement("div", { className: "kpl-empty" }, "加载失败：" + error),
                 !data && !error && React.createElement("div", { className: "kpl-empty" }, "正在加载…"),
-                tab === "stock" && data && React.createElement("div", { className: "kpl-lhb-table" },
-                    React.createElement("div", { className: "kpl-lhb-head stk" },
-                        React.createElement("span", null, "股票名称"),
-                        React.createElement("span", null, "风口概念"),
-                        React.createElement("span", { className: "r" }, "涨幅"),
-                        React.createElement("span", { className: "r" }, "净买入")),
-                    stocks.map((s, i) => React.createElement("div", {
-                        key: s.id + i, className: "kpl-lhb-row stk",
-                        onClick: () => go && go({ page: "lhbStock", code: s.id, day: dateText }),
-                    },
-                        React.createElement("div", { className: "nm" },
-                            React.createElement("b", null, s.name),
-                            React.createElement("span", { className: "cd" }, s.id),
-                            Number(s.d3) > 0 ? React.createElement("span", { className: "d3tag" }, "3日") : null),
-                        React.createElement("div", { className: "concept" }, s.concept || "--"),
-                        React.createElement("div", { className: "pctcol" },
-                            React.createElement("span", { className: String(s.pct || "").indexOf("-") === 0 ? "down" : "up" }, s.pct || "--")),
-                        React.createElement("div", { className: "buycol " + (s.buy_in >= 0 ? "up" : "down") },
-                            fmtMoneyWan(s.buy_in))))),
+                tab === "stock" && data && React.createElement("div", { className: "kpl-lhb-scroll" },
+                    React.createElement("div", { className: "kpl-lhb-table stk" },
+                        React.createElement("div", { className: "kpl-lhb-head stk" },
+                            React.createElement("span", { className: "sticky" }, "股票名称"),
+                            React.createElement("span", null, "风口概念"),
+                            React.createElement("span", { className: "r sort", onClick: () => toggleSort("pct") },
+                                "涨幅 ", React.createElement("span", { className: "arr" }, sortArrow("pct"))),
+                            React.createElement("span", { className: "r sort", onClick: () => toggleSort("buy") },
+                                "净买入 ", React.createElement("span", { className: "arr" }, sortArrow("buy"))),
+                            React.createElement("span", { className: "r sort", onClick: () => toggleSort("turn_ratio") },
+                                "换手率 ", React.createElement("span", { className: "arr" }, sortArrow("turn_ratio"))),
+                            React.createElement("span", { className: "r sort", onClick: () => toggleSort("turnover") },
+                                "成交额 ", React.createElement("span", { className: "arr" }, sortArrow("turnover"))),
+                            React.createElement("span", { className: "r sort", onClick: () => toggleSort("amp") },
+                                "振幅 ", React.createElement("span", { className: "arr" }, sortArrow("amp"))),
+                            React.createElement("span", { className: "r" }, "流通市值"),
+                            React.createElement("span", { className: "r" }, "总市值")),
+                        stockRows.map((s, i) => React.createElement("div", {
+                            key: s.id + i, className: "kpl-lhb-row stk",
+                            onClick: () => go && go({ page: "lhbStock", code: s.id, day: dateText }),
+                        },
+                            React.createElement("div", { className: "nm sticky" },
+                                React.createElement("b", null, s.name),
+                                React.createElement("span", { className: "cd" }, s.id),
+                                Number(s.d3) > 0 ? React.createElement("span", { className: "d3tag" }, "3日") : null),
+                            React.createElement("div", { className: "concept" },
+                                (s.concept ? s.concept.split("/") : ["--"]).map((c, ci) =>
+                                    React.createElement("div", { key: ci }, c))),
+                            React.createElement("div", { className: "pctcol" },
+                                React.createElement("span", { className: String(s.pct || "").indexOf("-") === 0 ? "down" : "up" }, s.pct || "--")),
+                            React.createElement("div", { className: "buycol " + (s.buy_in >= 0 ? "up" : "down") },
+                                fmtMoneyWan(s.buy_in)),
+                            React.createElement("div", { className: "numcol" }, (s.turnover_ratio ?? "--") + "%"),
+                            React.createElement("div", { className: "numcol" }, fmtAmount(s.turnover)),
+                            React.createElement("div", { className: "numcol" }, (s.amplitude ?? "--") + "%"),
+                            React.createElement("div", { className: "numcol" }, fmtAmount(s.circ_cap)),
+                            React.createElement("div", { className: "numcol" }, fmtAmount(s.total_cap)))))),
                 tab === "agency" && data && React.createElement("div", { className: "kpl-lhb-agency" },
                     React.createElement("div", { className: "kpl-lhb-agsum" },
                         "机构净买入: ",
@@ -3686,6 +3721,175 @@ window.__ModuleLoader__.load({
                     data.on_times.length > 10 ? " 等" + data.on_times.length + " 次" : ""));
         }
 
+        /* ---- 市场风口下钻页（GetFengKList：按股票/按概念双视图+日期回看） ---- */
+
+        function KplFengkouPage({ go }) {
+            const [data, setData] = useState(null);
+            const [day, setDay] = useState("");
+            const [view, setView] = useState("stock");   // state 只存 id 字符串
+            const [error, setError] = useState(null);
+            const load = useCallback(async (d) => {
+                try {
+                    const r = await api("/api/kpl/fengkou" + (d ? "?day=" + d : ""));
+                    setData(r); setError(null);
+                } catch (e) { setError(e.message); }
+            }, []);
+            useEffect(() => { load(day); }, [load, day]);
+            usePolling(() => load(day), 30000, [day]);
+            const rows = (data && data.rows) || [];
+            const dayArr = (data && data.day_arr) || [];
+            const curDay = (data && data.day) || day || "";
+            // 概念聚合：净额合计降序（App"按概念"视图口径为插件推导，有实拍后校准）
+            const byConcept = React.useMemo(() => {
+                const m = {};
+                rows.forEach((r) => {
+                    const cs = String(r.concept || "").split("/").filter(Boolean);
+                    cs.forEach((c) => {
+                        m[c] = m[c] || { name: c, net: 0, n: 0 };
+                        m[c].net += Number(r.net) || 0;
+                        m[c].n += 1;
+                    });
+                });
+                return Object.values(m).sort((a, b) => b.net - a.net);
+            }, [rows]);
+            const fmtNet = (v) => {
+                const n = Number(v);
+                if (!isFinite(n)) return "--";
+                if (Math.abs(n) >= 1e8) return (n / 1e8).toFixed(2) + "亿";
+                return (n / 1e4).toFixed(0) + "万";
+            };
+            const shiftDay = (dir) => {
+                // App 日期回看：在服务端 DayArr（可用交易日数组）内步进，缺省端点当日
+                if (!dayArr.length) return;
+                let idx = dayArr.indexOf(curDay);
+                if (idx < 0) idx = 0;
+                idx = Math.min(Math.max(idx + dir, 0), dayArr.length - 1);
+                const d = dayArr[idx];
+                if (d && d !== curDay) setDay(d);
+            };
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "市场风口", onBack: () => go({ page: "back" }) }),
+                React.createElement("div", { className: "kpl-fk-tip" },
+                    "主力资金风口榜（净买入口径） · 上榜时间见行标"),
+                React.createElement("div", { className: "kpl-qd2-daynav" },
+                    React.createElement("span", { className: "arrow", onClick: () => shiftDay(-1) }, "◀"),
+                    React.createElement("span", { className: "d" }, curDay || "--"),
+                    React.createElement("span", {
+                        className: "arrow" + (curDay && dayArr.length && curDay !== dayArr[0] ? "" : " dis"),
+                        onClick: () => shiftDay(1),
+                    }, "▶")),
+                React.createElement("div", { className: "kpl-subtabs" },
+                    [["stock", "按股票"], ["concept", "按概念"]].map(function (pair) {
+                        return React.createElement("span", {
+                            key: pair[0], className: "kpl-subtab " + (view === pair[0] ? "on" : ""),
+                            onClick: function () { setView(pair[0]); },
+                        }, pair[1]);
+                    })),
+                error && React.createElement("div", { className: "kpl-empty" }, "加载失败：" + error),
+                !data && !error && React.createElement("div", { className: "kpl-empty" }, "正在加载…"),
+                view === "stock" && rows.length ? React.createElement("div", { className: "kpl-lhb-scroll" },
+                    React.createElement("div", { className: "kpl-lhb-table stk" },
+                        React.createElement("div", { className: "kpl-lhb-head fk" },
+                            React.createElement("span", { className: "sticky" }, "股票名称"),
+                            React.createElement("span", { className: "r hl" }, "主力净额"),
+                            React.createElement("span", { className: "r" }, "涨跌幅"),
+                            React.createElement("span", null, "风口概念")),
+                        rows.map((r, i) => React.createElement("div", {
+                            key: r.code + i, className: "kpl-lhb-row fk",
+                            onClick: () => go && go({ page: "stock", stock: { code: r.code, name: r.name } }),
+                        },
+                            React.createElement("div", { className: "nm sticky" },
+                                React.createElement("b", null, r.name),
+                                React.createElement("span", { className: "cd" }, r.code),
+                                r.tag ? React.createElement("span", { className: "d3tag" }, r.tag) : null),
+                            React.createElement("div", { className: "buycol hl " + (Number(r.net) >= 0 ? "up" : "down") },
+                                fmtNet(r.net)),
+                            React.createElement("div", { className: "pctcol" },
+                                React.createElement("span", { className: Number(r.rate) >= 0 ? "up" : "down" },
+                                    r.rate != null ? Number(r.rate).toFixed(2) + "%" : "--")),
+                            React.createElement("div", { className: "concept" }, r.concept || "--")))))
+                    : (view === "stock" && data ? React.createElement("div", { className: "kpl-empty" },
+                        curDay && curDay !== (dayArr[0] || "") ? "该日无风口数据" : "暂无数据（交易时段 9:30 起实时更新）") : null),
+                view === "concept" && byConcept.length ? React.createElement("div", { className: "kpl-lhb-scroll" },
+                    React.createElement("div", { className: "kpl-lhb-table stk" },
+                        React.createElement("div", { className: "kpl-lhb-head fk2" },
+                            React.createElement("span", null, "概念"),
+                            React.createElement("span", { className: "r hl" }, "净额合计"),
+                            React.createElement("span", { className: "r" }, "入榜家数")),
+                        byConcept.map((c, i) => React.createElement("div", { key: i, className: "kpl-lhb-row fk2" },
+                            React.createElement("div", { className: "nm" }, React.createElement("b", null, c.name)),
+                            React.createElement("div", { className: "buycol hl " + (c.net >= 0 ? "up" : "down") }, fmtNet(c.net)),
+                            React.createElement("div", { className: "numcol" }, c.n + " 家")))))
+                    : (view === "concept" && data ? React.createElement("div", { className: "kpl-empty" }, "暂无数据") : null));
+        }
+
+        /* ---- 板块详情下钻页（801/803 体系：2501 股票池+概要条） ---- */
+
+        function KplSectorDetailPage({ plateId, name, go }) {
+            const [data, setData] = useState(null);
+            const [error, setError] = useState(null);
+            const load = useCallback(async () => {
+                try {
+                    const d = await api("/api/kpl/sector/" + plateId);
+                    setData(d); setError(null);
+                } catch (e) { setError(e.message); }
+            }, [plateId]);
+            useEffect(() => { load(); }, [load]);
+            usePolling(load, 20000, [plateId]);
+            const stocks = (data && data.stocks) || [];
+            const sum = (data && data.summary) || null;
+            const pending = data && (data.pool_pending || data.quotes_pending);
+            const title = (data && data.name) || name || plateId;
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: title, onBack: () => go({ page: "back" }) }),
+                sum ? React.createElement("div", { className: "kpl-sdp-sum" },
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "板块涨幅"),
+                        React.createElement("div", { className: "v " + (Number(sum.rate) >= 0 ? "up" : "down") },
+                            sum.rate != null ? Number(sum.rate).toFixed(2) + "%" : "--")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "主力净额"),
+                        React.createElement("div", { className: "v " + (sum.main_net >= 0 ? "up" : "down") },
+                            sum.main_net + "亿")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "涨停数"),
+                        React.createElement("div", { className: "v up" }, sum.zt_num)),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "成交额"),
+                        React.createElement("div", { className: "v" }, sum.amount_sum + "亿")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "成员数"),
+                        React.createElement("div", { className: "v" }, sum.stock_num))) : null,
+                error && React.createElement("div", { className: "kpl-empty" }, "加载失败：" + error),
+                pending && React.createElement("div", { className: "kpl-empty" },
+                    "行情连接建立中，数据稍后自动补全…"),
+                !error && data && !stocks.length && !pending &&
+                    React.createElement("div", { className: "kpl-empty" }, "暂无成分股数据"),
+                stocks.length ? React.createElement("div", { className: "kpl-lhb-scroll" },
+                    React.createElement("div", { className: "kpl-lhb-table stk" },
+                        React.createElement("div", { className: "kpl-lhb-head sdp" },
+                            React.createElement("span", { className: "sticky" }, "股票名称"),
+                            React.createElement("span", { className: "r" }, "现价"),
+                            React.createElement("span", { className: "r hl" }, "涨幅"),
+                            React.createElement("span", { className: "r" }, "成交额"),
+                            React.createElement("span", { className: "r" }, "主力净额"),
+                            React.createElement("span", { className: "r" }, "涨停封单")),
+                        stocks.map((r, i) => React.createElement("div", {
+                            key: r.code + i, className: "kpl-lhb-row sdp" + (Number(r.rate) >= 9.8 ? " zt" : ""),
+                            onClick: () => go && go({ page: "stock", stock: { code: r.code, name: r.name } }),
+                        },
+                            React.createElement("div", { className: "nm sticky" },
+                                React.createElement("b", null, r.name || "--"),
+                                React.createElement("span", { className: "cd" }, r.code)),
+                            React.createElement("div", { className: "numcol" }, r.price || "--"),
+                            React.createElement("div", { className: "pctcol" },
+                                React.createElement("span", { className: Number(r.rate) >= 0 ? "up" : "down" },
+                                    r.rate != null ? Number(r.rate).toFixed(2) + "%" : "--")),
+                            React.createElement("div", { className: "numcol" }, r.amount || "--"),
+                            React.createElement("div", { className: "numcol " + (String(r.mainNet).indexOf("-") === 0 ? "down" : "up") }, r.mainNet || "--"),
+                            React.createElement("div", { className: "numcol up" }, r.ztSeal || "--"))))) : null);
+        }
+
         function KplRecommendPage() {
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement("div", { className: "kpl-placeholder" }, "👍 推荐功能二期提供"));
@@ -3753,6 +3957,16 @@ window.__ModuleLoader__.load({
             const [q, setQ] = useState(null);
             const [error, setError] = useState(null);
             const [inWatch, setInWatch] = useState(null);
+            // 挂载时查一次自选列表回填状态（不回填时首次点击会把"加自选"执行成"移出"）
+            useEffect(() => {
+                let alive = true;
+                api("/api/kpl/watchlist").then((d) => {
+                    if (!alive) return;
+                    const all = Object.values(d.stocks || {}).reduce((a, l) => a.concat(l || []), []);
+                    setInWatch(all.some((c) => String(c) === String(stock.code)));
+                }).catch(() => { });
+                return () => { alive = false; };
+            }, [stock.code]);
             const load = useCallback(async () => {
                 try { const d = await api(`/api/kpl/quote/${stock.code}?force=1`); setError(null); setQ(d); }
                 catch (e) { setError(e.message); }
@@ -3881,6 +4095,7 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "tikaDetail") content = React.createElement(KplTikaDetailPage, { id: drill.id, name: drill.name, go });
                 else if (drill.page === "sectorDetail") content = React.createElement(KplSectorDetailPage, { plateId: drill.plateId, name: drill.name, go });
                 else if (drill.page === "fengkou") content = React.createElement(KplFengkouPage, { go });
+                else if (drill.page === "market") content = React.createElement(KplMarketPage, { go, initialSub: drill.sub });
                 else if (drill.page === "sentiment") content = React.createElement(KplSentimentPage, { go });
                 else if (drill.page === "poprank") content = React.createElement(KplPopRankPage, { go });
                 else if (drill.page === "qiangdu") content = React.createElement(KplQiangduPage, { go });
@@ -3893,7 +4108,7 @@ window.__ModuleLoader__.load({
             } else if (activeNav === "watchlist") {
                 content = React.createElement(KplWatchPage, { go });
             } else if (activeNav === "lhb") {
-                content = React.createElement(KplLhbPage);
+                content = React.createElement(KplLhbPage, { go });
             } else {
                 content = React.createElement(KplRecommendPage);
             }
@@ -3921,6 +4136,122 @@ window.__ModuleLoader__.load({
             { id: "kpl", label: "🚀 开盘啦" },
             { id: "system", label: "⚙️ 系统" },
         ];
+
+        /* ---- 悬浮按钮：AI 投资分析（选定股票 → DSH 会话分析） ---- */
+
+        function StockAnalysisFab() {
+            const [open, setOpen] = useState(false);
+            const [q, setQ] = useState("");
+            const [results, setResults] = useState([]);
+            const [picked, setPicked] = useState(null);   // {code, name}
+            const [busy, setBusy] = useState(false);
+            const [msg, setMsg] = useState(null);          // {ok, text}
+            const [tab, setTab] = useState("search");      // search | watchlist | holdings
+            const [watch, setWatch] = useState([]);
+            const [holdings, setHoldings] = useState([]);
+
+            // 搜索防抖
+            useEffect(() => {
+                if (!open || tab !== "search" || !q.trim()) { setResults([]); return; }
+                const t = setTimeout(async () => {
+                    try {
+                        const d = await api("/api/kpl/search-local?q=" + encodeURIComponent(q.trim()));
+                        setResults((d.results || []).slice(0, 8));
+                    } catch { setResults([]); }
+                }, 300);
+                return () => clearTimeout(t);
+            }, [q, tab, open]);
+
+            // 列表懒加载
+            useEffect(() => {
+                if (!open) return;
+                if (tab === "watchlist" && !watch.length) {
+                    api("/api/kpl/watchlist").then((d) => {
+                        const codes = Object.values(d.stocks || {})[0] || [];
+                        setWatch(codes.map((c) => ({ code: String(c), name: String(c) })));
+                        codes.forEach(async (c) => {
+                            try {
+                                const r = await api("/api/kpl/quote/" + c);
+                                if (r && r.name) setWatch((w) => w.map((x) => x.code === String(c) ? { ...x, name: r.name } : x));
+                            } catch { /* */ }
+                        });
+                    }).catch(() => setWatch([]));
+                }
+                if (tab === "holdings" && !holdings.length) {
+                    api("/api/holdings").then((d) => {
+                        setHoldings((d.holdings || d || []).map((h) => ({ code: String(h.code), name: h.name || h.code })));
+                    }).catch(() => setHoldings([]));
+                }
+            }, [open, tab, watch.length, holdings.length]);
+
+            const start = async () => {
+                if (!picked || busy) return;
+                setBusy(true); setMsg(null);
+                try {
+                    const resp = await fetch("/stock-plugin/analyze", {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ code: picked.code, name: picked.name }),
+                    });
+                    const d = await resp.json().catch(() => ({}));
+                    if (resp.ok && d.ok) {
+                        setMsg({ ok: true, text: "已创建分析会话「" + (d.title || picked.name) + "」，请在 DSH 会话列表查看" });
+                        try { window.__DSH_NOTIFY__ && window.__DSH_NOTIFY__({ type: "info", title: "AI 分析已发起", message: d.title || picked.name }); } catch (e) { /* */ }
+                    } else {
+                        setMsg({ ok: false, text: d.error || ("HTTP " + resp.status) });
+                    }
+                } catch (e) {
+                    setMsg({ ok: false, text: "请求失败：" + e.message });
+                }
+                setBusy(false);
+            };
+
+            const row = (it, i) => React.createElement("div", {
+                key: it.code + "_" + i,
+                className: "dsh-fab-row" + (picked && picked.code === it.code ? " on" : ""),
+                onClick: () => setPicked({ code: it.code, name: it.name }),
+            },
+                React.createElement("b", null, it.name),
+                React.createElement("span", { className: "cd" }, it.code));
+
+            return React.createElement(React.Fragment, null,
+                React.createElement("div", {
+                    className: "dsh-fab-btn", title: "AI 投资分析",
+                    onClick: () => { setOpen(!open); setMsg(null); },
+                }, "🤖"),
+                open && React.createElement("div", { className: "dsh-fab-mask", onClick: () => setOpen(false) },
+                    React.createElement("div", { className: "dsh-fab-panel", onClick: (e) => e.stopPropagation() },
+                        React.createElement("div", { className: "dsh-fab-head" },
+                            React.createElement("b", null, "🤖 AI 投资分析"),
+                            React.createElement("span", { className: "x", onClick: () => setOpen(false) }, "×")),
+                        React.createElement("div", { className: "dsh-fab-tabs" },
+                            [["search", "搜索"], ["watchlist", "自选股"], ["holdings", "持仓"]].map(function (pair) {
+                                return React.createElement("span", {
+                                    key: pair[0], className: "dsh-fab-tab" + (tab === pair[0] ? " on" : ""),
+                                    onClick: function () { setTab(pair[0]); setPicked(null); },
+                                }, pair[1]);
+                            })),
+                        tab === "search" && React.createElement("input", {
+                            className: "dsh-fab-search", placeholder: "输入代码或名称，如 000678 / 襄阳轴承",
+                            value: q, onChange: function (e) { setQ(e.target.value); },
+                        }),
+                        React.createElement("div", { className: "dsh-fab-list" },
+                            tab === "search" && (results.length ? results.map(row)
+                                : React.createElement("div", { className: "dsh-fab-tip" }, q ? "无匹配结果" : "输入关键词搜索（开盘啦全市场）")),
+                            tab === "watchlist" && (watch.length ? watch.map(row)
+                                : React.createElement("div", { className: "dsh-fab-tip" }, "暂无自选股（需登录开盘啦账号）")),
+                            tab === "holdings" && (holdings.length ? holdings.map(row)
+                                : React.createElement("div", { className: "dsh-fab-tip" }, "暂无记账持仓（可在「持仓」Tab 添加）"))),
+                        picked && React.createElement("div", { className: "dsh-fab-picked" },
+                            "已选：", React.createElement("b", null, picked.name), "（", picked.code, "）"),
+                        React.createElement("button", {
+                            className: "dsh-fab-go", disabled: !picked || busy,
+                            onClick: start,
+                        }, busy ? "创建分析会话中…" : "开始 AI 分析"),
+                        msg && React.createElement("div", { className: "dsh-fab-msg " + (msg.ok ? "ok" : "err") }, msg.text),
+                        React.createElement("div", { className: "dsh-fab-foot" },
+                            "分析由 DSH 会话执行（开盘啦数据源：行情/K线/择时/情绪/龙虎榜 + 记账仓位）"))));
+        }
 
         function WatchlistPanel(props) {
             const [tab, setTab] = useState("timing");
@@ -4042,7 +4373,8 @@ window.__ModuleLoader__.load({
                     code: selectedStock.code,
                     name: selectedStock.name,
                     onClose: () => setSelectedStock(null),
-                })
+                }),
+                React.createElement(StockAnalysisFab, null),
             );
         }
 
@@ -4250,6 +4582,32 @@ window.__ModuleLoader__.load({
                 .dsh-stock-log-line .txt { word-break: break-all; }
                 .dsh-stock-cfg-msg { font-size: 11px; }
                 /* K线弹窗（显式配色，不依赖主题变量，避免深色主题下文字不可见） */
+                /* ---- 悬浮按钮 AI 分析（dsh-fab-* 显式色值） ---- */
+                .dsh-fab-btn { position: fixed; right: 28px; bottom: 34px; z-index: 9000; width: 52px; height: 52px; border-radius: 50%; background: #e03131; color: #fff; font-size: 24px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 14px rgba(224,49,49,.4); user-select: none; }
+                .dsh-fab-btn:hover { background: #c92a2a; transform: scale(1.05); }
+                .dsh-fab-mask { position: fixed; inset: 0; z-index: 9500; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; }
+                .dsh-fab-panel { width: 400px; max-width: 92vw; max-height: 82vh; overflow-y: auto; background: #fff; border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; color: #111; font-size: 13px; }
+                .dsh-fab-head { display: flex; justify-content: space-between; align-items: center; font-size: 15px; }
+                .dsh-fab-head .x { cursor: pointer; color: #999; font-size: 20px; padding: 0 4px; }
+                .dsh-fab-tabs { display: flex; gap: 14px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+                .dsh-fab-tab { cursor: pointer; color: #999; padding: 2px 4px; }
+                .dsh-fab-tab.on { color: #e03131; font-weight: 700; border-bottom: 2px solid #e03131; }
+                .dsh-fab-search { border: 1px solid #ddd; border-radius: 8px; padding: 8px 10px; font-size: 13px; outline: none; }
+                .dsh-fab-search:focus { border-color: #e03131; }
+                .dsh-fab-list { min-height: 120px; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; }
+                .dsh-fab-row { display: flex; gap: 8px; align-items: baseline; padding: 8px 6px; border-bottom: 1px solid #f5f5f5; cursor: pointer; border-radius: 6px; }
+                .dsh-fab-row:hover { background: #f7f7f7; }
+                .dsh-fab-row.on { background: #fdecec; }
+                .dsh-fab-row b { font-size: 13px; color: #111; }
+                .dsh-fab-row .cd { color: #999; font-size: 11px; }
+                .dsh-fab-tip { color: #999; text-align: center; padding: 24px 0; }
+                .dsh-fab-picked { background: #f7f7f7; border-radius: 8px; padding: 8px 10px; color: #333; }
+                .dsh-fab-go { border: none; border-radius: 8px; background: #e03131; color: #fff; font-size: 14px; font-weight: 700; padding: 10px 0; cursor: pointer; }
+                .dsh-fab-go:disabled { background: #ccc; cursor: not-allowed; }
+                .dsh-fab-msg { border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.6; }
+                .dsh-fab-msg.ok { background: #ebfbee; color: #2b8a3e; }
+                .dsh-fab-msg.err { background: #fff0f0; color: #c92a2a; }
+                .dsh-fab-foot { font-size: 11px; color: #999; line-height: 1.6; }
                 .dsh-stock-modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 9999; display: flex; align-items: center; justify-content: center; }
                 .dsh-stock-modal { background: #171b26; color: #e8eaf0; border-radius: 12px; width: 90vw; max-width: 900px; height: 80vh; max-height: 600px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); position: relative; border: 1px solid #2a3040; }
                 .dsh-stock-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #2a3040; font-size: 16px; font-weight: 600; color: #e8eaf0; }
@@ -4575,12 +4933,17 @@ window.__ModuleLoader__.load({
                 .kpl-lhb-top .arrow { color: #999; cursor: pointer; font-size: 13px; padding: 2px 6px; }
                 .kpl-lhb-top .arrow.dis { color: #ccc; }
                 .kpl-lhb-top .d { font-size: 14px; font-weight: 600; color: #1c5fbb; }
-                .kpl-lhb-table { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 4px 10px; }
+                .kpl-lhb-scroll { overflow-x: auto; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 4px 10px; }
+                .kpl-lhb-table.stk { min-width: 760px; }
                 .kpl-lhb-head { display: grid; gap: 6px; padding: 8px 2px; font-size: 11px; color: #999; border-bottom: 1px solid #eee; }
-                .kpl-lhb-head.stk { grid-template-columns: 1.15fr 1fr .7fr .8fr; }
+                .kpl-lhb-head .sort { cursor: pointer; user-select: none; white-space: nowrap; }
+                .kpl-lhb-head .sort:hover { color: #e03131; }
+                .kpl-lhb-head .arr { font-size: 9px; }
+                .kpl-lhb-head.stk, .kpl-lhb-row.stk { grid-template-columns: 1.3fr 1fr .75fr .85fr .7fr .8fr .65fr 1fr 1fr; }
                 .kpl-lhb-head.ag { grid-template-columns: 1.15fr .9fr .7fr 1fr; }
                 .kpl-lhb-head.biz { grid-template-columns: 1.4fr .8fr .8fr .6fr; }
                 .kpl-lhb-head.log5 { grid-template-columns: 1.1fr .7fr .7fr .6fr .9fr; }
+                .kpl-lhb-row .numcol { text-align: right; color: #333; font-size: 11px; white-space: nowrap; }
                 .kpl-lhb-head .r { text-align: right; }
                 .kpl-lhb-head .hl { color: #111; font-weight: 700; background: #eef4fb; border-radius: 3px; padding: 1px 4px; }
                 .kpl-lhb-row { display: grid; gap: 6px; padding: 9px 2px; border-bottom: 1px solid #f5f5f5; font-size: 12px; align-items: center; cursor: pointer; }
@@ -4590,7 +4953,20 @@ window.__ModuleLoader__.load({
                 .kpl-lhb-row.biz { grid-template-columns: 1.4fr .8fr .8fr .6fr; }
                 .kpl-lhb-row.log5 { grid-template-columns: 1.1fr .7fr .7fr .6fr .9fr; }
                 .kpl-lhb-row.log5.hot { background: #fffbeb; }
-                .kpl-lhb-row .nm b { font-size: 13px; color: #111; }
+                                .kpl-qd2-daynav { display: flex; align-items: center; justify-content: center; gap: 14px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                .kpl-qd2-daynav .arrow { color: #999; cursor: pointer; font-size: 14px; padding: 2px 8px; user-select: none; }
+                .kpl-qd2-daynav .arrow.dis { color: #ccc; }
+                .kpl-qd2-daynav .d { font-size: 15px; font-weight: 700; color: #1c5fbb; }
+                .kpl-lhb-head.fk, .kpl-lhb-row.fk { grid-template-columns: 1.3fr .9fr .7fr 1.2fr; }
+                .kpl-lhb-head.fk2, .kpl-lhb-row.fk2 { grid-template-columns: 1.4fr 1fr .8fr; }
+                .kpl-lhb-head.sdp, .kpl-lhb-row.sdp { grid-template-columns: 1.3fr .7fr .75fr .8fr .9fr .9fr; }
+                .kpl-lhb-row.sdp.zt { background: #fff5f5; }
+                .kpl-sdp-sum { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                .kpl-sdp-sum .cell { text-align: center; }
+                .kpl-sdp-sum .lbl { font-size: 11px; color: #999; }
+                .kpl-sdp-sum .v { font-size: 14px; font-weight: 700; color: #111; margin-top: 2px; }
+.kpl-lhb-row .nm b { font-size: 13px; color: #111; }
+                .kpl-lhb-head .sticky, .kpl-lhb-row .nm.sticky { position: sticky; left: 0; background: #fff; z-index: 1; }
                 .kpl-lhb-row .nm .cd { color: #999; font-size: 10px; margin-left: 5px; }
                 .kpl-lhb-row .nm.wide { font-size: 12px; color: #111; line-height: 1.4; }
                 .kpl-lhb-row .nm .d3tag { font-size: 9px; color: #fff; background: #e03131; border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: 1px; }

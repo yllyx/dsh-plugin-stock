@@ -26,8 +26,11 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 SUB_CMDS = [2100, 2101, 2106, 2107, 2108, 2109, 2110, 2111,
-            2114, 2115, 2116, 2117, 2126,
-            3004, 3007]
+            2114, 2115, 2116, 2117, 2126]
+# ⚠️ 3004/3007 不进 SUB_CMDS：send_subscriptions 用空 body 发帧且把 cmd 记入 sub_cmds，
+# 导致下方带参订阅的 `cmd not in s.sub_cmds` 守卫恒 False——带参帧从未首发，只能靠
+# keepalive 兜底（首数据延迟 12 分钟且每 25s 重复刷帧）。带参 cmd 统一走带参通道。
+
 # 3004 HQList.SubRealtimeLHB：行情菜单·个股 tab 全市场榜单（RealtimeLHBReq，LHB=LeaderBoard）
 #   {quotaType1, sortType2, cxType3, limitType4, stType5(沪), zbType6(中小), cybType7(创业),
 #    kcbType8(科创), bjsType9(北交), indexType10, start20, count21, startTime30, endTime31}
@@ -41,6 +44,7 @@ SUB_CMDS = [2100, 2101, 2106, 2107, 2108, 2109, 2110, 2111,
 # 2121 涨停股票列表（打板 tab"涨停"列表，QxZtSituationStockReq{bsType1,orderType2,sortType3}）
 # 带参订阅：请求体非 pb.Empty，与 SUB_CMDS 分开发送
 ZT_LIST_CMD = 2121
+PARAM_CMDS = [ZT_LIST_CMD, 3004, 3007]   # 带参订阅（与 pb.Empty 订阅分开发送）
 
 
 def _zt_list_body() -> bytes:
@@ -475,7 +479,7 @@ class MarketFeed:
             # 带参订阅单独发：send_subscriptions 只发 pb.Empty
             for cmd, body_fn in ((ZT_LIST_CMD, _zt_list_body),
                                  (3004, _stock_rank_body), (3007, _plate_rank_body)):
-                if cmd not in s.sub_cmds:
+                if cmd not in s.sub_cmds:  # 3004/3007 已不在 SUB_CMDS，此处必然首发
                     try:
                         from kpl_socket import build_frame
                         with s._send_lock:
@@ -505,12 +509,20 @@ class MarketFeed:
                 ages = s.sub_latest
                 stale_cmds = [c for c in SUB_CMDS
                               if c not in ages or now - ages[c]["ts"] > MAX_PUSH_AGE]
-                # 带参订阅（盘中有推送；盘后静默时不强求）也纳入重发
+                # 带参订阅（盘中有推送；盘后静默时不强求）也纳入重发，
+                # 但重发限频 ≥180s：盘后服务端静默时 ages 永远缺失，不限频会每 25s 刷帧
+                last_param_resend = getattr(self, "_param_resend_ts", {})
                 for cmd, body_fn in ((ZT_LIST_CMD, _zt_list_body),
                                      (3004, _stock_rank_body), (3007, _plate_rank_body)):
-                    if s.alive and cmd in s.sub_cmds and (
-                            cmd not in ages or now - ages[cmd]["ts"] > MAX_PUSH_AGE * 6):
+                    if not (s.alive and cmd in s.sub_cmds):
+                        continue
+                    if now - last_param_resend.get(cmd, 0) < 180:
+                        continue
+                    if (cmd not in ages
+                            or now - ages[cmd]["ts"] > MAX_PUSH_AGE * 6):
                         stale_cmds.append((cmd, body_fn()))
+                        last_param_resend[cmd] = now
+                self._param_resend_ts = last_param_resend
                 if stale_cmds:
                     try:
                         with s._send_lock:

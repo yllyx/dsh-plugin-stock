@@ -1574,6 +1574,24 @@ async def kpl_qiangdu():
     return await asyncio.to_thread(kpl_api.get_kpl().get_qiangdu)
 
 
+@app.get("/api/kpl/kline/{code}")
+async def kpl_kline(code: str):
+    """个股日 K（KPL 数据源 Stock/GetStockChart：日期/收盘/均线/量，AI 分析用）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_stock_chart, code)
+
+
+@app.get("/api/kpl/timing")
+async def kpl_timing():
+    """KPL 口径大盘择时聚合（打板情绪/涨跌统计/总览/连板天梯，AI 分析用）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_timing)
+
+
+@app.get("/api/kpl/sentiment")
+async def kpl_sentiment():
+    """KPL 口径市场情绪聚合（综合强度温度计/风向标/风口，AI 分析用）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_sentiment)
+
+
 @app.get("/api/kpl/lhb")
 async def kpl_lhb(day: str = Query("")):
     """龙虎榜三榜合一（App 龙虎榜菜单同源 LongHuBang 控制器：股票/机构/营业部+机构净买历史）"""

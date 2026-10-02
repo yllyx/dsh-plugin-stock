@@ -12,6 +12,8 @@
  * 且 register 只校验 output.schema（assertSupportedJsonSchema），不校验 parameters。
  */
 
+import { randomUUID } from "node:crypto";
+import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { BackendManager, resolveBackendDir } from "./backend-manager.js";
 
 const DEFAULT_PORT = Number(process.env.STOCK_BACKEND_PORT) || 8765;
@@ -380,10 +382,105 @@ const stockPositionTool = {
 
 // ============= 插件入口 =============
 
+// ============= KPL（开盘啦）数据源分析工具 =============
+// AI 投资分析会话专用：行情/K线/择时/情绪/龙虎榜席位全部开盘啦数据源，仓位沿用记账持仓。
+// 由悬浮按钮"AI 分析"创建的会话经 prompt 引导逐个调用。
+
+const kplQuoteTool = {
+    name: "kpl_quote",
+    description: "【开盘啦数据源】个股实时行情快照：现价/涨跌幅/涨跌停价/成交额/换手率/振幅/十档盘口/涨停原因。投资分析的第一步（现价与盘口）。properties: code(6位股票代码)",
+    parameters: { type: "object", properties: { code: { type: "string", description: "6位股票代码，如 000678" } }, required: ["code"], additionalProperties: false },
+    output: {
+        schema: JSON_OBJECT_OUTPUT,
+        render(args, value) {
+            return [{ type: "text", text: JSON.stringify(value, null, 2).slice(0, 6000) }];
+        },
+    },
+    async execute(args) {
+        return makeToolRequest(`/api/kpl/quote/${encodeURIComponent(args.code)}`);
+    },
+};
+
+const kplKlineTool = {
+    name: "kpl_kline",
+    description: "【开盘啦数据源】个股日K序列（约530根，前复权）：日期/开收高低/五日十日二十日三十日均线/成交量。用于判断趋势、均线多空排列、量价关系。properties: code",
+    parameters: { type: "object", properties: { code: { type: "string", description: "6位股票代码" } }, required: ["code"], additionalProperties: false },
+    output: {
+        schema: JSON_OBJECT_OUTPUT,
+        render(args, value) {
+            return [{ type: "text", text: JSON.stringify(value, null, 2).slice(0, 6000) }];
+        },
+    },
+    async execute(args) {
+        return makeToolRequest(`/api/kpl/kline/${encodeURIComponent(args.code)}`);
+    },
+};
+
+const kplTimingTool = {
+    name: "kpl_timing",
+    description: "【开盘啦数据源】大盘打板情绪择时：今日/昨日涨停家数、封板率、跌停数、涨跌家数、最高连板高度、连板天梯、市场情绪温度(0-1)与状态、两市成交额与预估。判断当前市场环境适不适合做多。properties: 无",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    output: {
+        schema: JSON_OBJECT_OUTPUT,
+        render(args, value) {
+            return [{ type: "text", text: JSON.stringify(value, null, 2).slice(0, 6000) }];
+        },
+    },
+    async execute() {
+        return makeToolRequest(`/api/kpl/timing`);
+    },
+};
+
+const kplSentimentTool = {
+    name: "kpl_sentiment",
+    description: "【开盘啦数据源】市场情绪与风口：综合强度温度计+近5日情绪历史、风向标(上涨前3/下跌前3及其板块)、今日最强风口题材前5(强度排序)。判断情绪周期位置与资金聚焦方向。properties: 无",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    output: {
+        schema: JSON_OBJECT_OUTPUT,
+        render(args, value) {
+            return [{ type: "text", text: JSON.stringify(value, null, 2).slice(0, 6000) }];
+        },
+    },
+    async execute() {
+        return makeToolRequest(`/api/kpl/sentiment`);
+    },
+};
+
+const kplLhbSeatTool = {
+    name: "kpl_lhb_seat",
+    description: "【开盘啦数据源】个股龙虎榜：买卖前五席位（名称/金额/排名）、历史上榜次数、近三月机构/游资动向。判断资金面（机构接力还是游资一日游）。properties: code, day(可选 YYYY-MM-DD，缺省最近上榜日)",
+    parameters: { type: "object", properties: { code: { type: "string", description: "6位股票代码" }, day: { type: "string", description: "可选，YYYY-MM-DD" } }, required: ["code"], additionalProperties: false },
+    output: {
+        schema: JSON_OBJECT_OUTPUT,
+        render(args, value) {
+            return [{ type: "text", text: JSON.stringify(value, null, 2).slice(0, 6000) }];
+        },
+    },
+    async execute(args) {
+        const q = args.day ? `?day=${encodeURIComponent(args.day)}` : "";
+        return makeToolRequest(`/api/kpl/lhb/stock/${encodeURIComponent(args.code)}${q}`);
+    },
+};
+
+const kplPositionTool = {
+    name: "kpl_position",
+    description: "【记账持仓】仓位体检：当前总仓位 vs 大盘阶段建议仓位、现金比例、单票/行业集中度检查、每只持仓的加减仓建议。判断这笔新买入的仓位应该给多少。properties: 无",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    output: {
+        schema: JSON_OBJECT_OUTPUT,
+        render(args, value) {
+            return [{ type: "text", text: JSON.stringify(value, null, 2).slice(0, 6000) }];
+        },
+    },
+    async execute() {
+        return makeToolRequest(`/api/position/overview`);
+    },
+};
+
 // Cordis 插件契约：必须导出 name 和 inject（声明依赖的服务），
 // 否则访问 ctx.tools 会抛 "cannot get property 'tools' without inject"。
 const name = "dsh-plugin-stock";
-const inject = ["tools", "systemPrompt"];
+const inject = ["tools", "systemPrompt", "webServer"];
 
 async function apply(ctx) {
     // 注册 8 个 AI 工具（原始对象，完整 JSON Schema）
@@ -395,6 +492,14 @@ async function apply(ctx) {
     ctx.tools.register(stockSentimentTool);
     ctx.tools.register(stockSectorsTool);
     ctx.tools.register(stockPositionTool);
+
+    // KPL（开盘啦）数据源分析工具（悬浮按钮"AI 分析"会话专用）
+    ctx.tools.register(kplQuoteTool);
+    ctx.tools.register(kplKlineTool);
+    ctx.tools.register(kplTimingTool);
+    ctx.tools.register(kplSentimentTool);
+    ctx.tools.register(kplLhbSeatTool);
+    ctx.tools.register(kplPositionTool);
 
     ctx.systemPrompt?.section?.({
         name: "stock-plugin",
@@ -444,10 +549,83 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
         return () => clearInterval(timer);
     });
 
+    // 悬浮按钮"AI 分析"入口：宿主 webServer 路由（前端同源 fetch）。
+    // POST /stock-plugin/analyze {code, name} → 创建独立 DSH 会话 + 注入分析首问，
+    // AI 在会话中逐个调用 kpl_* 工具（开盘啦数据源）给出投资建议。
+    const startStockAnalysis = async (code, name) => {
+        const agents = ctx.get("agents");
+        if (!agents || agents.create === undefined) {
+            throw new Error("agents 服务不可用（宿主版本不支持）");
+        }
+        const sessionId = `stock-analyze-${randomUUID()}`;
+        const handle = await agents.create({
+            sessionId,
+            meta: { origin: "plugin", plugin: "dsh-plugin-stock" },
+            agentOptions: {},
+        });
+        const title = `股票分析：${name || "未知"}(${code})`;
+        try {
+            ctx.get("sessionTitle")?.rename?.(handle.agent.session, title);
+        } catch { /* 标题失败不影响分析 */ }
+        const prompt = [
+            `请分析股票 ${name || ""}（${code}）当前是否适合投资，用开盘啦数据源工具依次获取：`,
+            `1. kpl_quote（code=${code}）实时行情与盘口；`,
+            `2. kpl_kline（code=${code}）日K趋势与均线排列；`,
+            `3. kpl_timing 大盘打板情绪与涨跌家数（判断当前环境能否做多）；`,
+            `4. kpl_sentiment 市场情绪温度与风口方向；`,
+            `5. kpl_lhb_seat（code=${code}）龙虎榜资金面（若该股近三日有上榜）；`,
+            `6. kpl_position 当前记账仓位（判断新买入额度）。`,
+            `数据齐后综合给出：① 结论评级（可买 / 观望 / 回避）；② 核心理由（技术面+资金面+情绪面）与主要风险；`,
+            `③ 若可买：建议仓位比例、买入参考区间与止损位。请用中文，结论先行，数据引用注明来源工具。`,
+        ].join("\n");
+        handle.agent.followup(createUserMessage({
+            content: [{ type: "text", text: prompt }],
+            source: { kind: "user" },
+        }));
+        ctx.logger?.info?.(`[dsh-plugin-stock] 已创建分析会话 ${title} → ${sessionId}`);
+        return { ok: true, sessionId, title };
+    };
+
+    ctx.effect(() => {
+        if (!ctx.webServer || ctx.webServer.register === undefined) {
+            ctx.logger?.warn?.("[dsh-plugin-stock] webServer 服务不可用，悬浮按钮分析入口未启用");
+            return undefined;
+        }
+        return ctx.webServer.register({
+            kind: "prefix",
+            path: "/stock-plugin/analyze",
+            handler: async (req, res) => {
+                if (req.method === "OPTIONS") {
+                    res.writeHead(204, { "access-control-allow-origin": "*" });
+                    res.end();
+                    return;
+                }
+                if (req.method !== "POST") {
+                    res.writeHead(405); res.end(); return;
+                }
+                let body = "";
+                req.on("data", (c) => { body += c; });
+                req.on("end", async () => {
+                    try {
+                        const { code, name } = JSON.parse(body || "{}");
+                        if (!code) { res.writeHead(400); res.end(JSON.stringify({ ok: false, error: "code required" })); return; }
+                        const result = await startStockAnalysis(String(code), String(name || ""));
+                        res.writeHead(200, { "content-type": "application/json" });
+                        res.end(JSON.stringify(result));
+                    } catch (e) {
+                        ctx.logger?.error?.(`[dsh-plugin-stock] 分析会话创建失败: ${e.message}`);
+                        res.writeHead(500, { "content-type": "application/json" });
+                        res.end(JSON.stringify({ ok: false, error: e.message }));
+                    }
+                });
+            },
+        });
+    });
+
     // 卸载时关闭后端
     ctx.effect(() => () => b.stop());
 
-    ctx.logger?.info?.("dsh-plugin-stock: 已注册 8 个工具（行情/K线/择时/情绪/板块/选股/持仓/仓位）");
+    ctx.logger?.info?.("dsh-plugin-stock: 已注册 14 个工具（8 基础 + 6 开盘啦分析），AI 分析入口 /stock-plugin/analyze 已挂载");
 }
 
 export { apply, inject, name };
