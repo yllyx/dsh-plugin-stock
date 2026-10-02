@@ -2874,6 +2874,36 @@ window.__ModuleLoader__.load({
             return React.createElement("canvas", { ref, className: "kpl-mkt-trend", style: { height: (height || 150) + "px" } });
         }
 
+        // 双序列折线（量能今昨对比等）
+        function KplDualTrendCanvas({ a, b, height }) {
+            const ref = useRef(null);
+            useEffect(() => {
+                const cv = ref.current;
+                if (!cv || !a || !b || !a.length) return;
+                const dpr = window.devicePixelRatio || 1;
+                const W = cv.clientWidth || 320, H = height || 90;
+                cv.width = W * dpr; cv.height = H * dpr;
+                const ctx = cv.getContext("2d");
+                ctx.scale(dpr, dpr);
+                ctx.clearRect(0, 0, W, H);
+                const all = a.concat(b).map(p => p.v);
+                const hi = Math.max(...all, 1);
+                const draw = (pts, color) => {
+                    ctx.strokeStyle = color; ctx.lineWidth = 1.3;
+                    ctx.beginPath();
+                    pts.forEach((p, i) => {
+                        const x = (i / Math.max(1, pts.length - 1)) * (W - 6) + 3;
+                        const y = 4 + (hi - p.v) / hi * (H - 10);
+                        if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+                    });
+                    ctx.stroke();
+                };
+                draw(b, "#0ca678");
+                draw(a, "#e03131");
+            }, [a, b, height]);
+            return React.createElement("canvas", { ref, className: "kpl-mkt-trend", style: { height: (height || 90) + "px" } });
+        }
+
         // 涨跌分布柱状图（zddist dists：±11 档，红涨绿跌）
         function KplDistBars({ dists }) {
             if (!dists || !dists.length) return null;
@@ -3020,6 +3050,7 @@ window.__ModuleLoader__.load({
             const feed = useMarketFeed(20000);
             const [trend, setTrend] = useState(null);
             const [idx, setIdx] = useState("SH");   // 交互型 state 只存 id 字符串
+            const [distDay, setDistDay] = useState("today");
             const loadTrend = useCallback(async () => {
                 try { setTrend(await api("/api/kpl/mkttrend")); } catch (e) { /* */ }
             }, []);
@@ -3077,8 +3108,12 @@ window.__ModuleLoader__.load({
                     z.sign ? React.createElement("div", { className: "kpl-mkt-sign" }, z.sign) : null) : null,
                 (dist.data && dist.data.today && dist.data.today.dists || []).length ?
                     React.createElement("div", { className: "kpl-mkt-sec" },
-                        React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨跌分布"),
-                        React.createElement(KplDistBars, { dists: dist.data.today.dists })) : null,
+                        React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨跌分布",
+                            React.createElement("span", { className: "kpl-mkt-tips" },
+                                React.createElement("span", { className: "kpl-dswitch " + (distDay === "today" ? "on" : ""), onClick: () => setDistDay("today") }, "今日"),
+                                " / ",
+                                React.createElement("span", { className: "kpl-dswitch " + (distDay === "yest" ? "on" : ""), onClick: () => setDistDay("yest") }, "昨日"))),
+                        React.createElement(KplDistBars, { dists: (dist.data[distDay] && dist.data[distDay].dists) || dist.data.today.dists })) : null,
                 (o.qx != null || e.text) ? React.createElement("div", { className: "kpl-mkt-sec" },
                     React.createElement("div", { className: "kpl-mkt-duo" },
                         o.qx != null ? React.createElement("div", { className: "cell" },
@@ -3093,6 +3128,13 @@ window.__ModuleLoader__.load({
                         o.forecastMoney ? React.createElement("div", { className: "cell" },
                             React.createElement("div", { className: "lbl" }, "预估成交"),
                             React.createElement("div", { className: "val" }, o.forecastMoney)) : null)) : null,
+                (e.series || []).length > 2 ? React.createElement("div", { className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "量能对比（今日 vs 昨日）",
+                        React.createElement("span", { className: "kpl-mkt-tips" }, "红今日 绿昨日")),
+                    React.createElement(KplDualTrendCanvas, {
+                        a: e.series.map(x => ({ v: Number(x.cur) || 0 })),
+                        b: e.series.map(x => ({ v: Number(x.yes) || 0 })),
+                        height: 90 })) : null,
                 (zts.data && zts.data.series || []).length ?
                     React.createElement("div", { className: "kpl-mkt-sec" },
                         React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨停家数分时"),
@@ -3246,9 +3288,47 @@ window.__ModuleLoader__.load({
                             React.createElement("div", { key: i, className: "kpl-stat-card" },
                                 React.createElement("div", { className: "kpl-stat-label" }, label),
                                 React.createElement("div", { className: "kpl-stat-value" }, val)))),
-                React.createElement("div", { className: "kpl-sec-title" }, "📈 精选板块强度（点击下钻）"),
+                React.createElement(KplPlateRankTable, { feed, go, ov }));
+        }
+
+        // 板块强度真表（3007 SubPlateTypeQuotasList 盘中推送；休市回落活跃板块）
+        function KplPlateRankTable({ feed, go, ov }) {
+            const pr = feedData(feed, "platerank");
+            const items = (pr.data && pr.data.items) || [];
+            const active = ((ov && ov.active_sectors) || []).length ? ov.active_sectors
+                : (((ov && ov.dingpan) || {}).BaceFaceList || []);
+            if (items.length) {
+                return React.createElement("div", { className: "kpl-lhb-scroll" },
+                    React.createElement("div", { className: "kpl-lhb-table stk" },
+                        React.createElement("div", { className: "kpl-lhb-head pr" },
+                            React.createElement("span", { className: "sticky" }, "板块"),
+                            React.createElement("span", { className: "r hl" }, "强度"),
+                            React.createElement("span", { className: "r" }, "涨幅"),
+                            React.createElement("span", { className: "r" }, "主力净额")),
+                        items.map((r, i) => React.createElement("div", {
+                            key: r.plateId + i, className: "kpl-lhb-row pr",
+                            onClick: () => go && go({ page: "sectorDetail", plateId: r.plateId, name: r.plateName }),
+                        },
+                            React.createElement("div", { className: "nm sticky" },
+                                React.createElement("b", null, r.plateName || "--"),
+                                React.createElement("span", { className: "cd" }, r.plateId || "")),
+                            React.createElement("div", { className: "buycol hl" }, r.strength != null ? Number(r.strength).toFixed(0) : "--"),
+                            React.createElement("div", { className: "pctcol" },
+                                React.createElement("span", { className: Number(r.incRate) >= 0 ? "up" : "down" },
+                                    r.incRate != null ? Number(r.incRate).toFixed(2) + "%" : "--")),
+                            React.createElement("div", { className: "numcol " + (Number(r.mainNet) >= 0 ? "up" : "down") },
+                                r.mainNet != null ? fmtAmount(r.mainNet) : "--")))));
+            }
+            // 休市：活跃板块（App 同源 BaceFaceList）+ 说明
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement("div", { className: "kpl-sec-title" }, "📈 近期活跃板块（点击下钻）"),
                 React.createElement("div", { className: "kpl-sector-table" },
-                    KPL_SECTORS.map((s) => React.createElement(KplSectorRow, { key: s.code, sector: s, go, list: KPL_SECTORS }))));
+                    active.map(function (sec) {
+                        const arr = Array.isArray(sec) ? sec : [sec.name, sec.change_pct, sec.code];
+                        return React.createElement(KplSectorRow, { key: arr[2], sector: { name: arr[0], code: String(arr[2]) }, go, list: active });
+                    })),
+                React.createElement("div", { className: "kpl-mkt-tips" },
+                    "板块强度/主力净额列为交易时段推送数据（App 休市显示本地缓存），开盘后自动切换"));
         }
 
         function KplSectorRow({ sector, go, list }) {
@@ -3702,7 +3782,27 @@ window.__ModuleLoader__.load({
             return React.createElement("canvas", { ref, className: "kpl-lhb-bars", style: { height: "110px" } });
         }
 
-        /* ---- 龙虎榜下钻：营业部详情（近三月上榜/关联营业部/历史操作表） ---- */
+                // 龙虎榜个股日 K（GetStockChart 收盘线，App 下钻 K 线区同源）
+        function KplLhbKline({ code }) {
+            const [k, setK] = useState(null);
+            const [show, setShow] = useState(false);
+            useEffect(() => {
+                if (!show || k) return;
+                api("/api/kpl/kline/" + code).then(setK).catch(() => { });
+            }, [show, k, code]);
+            return React.createElement("div", { className: "kpl-mkt-sec" },
+                React.createElement("div", { className: "kpl-mkt-sec-t" }, "日 K 走势",
+                    React.createElement("span", { className: "kpl-mkt-tips kpl-dswitch", onClick: () => setShow(!show) },
+                        show ? "收起 ▲" : "展开 ▼")),
+                show ? (k && k.dates && k.dates.length ?
+                    React.createElement(KplTrendCanvas, {
+                        points: k.close.map(c => ({ v: Array.isArray(c) ? c[3] : Number(c) })),
+                        preClose: null, height: 130 })
+                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "K 线数据加载中…"))
+                    : React.createElement("div", { className: "kpl-mkt-tips" }, "点击展开近两年收盘走势"));
+        }
+
+        /* ---- 龙虎榜下钻：营业部详情/* ---- 龙虎榜下钻：营业部详情（近三月上榜/关联营业部/历史操作表） ---- */
 
         function KplLhbBizDetail({ id, name, go }) {
             const [data, setData] = useState(null);
@@ -3785,6 +3885,7 @@ window.__ModuleLoader__.load({
                                 React.createElement("span", { className: "nm" }, s.name),
                                 React.createElement("span", { className: "v " + cls },
                                     fmtMoneyWan(key === "buy" ? s.buy : s.sell)))))))),
+                React.createElement(KplLhbKline, { code: code }),
                 data && data.on_times && data.on_times.length > 1 && React.createElement("div", { className: "kpl-lhb-ontime" },
                     "历史上榜: ", data.on_times.slice(0, 10).join("、"),
                     data.on_times.length > 10 ? " 等" + data.on_times.length + " 次" : ""));
@@ -5026,6 +5127,8 @@ window.__ModuleLoader__.load({
                 .kpl-dtab { font-size: 14px; color: #666; cursor: pointer; position: relative; padding: 2px 2px 6px; }
                 .kpl-dtab.on { color: #e03131; font-weight: 700; border-bottom: 2px solid #e03131; }
                 .kpl-dt-badge { position: absolute; top: -8px; right: -22px; background: #e03131; color: #fff; font-size: 10px; border-radius: 8px; padding: 0 5px; line-height: 15px; }
+                .kpl-dswitch { cursor: pointer; color: #999; }
+                .kpl-dswitch.on { color: #e03131; font-weight: 700; }
                 .kpl-mkt-cards { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
                 .kpl-mkt-card { min-width: 128px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; text-align: center; }
                 .kpl-mkt-card .lbl { font-size: 11px; color: #999; }
@@ -5139,6 +5242,7 @@ window.__ModuleLoader__.load({
                 .kpl-qd2-daynav .arrow.dis { color: #ccc; }
                 .kpl-qd2-daynav .d { font-size: 15px; font-weight: 700; color: #1c5fbb; }
                 .kpl-lhb-head.av, .kpl-lhb-row.av { grid-template-columns: 1.2fr .8fr .7fr 1.3fr; }
+                .kpl-lhb-head.pr, .kpl-lhb-row.pr { grid-template-columns: 1.3fr .7fr .7fr .9fr; }
                 .kpl-lhb-head.fk, .kpl-lhb-row.fk { grid-template-columns: 1.3fr .9fr .7fr 1.2fr; }
                 .kpl-lhb-head.fk2, .kpl-lhb-row.fk2 { grid-template-columns: 1.4fr 1fr .8fr; }
                 .kpl-lhb-head.sdp, .kpl-lhb-row.sdp { grid-template-columns: 1.3fr .7fr .75fr .8fr .9fr .9fr; }
