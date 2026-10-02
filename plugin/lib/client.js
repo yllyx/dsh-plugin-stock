@@ -3231,6 +3231,18 @@ window.__ModuleLoader__.load({
             };
         }
 
+        // 守卫包装必须在模块层做一次：放进渲染体内的话，父级每次重渲染（3s 状态轮询等）
+        // 都会产生新组件类型，React 按不同组件整页卸载重建子页——表现为每隔几秒"闪一下"+丢状态重拉数据。
+        const KPL_G = {
+            plate: kplGuard(KplPlateSub, "板块"),
+            stock: kplGuard(KplStockSub, "个股"),
+            hk: kplGuard(KplHkSub, "港股"),
+            daban: kplGuard(KplDabanSub, "打板"),
+            sentiment: kplGuard(KplSentimentSub, "情绪"),
+            live: kplGuard(KplLiveSub, "直播"),
+            global: kplGuard(KplGlobalSub, "全球"),
+        };
+
         function KplHkSub({ go }) {
             const [d, setD] = useState(null);
             const [error, setError] = useState(null);
@@ -3290,13 +3302,13 @@ window.__ModuleLoader__.load({
                         key: s, className: "kpl-subtab " + (subMap[s] === sub ? "on" : ""),
                         onClick: () => setSub(subMap[s]),
                     }, s))),
-                sub === "plate" && React.createElement(kplGuard(KplPlateSub, "板块"), { go }),
-                sub === "stock" && React.createElement(kplGuard(KplStockSub, "个股"), null),
-                sub === "hk" && React.createElement(kplGuard(KplHkSub, "港股"), { go }),
-                sub === "daban" && React.createElement(kplGuard(KplDabanSub, "打板"), { go }),
-                sub === "sentiment" && React.createElement(kplGuard(KplSentimentSub, "情绪"), null),
-                sub === "live" && React.createElement(kplGuard(KplLiveSub, "直播"), null),
-                sub === "global" && React.createElement(kplGuard(KplGlobalSub, "全球"), null));
+                sub === "plate" && React.createElement(KPL_G.plate, { go }),
+                sub === "stock" && React.createElement(KPL_G.stock, null),
+                sub === "hk" && React.createElement(KPL_G.hk, { go }),
+                sub === "daban" && React.createElement(KPL_G.daban, { go }),
+                sub === "sentiment" && React.createElement(KPL_G.sentiment, null),
+                sub === "live" && React.createElement(KPL_G.live, null),
+                sub === "global" && React.createElement(KPL_G.global, null));
         }
 
         function KplPlateSub({ go }) {
