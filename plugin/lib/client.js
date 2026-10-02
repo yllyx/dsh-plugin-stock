@@ -3217,6 +3217,20 @@ window.__ModuleLoader__.load({
 
         /* ---- 行情·港股子页（HKFragment/HKStockListFragment 协议逆向中）---- */
 
+        // 渲染异常守卫（纯函数）：子页渲染抛错时显示原因而非白屏，下次轮询自动重试。
+        // 勿用 class ErrorBoundary：模块执行期求值 React.Component 在 DSH 打包环境失败曾致整模块白屏。
+        function kplGuard(Comp, name) {
+            return function Guarded(props) {
+                try {
+                    return Comp(props);
+                } catch (e) {
+                    return React.createElement("div", { className: "kpl-empty" },
+                        "模块渲染异常(" + name + ")：" + (e && e.message ? e.message : e),
+                        React.createElement("div", { className: "kpl-mkt-tips" }, "请刷新页面重试；若持续出现请反馈"));
+                }
+            };
+        }
+
         function KplHkSub({ go }) {
             const [d, setD] = useState(null);
             const [error, setError] = useState(null);
@@ -3276,13 +3290,13 @@ window.__ModuleLoader__.load({
                         key: s, className: "kpl-subtab " + (subMap[s] === sub ? "on" : ""),
                         onClick: () => setSub(subMap[s]),
                     }, s))),
-                sub === "plate" && React.createElement(KplErrorBoundary, { key: "plate" }, React.createElement(KplPlateSub, { go })),
-                sub === "stock" && React.createElement(KplErrorBoundary, { key: "stock" }, React.createElement(KplStockSub, null)),
-                sub === "hk" && React.createElement(KplErrorBoundary, { key: "hk" }, React.createElement(KplHkSub, { go })),
-                sub === "daban" && React.createElement(KplErrorBoundary, { key: "daban" }, React.createElement(KplDabanSub, { go })),
-                sub === "sentiment" && React.createElement(KplErrorBoundary, { key: "sent" }, React.createElement(KplSentimentSub, null)),
-                sub === "live" && React.createElement(KplErrorBoundary, { key: "live" }, React.createElement(KplLiveSub, null)),
-                sub === "global" && React.createElement(KplErrorBoundary, { key: "global" }, React.createElement(KplGlobalSub, null)));
+                sub === "plate" && React.createElement(kplGuard(KplPlateSub, "板块"), { go }),
+                sub === "stock" && React.createElement(kplGuard(KplStockSub, "个股"), null),
+                sub === "hk" && React.createElement(kplGuard(KplHkSub, "港股"), { go }),
+                sub === "daban" && React.createElement(kplGuard(KplDabanSub, "打板"), { go }),
+                sub === "sentiment" && React.createElement(kplGuard(KplSentimentSub, "情绪"), null),
+                sub === "live" && React.createElement(kplGuard(KplLiveSub, "直播"), null),
+                sub === "global" && React.createElement(kplGuard(KplGlobalSub, "全球"), null));
         }
 
         function KplPlateSub({ go }) {
