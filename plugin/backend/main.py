@@ -1593,6 +1593,12 @@ async def kpl_kline(code: str):
     return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_stock_chart, code)
 
 
+@app.get("/api/kpl/f10full/{code}")
+async def kpl_f10_full(code: str):
+    """F10 完整版（公司资料+财务+主营构成+主要指标图表）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_stock_f10_full, code)
+
+
 @app.get("/api/kpl/f10/{code}")
 async def kpl_f10(code: str):
     """F10（公司资料+财务，App F10 页同源 StockF10Basic）"""

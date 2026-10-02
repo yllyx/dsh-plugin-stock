@@ -4250,24 +4250,42 @@ window.__ModuleLoader__.load({
                             React.createElement("div", { className: "why" }, r.n + " 笔")))));
         }
 
-        // F10 简版（公司资料+财务表）
+        // F10 完整版（公司资料+财务表+主要指标图表）
         function KplF10Sec({ code }) {
             const [d, setD] = useState(null);
             const [open, setOpen] = useState(false);
+            const [sub, setSub] = useState("fin");
             useEffect(() => {
-                if (open && !d) api("/api/kpl/f10/" + code).then(setD).catch(() => { });
+                if (open && !d) api("/api/kpl/f10full/" + code).then(setD).catch(() => { });
             }, [open, d, code]);
             const fin = (d && d.finance) || [];
+            const ind = (d && d.indicators) || {};
+            const indKeys = Object.keys(ind);
+            const company = d && d.company;
             return React.createElement("div", { className: "kpl-mkt-sec" },
-                React.createElement("div", { className: "kpl-mkt-sec-t" }, "F10 财务",
+                React.createElement("div", { className: "kpl-mkt-sec-t" }, "F10",
                     React.createElement("span", { className: "kpl-mkt-tips kpl-dswitch", onClick: () => setOpen(!open) },
                         open ? "收起 ▲" : "展开 ▼")),
-                open ? (fin.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
+                open ? React.createElement("div", { className: "kpl-dtabs" },
+                    [["fin", "财务"], ["ind", "主要指标"], ["company", "公司资料"]].map(function (pair) {
+                        return React.createElement("span", {
+                            key: pair[0], className: "kpl-dtab" + (sub === pair[0] ? " on" : ""),
+                            onClick: function () { setSub(pair[0]); },
+                        }, pair[1]);
+                    })) : null,
+                open && sub === "fin" ? (fin.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
                     fin.map((r, i) => React.createElement("div", { key: i, className: "kpl-mkt-broadcast" },
                         "报告期 ", r[17] || r[16] || "--", "：营收 ", r[1], " / 净利 ", r[2], " / 扣非 ", r[3],
                         " / EPS ", r[4], " / ROE ", r[10])))
-                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "暂无财务数据"))
-                    : React.createElement("div", { className: "kpl-mkt-tips" }, "点击展开财务数据"));
+                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "暂无财务数据")) : null,
+                open && sub === "ind" ? (indKeys.length ? indKeys.map(function (key) {
+                    const arr = (ind[key] || []).slice(0, 6);
+                    return React.createElement("div", { key: key, className: "kpl-mkt-broadcast" },
+                        React.createElement("b", null, key), "：",
+                        arr.map(x => (x.name || "") + " " + (x.value != null ? Number(x.value) : "")).join(" ｜ "));
+                }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, "暂无指标数据")) : null,
+                open && sub === "company" ? React.createElement("div", { className: "kpl-mkt-broadcast" },
+                    company ? JSON.stringify(company).slice(0, 600) : "暂无公司资料") : null);
         }
 
         // 个股分时区块（GetStockTrend：现价线+均价线+昨收基准）

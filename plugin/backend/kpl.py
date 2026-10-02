@@ -1527,6 +1527,38 @@ class KplClient:
             self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    def get_stock_f10_full(self, code: str) -> Dict[str, Any]:
+        """F10 完整版：公司资料+财务行+主营构成+主要指标图表（StockF10Basic @apparticle）。
+        GetMainIndicators 需 Type 参数（1142"报告类型为空"→Type=1 破解）。600s 缓存。"""
+        code = str(code)
+        key = f"f10full:{code}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 600:
+            return hit["data"]
+        HA = "https://apparticle.longhuvip.com/w1/api/index.php"
+        out: Dict[str, Any] = {"code": code}
+        try:
+            d = self.call(HA, "StockF10Basic", "GetCompanyInfo",
+                          {"StockID": code}, authed=True)
+            out["company"] = d.get("List") or d
+        except Exception as e:
+            logger.debug(f"GetCompanyInfo: {e}")
+        try:
+            d = self.call(HA, "StockF10Basic", "GetFinanceInfo",
+                          {"StockID": code}, authed=True)
+            out["finance"] = (d or {}).get("List") or []
+        except Exception as e:
+            logger.debug(f"GetFinanceInfo: {e}")
+        try:
+            d = self.call(HA, "StockF10Basic", "GetMainIndicators",
+                          {"StockID": code, "Type": "1"}, authed=True)
+            out["indicators"] = {k: v for k, v in (d or {}).items() if k != "errcode"}
+        except Exception as e:
+            logger.debug(f"GetMainIndicators: {e}")
+        if out.get("company") or out.get("finance") or out.get("indicators"):
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
     def get_stock_fenbi(self, code: str) -> Dict[str, Any]:
         """分时成交逐笔（App 个股详情"分时成交"列表同源 StockL2Data/GetStockFenBi2）：
         fb=[[时间,价格,方向,手数,笔数,?, ?, 金额]...]。30s 缓存。"""
