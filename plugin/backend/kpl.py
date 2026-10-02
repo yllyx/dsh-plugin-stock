@@ -1684,6 +1684,29 @@ class KplClient:
             self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    def get_kpl_stock_trend(self, code: str) -> Dict[str, Any]:
+        """个股分时（App 个股详情分时图同源 StockL2Data/GetStockTrend）：
+        trend=[[时间,现价,均价,量,阶段]...]+昨收/开盘/最高/最低。30s 缓存。"""
+        code = str(code)
+        key = f"kpltrend:{code}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        try:
+            d = self.call("https://apphwshhq.longhuvip.com/w1/api/index.php",
+                          "StockL2Data", "GetStockTrend",
+                          {"StockID": code}, authed=True)
+        except Exception as e:
+            logger.debug(f"GetStockTrend: {e}")
+            return {}
+        out = {"code": code, "name": d.get("code"),
+               "preClose": d.get("preclose_px"), "begin": d.get("begin_px"),
+               "high": d.get("hprice"), "low": d.get("lprice"),
+               "trend": d.get("trend") or []}
+        if out["trend"]:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
     def get_kpl_timing(self) -> Dict[str, Any]:
         """KPL 口径大盘择时聚合（AI 分析工具数据源）：打板情绪条(2100)+涨跌统计(2110)
         +市场总览(2115)+连板天梯(2117)+涨停分钟序列(2116)+综合强度(ChangeStatistics)。

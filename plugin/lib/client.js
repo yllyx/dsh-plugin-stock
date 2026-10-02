@@ -4101,6 +4101,33 @@ window.__ModuleLoader__.load({
 
         /* ---- 个股详情（下钻） ---- */
 
+        // 个股分时区块（GetStockTrend：现价线+均价线+昨收基准）
+        function KplStockTrendSec({ code }) {
+            const [t, setT] = useState(null);
+            const load = useCallback(async () => {
+                try { setT(await api("/api/kpl/trend/" + code)); } catch (e) { /* */ }
+            }, [code]);
+            useEffect(() => { load(); }, [load]);
+            usePolling(load, 30000, [code]);
+            const trend = (t && t.trend) || [];
+            if (!trend.length) return null;
+            const pre = Number(t.preClose) || 0;
+            const pts = trend.map(r => ({ v: Number(r[1]) || 0 }));
+            const avgPts = trend.map(r => ({ v: Number(r[2]) || 0 }));
+            const last = pts[pts.length - 1].v;
+            const pct = pre ? (last - pre) / pre * 100 : 0;
+            const up = last >= pre;
+            return React.createElement("div", { className: "kpl-mkt-sec" },
+                React.createElement("div", { className: "kpl-mkt-idxhead" },
+                    React.createElement("b", { className: up ? "up" : "down" }, last.toFixed(2)),
+                    React.createElement("span", { className: up ? "up" : "down" },
+                        (up ? "+" : "") + (last - pre).toFixed(2) + "  " + (up ? "+" : "") + pct.toFixed(2) + "%"),
+                    React.createElement("span", { className: "kpl-mkt-tips" },
+                        "均价 " + avgPts[avgPts.length - 1].v.toFixed(2) + " · 最高 " + t.high + " / 最低 " + t.low)),
+                React.createElement(KplTrendCanvas, { points: pts, preClose: pre || null, height: 130 }),
+                React.createElement("div", { className: "kpl-mkt-tips" }, "— 现价　┈ 昨收 " + (pre ? pre.toFixed(2) : "--")));
+        }
+
         function KplStockDetail({ stock, go }) {
             const [q, setQ] = useState(null);
             const [error, setError] = useState(null);
@@ -4147,6 +4174,7 @@ window.__ModuleLoader__.load({
                                     React.createElement("span", { className: "k" }, k),
                                     React.createElement("span", { className: "v" }, v))))),
                     q.zt_reason && React.createElement("div", { className: "kpl-reason" }, `📌 ${q.zt_reason}`),
+                    q && React.createElement(KplStockTrendSec, { code: stock.code }),
                     React.createElement("div", { className: "kpl-stock-ladder-wrap" },
                         React.createElement(KplLadder, { asks: q.asks, bids: q.bids, totalAsk: q.total_ask, totalBid: q.total_bid }),
                         React.createElement("div", { className: "kpl-stock-side" },

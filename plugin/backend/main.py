@@ -1593,6 +1593,12 @@ async def kpl_kline(code: str):
     return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_stock_chart, code)
 
 
+@app.get("/api/kpl/trend/{code}")
+async def kpl_trend(code: str):
+    """个股分时（KPL 数据源 StockL2Data/GetStockTrend，App 分时图同源）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_stock_trend, code)
+
+
 @app.get("/api/kpl/timing")
 async def kpl_timing():
     """KPL 口径大盘择时聚合（打板情绪/涨跌统计/总览/连板天梯，AI 分析用）"""
