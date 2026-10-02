@@ -3206,11 +3206,51 @@ window.__ModuleLoader__.load({
 
         /* ---- 行情·港股子页（HKFragment/HKStockListFragment 协议逆向中）---- */
 
-        function KplHkSub() {
-            return React.createElement("div", { className: "kpl-mkt-wrap" },
-                React.createElement("div", { className: "kpl-mkt-empty" },
-                    "港股页协议逆向中（HKStockListFragment / GetHKIndustry_Ranking 已定位）",
-                    React.createElement("br"), "下一交易时段随行情数据一并提供"));
+        function KplHkSub({ go }) {
+            const [d, setD] = useState(null);
+            const [error, setError] = useState(null);
+            const load = useCallback(async () => {
+                try { setD(await api("/api/kpl/hk-stocks")); setError(null); }
+                catch (e) { setError(e.message); }
+            }, []);
+            useEffect(() => { load(); }, [load]);
+            const items = (d && d.items) || [];
+            const children = [];
+            if (error) children.push(React.createElement("div", { key: "e", className: "kpl-empty" }, "加载失败：" + error));
+            if (!d && !error) children.push(React.createElement("div", { key: "l", className: "kpl-empty" }, "正在加载港股列表…"));
+            if (d) {
+                children.push(React.createElement("div", { key: "s", className: "kpl-mkt-sec" },
+                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "港股全列表",
+                        React.createElement("span", { className: "kpl-mkt-tips" },
+                            items.length + " 只 · 数据版本 " + (d.ts ? new Date(d.ts * 1000).toISOString().slice(0, 10) : "--")))));
+                if (items.length) {
+                    const rows = items.slice(0, 100).map(function (r, i) {
+                        return React.createElement("div", {
+                            key: r.code + i, className: "kpl-lhb-row hk",
+                            onClick: function () { go && go({ page: "stock", stock: { code: r.code, name: r.name } }); },
+                        },
+                            React.createElement("div", { className: "nm sticky" },
+                                React.createElement("b", null, r.name),
+                                React.createElement("span", { className: "cd" }, "HK" + r.code)),
+                            React.createElement("div", { className: "numcol" }, r.code),
+                            React.createElement("div", { className: "concept" }, "组 " + r.group));
+                    });
+                    children.push(React.createElement("div", { key: "t", className: "kpl-lhb-scroll" },
+                        React.createElement("div", { className: "kpl-lhb-table stk" },
+                            React.createElement("div", { className: "kpl-lhb-head hk" },
+                                React.createElement("span", { className: "sticky" }, "名称"),
+                                React.createElement("span", null, "代码"),
+                                React.createElement("span", { className: "r" }, "板块组")),
+                            rows)));
+                    if (items.length > 100) {
+                        children.push(React.createElement("div", { key: "m", className: "kpl-mkt-tips" },
+                            "共 " + items.length + " 只，当前显示前 100（行情列随协议接入扩展）"));
+                    }
+                } else {
+                    children.push(React.createElement("div", { key: "n", className: "kpl-empty" }, "暂无数据"));
+                }
+            }
+            return React.createElement("div", { className: "kpl-mkt-wrap" }, children);
         }
 
         /* ---- 行情页主容器 ---- */
@@ -5331,6 +5371,7 @@ window.__ModuleLoader__.load({
                 .kpl-qd2-daynav .arrow.dis { color: #ccc; }
                 .kpl-qd2-daynav .d { font-size: 15px; font-weight: 700; color: #1c5fbb; }
                 .kpl-lhb-head.av, .kpl-lhb-row.av { grid-template-columns: 1.2fr .8fr .7fr 1.3fr; }
+                .kpl-lhb-head.hk, .kpl-lhb-row.hk { grid-template-columns: 1.4fr 1fr .7fr; }
                 .kpl-lhb-head.pr, .kpl-lhb-row.pr { grid-template-columns: 1.3fr .7fr .7fr .9fr; }
                 .kpl-lhb-head.fk, .kpl-lhb-row.fk { grid-template-columns: 1.3fr .9fr .7fr 1.2fr; }
                 .kpl-lhb-head.fk2, .kpl-lhb-row.fk2 { grid-template-columns: 1.4fr 1fr .8fr; }

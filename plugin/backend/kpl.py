@@ -1559,6 +1559,52 @@ class KplClient:
             self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    def get_hk_stocks(self, force: bool = False) -> Dict[str, Any]:
+        """港股列表（App 港股 tab 基础数据同源）：cmd 2304 下发 CDN url
+        （plate/N_hk_<ts>.data）→ JSON{timestamp, items:[HK:代码,名称,1,拼音,板块组,标记]}。
+        版本号不变免重下（磁盘缓存 kpl_hk_stocks.json）。"""
+        import kpl_socket as _ks
+        from storage import storage as _st
+        cache_p = _st.data_dir / "kpl_hk_stocks.json"
+        if not force:
+            try:
+                sn = json.loads(cache_p.read_text(encoding="utf-8"))
+                if sn.get("items"):
+                    return sn
+            except Exception:
+                pass
+        try:
+            meta = _ks.get_kpl_socket().get_hk_stockfile_url()
+        except Exception as e:
+            logger.debug(f"hk_stockfile_url: {e}")
+            meta = None
+        if not meta or not meta.get("url"):
+            return {"items": [], "ts": 0}
+        url = str(meta["url"])
+        if not url.endswith(".data"):
+            url += ".data"
+        import httpx
+        try:
+            r = httpx.get(url, headers={"User-Agent": "okhttp/3.12.0"}, timeout=20)
+            r.raise_for_status()
+            d = json.loads(r.content.decode("utf-8"))
+        except Exception as e:
+            logger.debug(f"hk file download: {e}")
+            return {"items": [], "ts": 0}
+        rows = []
+        for it in d.get("items") or []:
+            parts = str(it).split(",")
+            if len(parts) >= 5:
+                rows.append({"code": parts[0].split(":", 1)[-1], "name": parts[1],
+                             "group": parts[4], "flag": parts[5] if len(parts) > 5 else ""})
+        out = {"ts": d.get("timestamp") or meta.get("ts"), "items": rows,
+               "total": len(rows), "url": url}
+        try:
+            cache_p.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        except Exception as e:
+            logger.debug(f"hk cache: {e}")
+        return out
+
     def get_stock_fenbi(self, code: str) -> Dict[str, Any]:
         """分时成交逐笔（App 个股详情"分时成交"列表同源 StockL2Data/GetStockFenBi2）：
         fb=[[时间,价格,方向,手数,笔数,?, ?, 金额]...]。30s 缓存。"""

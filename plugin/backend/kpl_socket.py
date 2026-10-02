@@ -1175,6 +1175,22 @@ class KplSocketAPI:
 
     # ---- 避雷（3011 潜在风险 excel+五类明细 / 3012 ST+退市股列表）----
 
+    def get_hk_stockfile_url(self) -> Optional[Dict[str, Any]]:
+        """cmd 2304（updateHKList）：港股列表 CDN 文件下发。
+        Resp{type1, timestamp2, url4="https://appbimgcdn.../plate/N_hk_<ts>.data"}。
+        文件 JSON{timestamp, items:["HK:代码,名称,1,拼音,板块组id,标记", ...]}（~2932 只）。"""
+        resp = self._session_rpc(2304, b"", timeout_s=8)
+        if resp is None:
+            return None
+        from kpl_marketfeed import pb_tree
+        try:
+            t = pb_tree(strip_push_prefix_bytes(resp))
+        except Exception:
+            t = pb_tree(resp)
+        if not isinstance(t, dict) or not t.get("4"):
+            return None
+        return {"type": t.get("1"), "ts": t.get("2"), "url": t.get("4")}
+
     def get_zt_big_orders(self, code: str, count: int = 100) -> Optional[Dict[str, Any]]:
         """cmd 2014：StockZTBigOrderDetailReq{stockId1,type2,count3} → 涨停大单明细。
         Resp f3=连板状态文字（如"3连板"）、f4=大单笔数、f5=时间序列[{f1 时间HHMM,

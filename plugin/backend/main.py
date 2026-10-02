@@ -1605,6 +1605,12 @@ async def kpl_f10(code: str):
     return await asyncio.to_thread(kpl_api.get_kpl().get_stock_f10, code)
 
 
+@app.get("/api/kpl/hk-stocks")
+async def kpl_hk_stocks():
+    """港股列表（cmd 2304 CDN 文件下发：代码/名称/板块组，App 港股 tab 基础数据同源）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_hk_stocks)
+
+
 @app.get("/api/kpl/fenbi/{code}")
 async def kpl_fenbi(code: str):
     """分时成交逐笔（App"分时成交"列表同源）"""
