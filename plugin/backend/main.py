@@ -1593,6 +1593,24 @@ async def kpl_kline(code: str):
     return await asyncio.to_thread(kpl_api.get_kpl().get_kpl_stock_chart, code)
 
 
+@app.get("/api/kpl/f10/{code}")
+async def kpl_f10(code: str):
+    """F10（公司资料+财务，App F10 页同源 StockF10Basic）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_stock_f10, code)
+
+
+@app.get("/api/kpl/fenbi/{code}")
+async def kpl_fenbi(code: str):
+    """分时成交逐笔（App"分时成交"列表同源）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_stock_fenbi, code)
+
+
+@app.get("/api/kpl/ztbig/{code}")
+async def kpl_ztbig(code: str):
+    """涨停大单明细+连板状态（cmd 2014，涨停态盘口深度块）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_zt_big_orders, code)
+
+
 @app.get("/api/kpl/trend/{code}")
 async def kpl_trend(code: str):
     """个股分时（KPL 数据源 StockL2Data/GetStockTrend，App 分时图同源）"""

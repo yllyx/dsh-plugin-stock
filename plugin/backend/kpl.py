@@ -1500,6 +1500,77 @@ class KplClient:
         finally:
             self._plate_names_building = False
 
+    def get_stock_f10(self, code: str) -> Dict[str, Any]:
+        """F10（App F10 页同源 StockF10Basic @apparticle）：公司资料+财务数据。300s 缓存。"""
+        code = str(code)
+        key = f"f10:{code}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 300:
+            return hit["data"]
+        HA = "https://apparticle.longhuvip.com/w1/api/index.php"
+        out: Dict[str, Any] = {"code": code}
+        try:
+            d = self.call(HA, "StockF10Basic", "GetCompanyInfo",
+                          {"StockID": code}, authed=True)
+            out["company"] = d.get("List") or d
+        except Exception as e:
+            logger.debug(f"GetCompanyInfo: {e}")
+        try:
+            d = self.call(HA, "StockF10Basic", "GetFinanceInfo",
+                          {"StockID": code}, authed=True)
+            rows = (d or {}).get("List") or []
+            # 表头（App 同款列序）：营收/净利/扣非/EPS/净资产/未分配/公积金/每经营现金流/ROE/净利率/毛利率/周转…
+            out["finance"] = rows[:8]
+        except Exception as e:
+            logger.debug(f"GetFinanceInfo: {e}")
+        if out.get("company") or out.get("finance"):
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_stock_fenbi(self, code: str) -> Dict[str, Any]:
+        """分时成交逐笔（App 个股详情"分时成交"列表同源 StockL2Data/GetStockFenBi2）：
+        fb=[[时间,价格,方向,手数,笔数,?, ?, 金额]...]。30s 缓存。"""
+        code = str(code)
+        key = f"fenbi:{code}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 30:
+            return hit["data"]
+        try:
+            d = self.call("https://apphwshhq.longhuvip.com/w1/api/index.php",
+                          "StockL2Data", "GetStockFenBi2",
+                          {"StockID": code, "Index": "0", "st": "30", "Type": "1"}, authed=True)
+        except Exception as e:
+            logger.debug(f"GetStockFenBi2: {e}")
+            return {}
+        rows = []
+        for r in (d or {}).get("fb") or []:
+            if isinstance(r, (list, tuple)) and len(r) >= 8:
+                rows.append({"time": r[0], "px": r[1], "dir": r[2], "vol": r[3],
+                             "n": r[4], "money": r[7]})
+        out = {"code": code, "day": (d or {}).get("Day"), "total": (d or {}).get("total"),
+               "rows": rows}
+        if rows:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
+    def get_zt_big_orders(self, code: str) -> Dict[str, Any]:
+        """涨停大单明细+连板状态（cmd 2014，涨停态盘口深度块数据源）。60s 缓存。"""
+        code = str(code)
+        key = f"ztbig:{code}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        import kpl_socket as _ks
+        try:
+            r = _ks.get_kpl_socket().get_zt_big_orders(code)
+        except Exception as e:
+            logger.debug(f"zt_big_orders: {e}")
+            r = None
+        out = r or {}
+        if out:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
     def get_avoid_risks(self) -> Dict[str, Any]:
         """闪电避雷（App LightningProtection 页同源）：3011 潜在风险（excel+五类明细）
         + 3012 ST/退市股列表。120s 缓存。"""

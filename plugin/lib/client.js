@@ -4202,6 +4202,74 @@ window.__ModuleLoader__.load({
 
         /* ---- 个股详情（下钻） ---- */
 
+        // 涨停大单深度块（cmd 2014：连板状态+大单封单序列；非涨停静默不显示）
+        function KplZtBigOrderSec({ code }) {
+            const [d, setD] = useState(null);
+            useEffect(() => {
+                api("/api/kpl/ztbig/" + code).then(setD).catch(() => { });
+            }, [code]);
+            const series = (d && d.series) || [];
+            if (!d || !d.lbText || !series.length) return null;
+            const last = series[series.length - 1];
+            return React.createElement("div", { className: "kpl-mkt-sec" },
+                React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨停深度",
+                    React.createElement("span", { className: "kpl-mkt-tips" }, d.lbText)),
+                React.createElement("div", { className: "kpl-mkt-duo" },
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "最新封单"),
+                        React.createElement("div", { className: "val up" }, fmtAmount(last.seal))),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "大单笔数"),
+                        React.createElement("div", { className: "val" }, d.bigN != null ? d.bigN : "--"))),
+                React.createElement(KplTrendCanvas, {
+                    points: series.map(x => ({ v: Number(x.seal) || 0 })),
+                    preClose: null, height: 70 }));
+        }
+
+        // 分时成交列表（GetStockFenBi2）
+        function KplFenBiSec({ code }) {
+            const [d, setD] = useState(null);
+            const [open, setOpen] = useState(false);
+            useEffect(() => {
+                api("/api/kpl/fenbi/" + code).then(setD).catch(() => { });
+            }, [code]);
+            const rows = (d && d.rows) || [];
+            if (!rows.length) return null;
+            return React.createElement("div", { className: "kpl-mkt-sec" },
+                React.createElement("div", { className: "kpl-mkt-sec-t" }, "分时成交",
+                    React.createElement("span", { className: "kpl-mkt-tips kpl-dswitch", onClick: () => setOpen(!open) },
+                        open ? "收起 ▲" : "展开 ▼")),
+                React.createElement("div", { className: "kpl-mkt-ztlist" },
+                    rows.slice(0, open ? 60 : 8).map((r, i) =>
+                        React.createElement("div", { key: i, className: "row" },
+                            React.createElement("div", { className: "nm" },
+                                React.createElement("b", null, r.time)),
+                            React.createElement("div", { className: "pct " + (r.dir === 1 ? "up" : "down") },
+                                Number(r.px).toFixed(2)),
+                            React.createElement("div", { className: "price" }, r.vol + " 手"),
+                            React.createElement("div", { className: "why" }, r.n + " 笔")))));
+        }
+
+        // F10 简版（公司资料+财务表）
+        function KplF10Sec({ code }) {
+            const [d, setD] = useState(null);
+            const [open, setOpen] = useState(false);
+            useEffect(() => {
+                if (open && !d) api("/api/kpl/f10/" + code).then(setD).catch(() => { });
+            }, [open, d, code]);
+            const fin = (d && d.finance) || [];
+            return React.createElement("div", { className: "kpl-mkt-sec" },
+                React.createElement("div", { className: "kpl-mkt-sec-t" }, "F10 财务",
+                    React.createElement("span", { className: "kpl-mkt-tips kpl-dswitch", onClick: () => setOpen(!open) },
+                        open ? "收起 ▲" : "展开 ▼")),
+                open ? (fin.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
+                    fin.map((r, i) => React.createElement("div", { key: i, className: "kpl-mkt-broadcast" },
+                        "报告期 ", r[17] || r[16] || "--", "：营收 ", r[1], " / 净利 ", r[2], " / 扣非 ", r[3],
+                        " / EPS ", r[4], " / ROE ", r[10])))
+                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "暂无财务数据"))
+                    : React.createElement("div", { className: "kpl-mkt-tips" }, "点击展开财务数据"));
+        }
+
         // 个股分时区块（GetStockTrend：现价线+均价线+昨收基准）
         function KplStockTrendSec({ code }) {
             const [t, setT] = useState(null);
@@ -4276,6 +4344,9 @@ window.__ModuleLoader__.load({
                                     React.createElement("span", { className: "v" }, v))))),
                     q.zt_reason && React.createElement("div", { className: "kpl-reason" }, `📌 ${q.zt_reason}`),
                     q && React.createElement(KplStockTrendSec, { code: stock.code }),
+                    q && React.createElement(KplZtBigOrderSec, { code: stock.code }),
+                    q && React.createElement(KplFenBiSec, { code: stock.code }),
+                    q && React.createElement(KplF10Sec, { code: stock.code }),
                     React.createElement("div", { className: "kpl-stock-ladder-wrap" },
                         React.createElement(KplLadder, { asks: q.asks, bids: q.bids, totalAsk: q.total_ask, totalBid: q.total_bid }),
                         React.createElement("div", { className: "kpl-stock-side" },
