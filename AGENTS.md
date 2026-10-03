@@ -220,6 +220,11 @@ git push origin main --tags
 
 
 
+### ⭐ 个股详情页 1:1（2026-10-03 实拍 sd3~sd13，App=readtab/ui/activity/StockQuotationActivity）
+
+- **页面结构（实拍定案）**：红头（◀开盘 logo + ◀▶ 同列表切股 + 融/板块 tag + 代码 + 🔍）→报价头（左大价+右 3×4 字段）→主力净/买/卖行→消息速递（涨停原因）→**左右横移两页**（页1=分时+右栏五档/分布/委托 tabs+分时成交；页2=K线：日/周/月/年/60/30/15/5 分周期+MA+成交量副图+主力净额副图+筹码+区间统计手势）→关联板块卡（group_tag）→**大 tab 区：盘口/盯盘/F10/涨停原因/新闻**（可横滑出 公告/机构纪要/研报/机构持仓——接口未逆向）→底部工具栏（▲/上证指数/预警/龙虎榜/笔记/加自选）。
+- **数据源映射**：报价头+盘口+盯盘=**GetStockPanKou**（已有 get_pankou：high/low/open/avg/换手/量比/振幅/涨跌停/内外界/市盈/市值/流通/amount_in/out——盯盘主力买卖占比即 amount_in/amount，实拍净额 1.45 亿与插件计算一致）；分时=GetStockTrend（已有）；K线=Stock/GetStockChart（已有 /api/kpl/kline，close[i]=[open,close,high,low] 530 根）；分时成交=GetStockFenBi（已有）；F10=StockF10Basic@apparticle（已有 f10full）；涨停原因当日=PanKou.ZTReason（已有）。**缺口⏸**：筹码分布/逐笔委托/大单筛选（大单封单/占比）/K线分钟周期（socket 2400/2402）/涨停原因历史列表/新闻-公告-机构纪要-研报-机构持仓 tab/区间统计——通道未逆向，页面留空态说明。
+- **插件落地**：KplStockDetail 整函数重写（kpl-sd-* CSS 显式色值）：红头 ◀▶ 切股（stock.list/idx 上下文）、横移 touch swipe+双指示条、右栏 tabs、大 tab 区、底栏（上证指数=mkttrend、龙虎榜=go lhb_stock、加自选=watchlist）；K线页=loadKlineChart+/api/kpl/kline（日K 周期可用，其余周期空态待 socket）；新闻 tab=AI快讯按股票过滤（App 新闻源待逆向的过渡方案，标如实）。
 ### ⭐ App 本地存储全景 + 非交易日展示机制（2026-10-03 root 枚举实拍，全文 kanpan_spec/docs/local_storage_map.md）
 
 - **App 数据库存清单**：KPL_CACHE（STOCK 13843 行名称库/DYNAMIC_QUOTA_BEAN 动态列/**HolidayList 316 行节假日本地表**/PhoneList 登录凭据/搜索浏览历史）、Goods.db（商品标的）、StockGroup.db（自选分组+分时缓存）、UserRelate.db（用户/token/签到）、LHBUpdateTips/Record/TrackRecord（埋点）、cg/dim/gtc3/push*（推送 SDK）；SP=KPL_PREFS（app_switch_cache 服务端开关）+PARAMS_INFO（节假日更新戳/自选板块）；files/ 1079 个=ELF so+埋点缓存，**行情快照不落盘**。
