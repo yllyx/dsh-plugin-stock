@@ -1628,6 +1628,12 @@ async def kpl_plate_extras(plate_id: str, day: str = ""):
     return await asyncio.to_thread(kpl_api.get_kpl().get_plate_extras, plate_id, day)
 
 
+@app.get("/api/kpl/livenews")
+async def kpl_livenews(day: str = ""):
+    """行情·直播页播报流（App MarketLiveFragment：时间轴+文本匹配关联标的，首建后台线程 building 标志）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_live_news_feed, day)
+
+
 @app.get("/api/kpl/mood/capacity")
 async def kpl_mood_capacity(day: str = "", type: str = "4"):
     """情绪页·市场量能按指数切换（App 筛选弹窗；Type: 0沪深 1上证 2创业板 3北证 4沪深京 5科创板）"""

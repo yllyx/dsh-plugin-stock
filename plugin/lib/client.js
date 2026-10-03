@@ -3057,131 +3057,85 @@ window.__ModuleLoader__.load({
 
         /* ---- 行情·直播子页（App 直播 tab 同源：3003 分时 + 2110/2114/2115/2116/2106/2108/2109）---- */
 
-        function KplLiveSub() {
-            const feed = useMarketFeed(20000);
+        function KplLiveSub({ go }) {
+            // App 行情·直播 tab（MarketLiveFragment）1:1：顶部上证分时 + 全天播报时间轴流。
+            // 播报关联标的=后端文本匹配（App 客户端匹配本地 STOCK 表同机制），building 时自动重拉。
             const [trend, setTrend] = useState(null);
-            const [idx, setIdx] = useState("SH");   // 交互型 state 只存 id 字符串
-            const [distDay, setDistDay] = useState("today");
+            const [news, setNews] = useState(null);
+            const [retryN, setRetryN] = useState(0);
             const loadTrend = useCallback(async () => {
                 try { setTrend(await api("/api/kpl/mkttrend")); } catch (e) { /* */ }
             }, []);
             useEffect(() => { loadTrend(); }, [loadTrend]);
             usePolling(loadTrend, 30000, []);
-            const zd = feedData(feed, "zdstat");
-            const dist = feedData(feed, "zddist");
-            const ovr = feedData(feed, "overview");
-            const zts = feedData(feed, "ztseries");
-            const eng = feedData(feed, "energy");
-            const wgt = feedData(feed, "weights");
-            const nth = feedData(feed, "north");
-            const z = zd.data || {}, o = ovr.data || {}, e = eng.data || {}, w = wgt.data || {}, n = nth.data || {};
+            const loadNews = useCallback(async () => {
+                try {
+                    const d = await api("/api/kpl/livenews");
+                    setNews(d);
+                    if (d && d.building) setRetryN((n) => n + 1);
+                } catch (e) { /* */ }
+            }, []);
+            useEffect(() => { loadNews(); }, [loadNews]);
+            useEffect(() => {
+                if (!retryN || retryN > 6) return undefined;
+                const t = setTimeout(loadNews, 3000);
+                return () => clearTimeout(t);
+            }, [retryN, loadNews]);
             const idxes = (trend && trend.indexes) || [];
-            const cur = idxes.find(x => x.num === idx) || idxes[0] || null;
-            const qx = o.qx != null ? Math.round(Number(o.qx) * 100) : null;
-            const broadcast = (zts.data && zts.data.broadcast) || "";
-            const situ = feedData(feed, "ztsitu");
-            const tip = feedData(feed, "zdtip");
-            const situV = (situ.data && situ.data.v) || [];
-            const tipText = (tip.data && tip.data.tip) || "";
-            return React.createElement("div", { className: "kpl-mkt-wrap" },
-                React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-idxtabs" },
-                        [{ k: "SH", n: "沪" }, { k: "SZ", n: "深" }, { k: "CYB", n: "创" }].map(x =>
-                            React.createElement("span", { key: x.k, className: "itab " + (idx === x.k ? "on" : ""),
-                                onClick: () => setIdx(x.k) }, x.n))),
-                    cur ? (function () {
-                        const last = cur.points && cur.points.length ? cur.points[cur.points.length - 1].v : cur.preClose;
-                        const diff = last - cur.preClose;
-                        const pct = cur.preClose ? diff / cur.preClose * 100 : 0;
-                        const up = diff >= 0;
-                        return React.createElement("div", null,
-                            React.createElement("div", { className: "kpl-mkt-idxhead" },
-                                React.createElement("b", { className: up ? "up" : "down" }, last.toFixed(2)),
-                                React.createElement("span", { className: up ? "up" : "down" },
-                                    (up ? "+" : "") + diff.toFixed(2) + "  " + (up ? "+" : "") + pct.toFixed(2) + "%"),
-                                React.createElement("span", { className: "kpl-mkt-tips" }, "成交 " + fmtAmount(cur.turnover))),
-                            React.createElement(KplTrendCanvas, { points: cur.points, preClose: cur.preClose, height: 150 }));
-                    })() : React.createElement("div", { className: "kpl-mkt-empty sm" }, "分时数据建立连接中…")),
-                z.data ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-four" },
-                        React.createElement("div", { className: "cell" },
-                            React.createElement("b", { className: "up" }, z.rise != null ? z.rise : "--"),
-                            React.createElement("span", { className: "lbl" }, "上涨")),
-                        React.createElement("div", { className: "cell" },
-                            React.createElement("b", { className: "up" }, z.realZt != null ? z.realZt : "--"),
-                            React.createElement("span", { className: "lbl" }, "涨停")),
-                        React.createElement("div", { className: "cell" },
-                            React.createElement("b", { className: "down" }, z.down != null ? z.down : "--"),
-                            React.createElement("span", { className: "lbl" }, "下跌")),
-                        React.createElement("div", { className: "cell" },
-                            React.createElement("b", { className: "down" }, z.realDt != null ? z.realDt : "--"),
-                            React.createElement("span", { className: "lbl" }, "跌停"))),
-                    z.sign ? React.createElement("div", { className: "kpl-mkt-sign" }, z.sign) : null) : null,
-                (dist.data && dist.data.today && dist.data.today.dists || []).length ?
-                    React.createElement("div", { className: "kpl-mkt-sec" },
-                        React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨跌分布",
-                            React.createElement("span", { className: "kpl-mkt-tips" },
-                                React.createElement("span", { className: "kpl-dswitch " + (distDay === "today" ? "on" : ""), onClick: () => setDistDay("today") }, "今日"),
-                                " / ",
-                                React.createElement("span", { className: "kpl-dswitch " + (distDay === "yest" ? "on" : ""), onClick: () => setDistDay("yest") }, "昨日"))),
-                        React.createElement(KplDistBars, { dists: (dist.data[distDay] && dist.data[distDay].dists) || dist.data.today.dists })) : null,
-                (o.qx != null || e.text) ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-duo" },
-                        o.qx != null ? React.createElement("div", { className: "cell" },
-                            React.createElement("div", { className: "lbl" }, "市场情绪"),
-                            React.createElement("div", { className: "val" },
-                                React.createElement("b", null, qx + "°"),
-                                React.createElement("span", { className: "kpl-mkt-tips" }, " " + (o.qxStatus || ""))))
-                            : null,
-                        e.text ? React.createElement("div", { className: "cell" },
-                            React.createElement("div", { className: "lbl" }, "量能"),
-                            React.createElement("div", { className: "val sm" }, e.text)) : null,
-                        o.forecastMoney ? React.createElement("div", { className: "cell" },
-                            React.createElement("div", { className: "lbl" }, "预估成交"),
-                            React.createElement("div", { className: "val" }, o.forecastMoney)) : null)) : null,
-                (e.series || []).length > 2 ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "量能对比（今日 vs 昨日）",
-                        React.createElement("span", { className: "kpl-mkt-tips" }, "红今日 绿昨日")),
-                    React.createElement(KplDualTrendCanvas, {
-                        a: e.series.map(x => ({ v: Number(x.cur) || 0 })),
-                        b: e.series.map(x => ({ v: Number(x.yes) || 0 })),
-                        height: 90 })) : null,
-                (zts.data && zts.data.series || []).length ?
-                    React.createElement("div", { className: "kpl-mkt-sec" },
-                        React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨停家数分时"),
-                        React.createElement(KplTrendCanvas, {
-                            points: zts.data.series.map(s => ({ v: Number(s.n) || 0 })),
-                            preClose: null, height: 90 })) : null,
-                situV.length ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "涨停形势"),
-                    React.createElement("div", { className: "kpl-mkt-duo" },
-                        [["封板", situV[0]], ["炸板", situV[1]], ["涨停", situV[2]], ["跌停", situV[3]],
-                         ["封板率%", situV[4]], ["连板率%", situV[5]], ["晋级率%", situV[6]], ["炸板率%", situV[7]],
-                         ["昨封炸", situV[8]], ["昨表现", situV[9]], ["今日表现", situV[10]]].map(function (pair, i) {
-                            return React.createElement("div", { key: i, className: "cell" },
-                                React.createElement("div", { className: "lbl" }, pair[0]),
-                                React.createElement("div", { className: "val" }, pair[1] != null ? pair[1] : "--"));
-                        }))) : null,
-                tipText ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-broadcast", style: { color: "#e03131" } }, tipText)) : null,
-                broadcast ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "盘面播报"),
-                    React.createElement("div", { className: "kpl-mkt-broadcast" }, broadcast)) : null,
-                ((w.upPlates || []).length || (w.downPlates || []).length) ?
-                    React.createElement("div", { className: "kpl-mkt-sec" },
-                        React.createElement("div", { className: "kpl-mkt-sec-t" }, "权重表现"),
-                        w.comment ? React.createElement("div", { className: "kpl-mkt-comment" }, w.comment) : null,
-                        React.createElement("div", { className: "kpl-mkt-wplates" },
-                            (w.upPlates || []).map((p, i) => React.createElement("span", { key: "u" + i, className: "wp up" },
-                                p.name + " " + Number(p.pct).toFixed(2) + "%")),
-                            (w.downPlates || []).map((p, i) => React.createElement("span", { key: "d" + i, className: "wp down" },
-                                p.name + " " + Number(p.pct).toFixed(2) + "%")))) : null,
-                n.net != null ? React.createElement("div", { className: "kpl-mkt-sec" },
-                    React.createElement("div", { className: "kpl-mkt-sec-t" }, "北向资金"),
-                    React.createElement("div", { className: "kpl-mkt-north" },
-                        React.createElement("b", { className: n.net >= 0 ? "up" : "down" }, fmtAmount(n.net)),
-                        n.text ? React.createElement("span", { className: "kpl-mkt-tips" }, " " + n.text) : null)) : null);
+            const cur = idxes.find((x) => x.num === "SH") || idxes[0] || null;
+            const items = (news && news.items) || [];
+            const kids = [];
+            if (cur) {
+                const last = cur.points && cur.points.length ? cur.points[cur.points.length - 1].v : cur.preClose;
+                const diff = last - cur.preClose;
+                const pct = cur.preClose ? diff / cur.preClose * 100 : 0;
+                const up = diff >= 0;
+                kids.push(React.createElement("div", { key: "fs", className: "kpl-lv-fs" },
+                    React.createElement(KplTrendCanvas, { points: cur.points, preClose: cur.preClose, height: 210 }),
+                    React.createElement("div", { className: "kpl-lv-fshead" },
+                        React.createElement("b", { className: up ? "up" : "down" }, last != null ? last.toFixed(2) : "--"),
+                        React.createElement("span", { className: up ? "up" : "down" },
+                            (up ? "+" : "") + (diff != null ? diff.toFixed(2) : "--") + "  "
+                            + (up ? "+" : "") + (pct != null ? pct.toFixed(2) : "") + "%"))));
+            } else {
+                kids.push(React.createElement("div", { key: "fsw", className: "kpl-mdd-empty" }, "分时数据建立连接中…"));
+            }
+            items.forEach((it, i) => {
+                const tlabel = it.time ? fmtTs(Number(it.time)) : "--:--";
+                const stocks = (it.stocks || []).filter((s) => s.pct != null);
+                const plates = (it.plates || []);
+                kids.push(React.createElement("div", { key: i, className: "kpl-lv-item" },
+                    React.createElement("div", { className: "tl" },
+                        React.createElement("div", { className: "tm" }, tlabel),
+                        React.createElement("div", { className: "dot" }),
+                        React.createElement("div", { className: "ln" })),
+                    React.createElement("div", { className: "card" },
+                        React.createElement("div", { className: "txt" }, it.comment),
+                        (stocks.length || plates.length) ? React.createElement("div", { className: "chips" },
+                            stocks.map((s, j) => React.createElement("span", {
+                                key: "s" + j, className: "chip",
+                                onClick: () => go && go({ page: "stock", stock: { code: s.code, name: s.name } }),
+                            },
+                                React.createElement("i", null, s.name),
+                                React.createElement("b", { className: s.pct >= 0 ? "up" : "down" },
+                                    (s.pct >= 0 ? "+" : "") + Number(s.pct).toFixed(2) + "%"))),
+                            plates.map((p, j) => React.createElement("span", { key: "p" + j, className: "chip plate" },
+                                React.createElement("i", null, p.name),
+                                p.pct != null ? React.createElement("b", { className: p.pct >= 0 ? "up" : "down" },
+                                    (p.pct >= 0 ? "+" : "") + Number(p.pct).toFixed(2) + "%") : null)))
+                            : null)));
+            });
+            if (news && news.building) {
+                kids.push(React.createElement("div", { key: "bld", className: "kpl-mdd-empty" },
+                    "播报关联标的分析中（首次约 10 秒，随后走本地缓存）…"));
+            }
+            if (!news && !items.length) {
+                kids.push(React.createElement("div", { key: "load", className: "kpl-mdd-empty" }, "加载中…"));
+            }
+            return React.createElement("div", { className: "kpl-mkt-wrap kpl-lv" }, kids);
         }
+
+
 
         /* ---- 行情·个股子页（App 个股 tab 同源：3004 RealtimeLHB 订阅）---- */
 
@@ -3307,7 +3261,7 @@ window.__ModuleLoader__.load({
                 sub === "hk" && React.createElement(KPL_G.hk, { go }),
                 sub === "daban" && React.createElement(KPL_G.daban, { go }),
                 sub === "sentiment" && React.createElement(KPL_G.sentiment, { go }),
-                sub === "live" && React.createElement(KPL_G.live, null),
+                sub === "live" && React.createElement(KPL_G.live, { go }),
                 sub === "global" && React.createElement(KPL_G.global, null));
         }
 
@@ -5895,6 +5849,24 @@ window.__ModuleLoader__.load({
                 .kpl-sdp-sum { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
                 .kpl-sdp-sum.eight { grid-template-columns: repeat(4, 1fr); gap: 8px 4px; }
                 .kpl-sdp-chart { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                /* 直播页 kpl-lv-*（App MarketLiveFragment 1:1） */
+                .kpl-lv-fs { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 10px 6px; }
+                .kpl-lv-fshead { display: flex; align-items: baseline; gap: 8px; padding: 0 4px; }
+                .kpl-lv-fshead b { font-size: 17px; }
+                .kpl-lv-fshead span { font-size: 12px; }
+                .kpl-lv-item { display: flex; gap: 8px; }
+                .kpl-lv-item .tl { width: 46px; display: flex; flex-direction: column; align-items: center; flex-shrink: 0; padding-top: 2px; }
+                .kpl-lv-item .tl .tm { color: #e03131; font-size: 12px; font-weight: 700; white-space: nowrap; }
+                .kpl-lv-item .tl .dot { width: 6px; height: 6px; border-radius: 3px; background: #e03131; margin: 5px 0 3px; }
+                .kpl-lv-item .tl .ln { width: 1px; flex: 1; background: #eee; }
+                .kpl-lv-item:last-child .tl .ln { background: transparent; }
+                .kpl-lv-item .card { flex: 1; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; min-width: 0; }
+                .kpl-lv-item .txt { font-size: 14px; color: #111; line-height: 1.75; word-break: break-all; }
+                .kpl-lv-item .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 9px; }
+                .kpl-lv-item .chip { display: flex; justify-content: space-between; align-items: center; background: #f5f6f8; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
+                .kpl-lv-item .chip i { font-style: normal; font-size: 13px; color: #111; }
+                .kpl-lv-item .chip b { font-size: 13px; font-weight: 700; }
+                .kpl-lv-item .chip.plate i { color: #1c5fbb; }
                 .kpl-sdp-chart .cvtabs { display: flex; gap: 4px; margin-bottom: 8px; }
                 .kpl-sdp-chart .cvtabs span { padding: 4px 14px; border-radius: 12px; font-size: 12px; color: #666; background: #f5f5f5; cursor: pointer; }
                 .kpl-sdp-chart .cvtabs span.on { background: #e03131; color: #fff; font-weight: 700; }
@@ -6755,4 +6727,5 @@ window.__ModuleLoader__.load({
         return pluginModule.exports;
     },
 });
+
 

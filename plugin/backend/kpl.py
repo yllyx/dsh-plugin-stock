@@ -1054,6 +1054,178 @@ class KplClient:
         self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    # ---------- 行情·直播页播报流（App MarketLiveFragment 1:1，2026-10-03 逆向）----------
+    # App 机制实锤：LiveNewsEntity 仅 {time,comment}；播报下的关联股 chips=客户端文本匹配
+    # 本地 STOCK 表(13843 名称)+板块名，涨跌幅取内存快照。插件同款：market_pool 5247 全A +
+    # kpl_plate_names 1568 板块 反向索引匹配，匹配股并发拉 GetStockPanKou（App 同源）。
+    _news_index: List = []   # [name_idx(名称→code), plate_idx(名称→id)] 懒加载
+
+    def _news_name_index(self):
+        # ⚠️ 空索引不缓存（后端刚启动时 market_pool 预热未完成，[{},{}] 是 truthy——曾致匹配永远落空）
+        if KplClient._news_index and KplClient._news_index[0]:
+            return KplClient._news_index
+        name_idx = {}
+        try:
+            from screener import market_pool
+            # ⚠️ 勿持 market_pool._lock 遍历：pytdx 断连重试循环会长期持锁（实测死等 60s+）。
+            names_snapshot = dict(market_pool._names or {})
+            for code, nm in names_snapshot.items():
+                if nm and len(nm) >= 2:
+                    name_idx[nm] = code
+        except Exception as e:
+            logger.debug(f"livenews 个股索引: {e}")
+        if not name_idx:
+            # 兜底：随插件打包的 App KPL_CACHE STOCK 名称表（13690 条，App 同源，
+            # 2026-10-03 导出）——market_pool 依赖东财名称接口，限流期恒空（实测）。
+            try:
+                import os
+                pth = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "static", "kpl_stock_names.json")
+                if os.path.exists(pth):
+                    packed = json.loads(open(pth, encoding="utf-8").read())
+                    # 打包表是 {code: name}——反转成 名称→code
+                    for code, nm in packed.items():
+                        if nm and len(nm) >= 2:
+                            name_idx[nm] = code
+                    logger.info(f"livenews 名称索引用打包表 n={len(name_idx)}")
+            except Exception as e:
+                logger.info(f"livenews 打包名称表读失败: {e}")
+        plate_idx = {}
+        try:
+            from storage import storage as _st
+            pth = _st.data_dir / "kpl_plate_names.json"
+            if pth.exists():
+                dj = json.loads(pth.read_text(encoding="utf-8"))
+                # 结构：{ts, names:{id: name}}（801/885 系板块名）
+                for pid, nm in (dj.get("names") or {}).items():
+                    if nm and len(nm) >= 2:
+                        plate_idx[nm] = pid
+        except Exception as e:
+            logger.debug(f"livenews 板块索引: {e}")
+        if name_idx:
+            KplClient._news_index = [name_idx, plate_idx]
+            return KplClient._news_index
+        return [name_idx, plate_idx]
+
+    def _pankou_batch(self, codes: List[str]) -> Dict[str, Any]:
+        """并发拉 GetStockPanKou 取涨跌幅（App 同源；绕 _rate_wait——App 无域间隔，
+        仅对匹配到的股票一次批量+磁盘缓存，量级 ~100 只）。"""
+        out = {}
+        if not codes:
+            return out
+
+        def one(code):
+            try:
+                data = {**self._common(False), "c": "StockL2Data",
+                        "a": "GetStockPanKou", "StockID": code}
+                r = self._get_client().post(HOST_HQ, data=data, timeout=8)
+                d = r.json()
+                real = (d or {}).get("real") or {}
+                rate = real.get("px_change_rate")
+                return code, (round(float(rate), 2) if rate is not None else None)
+            except Exception:
+                return code, None
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for code, rate in ex.map(one, codes):
+                out[code] = rate
+        return out
+
+    def get_live_news_feed(self, day: str = "") -> Dict[str, Any]:
+        """直播页播报流。休市当日数据不变→磁盘缓存秒回；盘中 TTL 120s 重建。
+        首次构建（并发 PanKou ~10s）走后台线程，先返回 building 标志由前端重拉。"""
+        day = self._mood_norm_day(day)
+        key = f"livenews:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 120:
+            return hit["data"]
+        try:
+            from storage import storage as _st
+            pth = _st.data_dir / "kpl_livenews_cache.json"
+        except Exception:
+            pth = None
+        if pth is not None and pth.exists():
+            try:
+                dj = json.loads(pth.read_text(encoding="utf-8"))
+                if dj.get("day") == day and time.time() - dj.get("ts", 0) < 7 * 86400:
+                    self._cache[key] = {"data": dj["data"], "ts": time.time()}
+                    return dj["data"]
+            except Exception as e:
+                logger.debug(f"livenews 磁盘读: {e}")
+        building = {"building": True, "day": day, "items": []}
+        if getattr(KplClient, "_news_building", False):
+            return building
+        KplClient._news_building = True
+
+        def _bg():
+            try:
+                logger.info(f"livenews 构建 start day={day}")
+                d = self.call("https://apphis.kaipanla.com/w1/api/index.php",
+                              "HisMarketSentiment", "GetLiveNews", {"date": day}, False)
+                raw = (d or {}).get("list") or []
+                logger.info(f"livenews GetLiveNews rows={len(raw)}")
+                name_idx, plate_idx = self._news_name_index()
+                if not name_idx:
+                    # market_pool 预热未完成：本轮不出缓存，等下轮前端重拉
+                    KplClient._news_building = False
+                    return
+                # 权重板块涨幅表（App chips 板块涨幅同源：WeightPerformance SZ/XD）
+                wpct = {}
+                try:
+                    wt = self.call("https://apphis.kaipanla.com/w1/api/index.php",
+                                   "HisHomeDingPan", "WeightPerformance", {"Day": day}, False)
+                    info = (wt or {}).get("info") or {}
+                    for row in (info.get("SZ") or []) + (info.get("XD") or []):
+                        if isinstance(row, list) and len(row) >= 3:
+                            wpct[str(row[1])] = row[2]
+                except Exception:
+                    pass
+                items = []
+                codes = set()
+                parsed = []
+                import re as _re
+                for it in raw:
+                    cm = str(it.get("comment") or "")
+                    stocks, plates = [], []
+                    for nm, code in name_idx.items():
+                        # 只收 A 股 6 位数字代码（打包表含全球期汇/港美股，"风电"等简称会误命中）
+                        if nm in cm and _re.match(r"^\d{6}$", str(code)):
+                            stocks.append({"code": code, "name": nm})
+                            codes.add(code)
+                    for nm, pid in plate_idx.items():
+                        if nm in cm:
+                            plates.append({"id": pid, "name": nm,
+                                           "pct": wpct.get(nm)})
+                    parsed.append({"time": it.get("time"), "comment": cm,
+                                   "stocks": stocks, "plates": plates})
+                logger.info(f"livenews 匹配完成 codes={len(codes)} items={len(parsed)}")
+                pmap = self._pankou_batch(sorted(codes)) if codes else {}
+                logger.info(f"livenews pankou done n={len(pmap)}")
+                for p in parsed:
+                    for st_ in p["stocks"]:
+                        st_["pct"] = pmap.get(st_["code"])
+                    p["stocks"] = sorted(p["stocks"], key=lambda x: -abs(x["pct"] or 0))[:16]
+                    p["plates"] = p["plates"][:6]
+                    items.append(p)
+                data = {"day": day, "items": items, "building": False}
+                self._cache[key] = {"data": data, "ts": time.time()}
+                try:
+                    tmp = pth.with_suffix(".tmp")
+                    tmp.write_text(json.dumps({"ts": time.time(), "day": day,
+                                               "data": data}, ensure_ascii=False), encoding="utf-8")
+                    tmp.replace(pth)
+                except Exception as e:
+                    logger.debug(f"livenews 磁盘写: {e}")
+            except Exception as e:
+                import traceback
+                logger.info("livenews 构建异常: {} | {}".format(e, traceback.format_exc()))
+            finally:
+                KplClient._news_building = False
+
+        threading.Thread(target=_bg, daemon=True).start()
+        return building
+
     def get_plate_extras(self, plate_id: str, day: str = "") -> Dict[str, Any]:
         """板块详情下钻增强数据（2026-10-03 逆向 IndexQuotaTLinePresenter/IndexQuotationActivity）：
         - 概要 8 项 = ZhiShuRanking/GetPlate_Info_QJ{PlateID}（List=[排名,强度,成交额,涨停数,?,涨停封单,大单封单,?]，
