@@ -3185,6 +3185,11 @@ window.__ModuleLoader__.load({
             };
         }
 
+        // 个股详情守卫必须模块级创建一次：放进 drill 分支渲染体内时，父级每次重渲染
+        // （10s 报价轮询等）都产生新组件类型 → React 把详情页整页卸载重建 →
+        // 横移页码/tab/滚动位置全丢，表现为"过几秒刷新一次、tab 无法停留"（#27⑤ 同案）。
+        const KPL_STOCK_DETAIL_G = kplGuard(KplStockDetail, "个股详情");
+
         // 守卫包装必须在模块层做一次：放进渲染体内的话，父级每次重渲染（3s 状态轮询等）
         // 都会产生新组件类型，React 按不同组件整页卸载重建子页——表现为每隔几秒"闪一下"+丢状态重拉数据。
         const KPL_G = {
@@ -4847,7 +4852,7 @@ window.__ModuleLoader__.load({
                 return () => { alive = false; };
             }, [stock.code]);
             const load = useCallback(async () => {
-                try { const d = await api(`/api/kpl/quote/${stock.code}?force=1`); setError(null); setQ(d); }
+                try { const d = await api(`/api/kpl/quote/${stock.code}`); setError(null); setQ(d); }
                 catch (e) { setError(e.message); }
             }, [stock.code]);
             usePolling(load, 10000, [stock.code]);
@@ -5177,7 +5182,7 @@ window.__ModuleLoader__.load({
             let content;
             if (drill) {
                 if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
-                else if (drill.page === "stock") content = React.createElement(kplGuard(KplStockDetail, "个股详情"), { stock: drill.stock, go });
+                else if (drill.page === "stock") content = React.createElement(KPL_STOCK_DETAIL_G, { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
                 else if (drill.page === "lhb") content = React.createElement(KplLhbPage, { go });
                 else if (drill.page === "lhbBiz") content = React.createElement(KplLhbBizDetail, { id: drill.id, name: drill.name, go });
