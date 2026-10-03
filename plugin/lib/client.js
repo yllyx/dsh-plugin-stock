@@ -1829,6 +1829,7 @@ window.__ModuleLoader__.load({
             const fmtRate = r => (Number(r) >= 0 ? "+" : "") + Number(r).toFixed(2) + "%";
             const db = (home && home.daban) || {};
             const qd = (home && home.qiangdu) || [];
+            const qdDay = (home && home.qiangdu_day) || "";
             const qdRows = qd.length > 0 && [
                 React.createElement("div", { key: "h", className: "kpl-qd-head" },
                     React.createElement("span", null, "股票名称"),
@@ -1868,25 +1869,46 @@ window.__ModuleLoader__.load({
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "最新主题"),
                         React.createElement("span", { className: "more", onClick: () => go({ page: "themes" }) }, "更多 ›"))),
-                ((home && home.themes) || []).slice(0, 2).map(t =>
-                    React.createElement("div", { key: t.id, className: "kpl-theme-row" },
-                        React.createElement("div", { className: "kpl-theme-badge" }, t.theme || "主题"),
-                        React.createElement("div", { className: "kpl-theme-main" },
-                            React.createElement("div", { className: "kpl-theme-title" }, t.title),
-                            React.createElement("div", { className: "kpl-theme-stocks" },
-                                (t.stocks || []).map(s =>
-                                    React.createElement("span", { key: s.code, className: "kpl-theme-stock" },
-                                        s.name, " ", React.createElement("b", { className: rateCls(s.rate) }, fmtRate(s.rate)))))))),
+                ((home && home.themes) || []).slice(0, 2).map((t, ti) =>
+                    React.createElement("div", { key: t.id, className: "kpl-theme2-row" },
+                        React.createElement("div", { className: "kpl-theme2-badge" + (ti === 0 ? " red" : " gold") },
+                            t.theme || "主题"),
+                        React.createElement("div", { className: "kpl-theme2-main" },
+                            React.createElement("div", { className: "kpl-theme2-title" }, t.title),
+                            React.createElement("div", { className: "kpl-theme2-stocks" },
+                                (t.stocks || []).slice(0, 2).map(s =>
+                                    React.createElement("span", { key: s.code, className: "kpl-theme2-stock" },
+                                        React.createElement("i", null, s.name),
+                                        React.createElement("b", { className: rateCls(s.rate) }, fmtRate(s.rate)))))))),
 
-                // ===== 最强风口 =====
+                // ===== 最强风口（App home_s2：标题+日期徽标+四列表头+3行+解锁行） =====
                 React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
-                        React.createElement("span", { className: "t" }, "最强风口"),
+                        React.createElement("span", { className: "t" }, "最强风口",
+                            React.createElement("span", { className: "date" },
+                                " " + ((home && home.qiangdu && home.qiangdu.day) || "").slice(5) + " ")),
                         React.createElement("span", {
                             className: "more", onClick: () => go({ page: "qiangdu" }),
                         }, qdRows.length ? "更多 ›" : "进入 ›")),
-                    qdRows.length > 0 && React.createElement("div", null, qdRows),
-                    qdRows.length === 0 && React.createElement("div", { className: "kpl-empty" }, "盘中数据，收盘后清空")),
+                    qdRows.length > 0 ? React.createElement("div", { className: "kpl-qd3" },
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", null, "股票名称"),
+                            React.createElement("span", null, "强度"),
+                            React.createElement("span", null, "涨跌幅"),
+                            React.createElement("span", null, "板块")),
+                        qdRows.slice(0, 3).map((r, i) => React.createElement("div", {
+                            key: i, className: "rw",
+                            onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }),
+                        },
+                            React.createElement("span", { className: "nm" },
+                                React.createElement("b", null, r.name),
+                                React.createElement("i", null, r.code)),
+                            React.createElement("span", { className: "st" }, r.st || "--"),
+                            React.createElement("span", { className: "pct" },
+                                React.createElement("b", { className: Number(r.rate) >= 0 ? "up" : "down" }, Number(r.rate).toFixed(2) + "%")),
+                            React.createElement("span", { className: "pl" }, r.plate || "--"))),
+                        React.createElement("div", { className: "lock" }, "🔓 解锁查看更多数据"))
+                    : qdRows.length === 0 && React.createElement("div", { className: "kpl-empty" }, "盘中数据，收盘后清空")),
 
                 // ===== 全部功能宫格入口（App 搜索页宫格同款） =====
                 React.createElement("div", { className: "kpl-sec", style: { padding: "8px 12px" } },
@@ -1917,20 +1939,23 @@ window.__ModuleLoader__.load({
                         React.createElement("div", { className: "kpl-empty" },
                             "盘中实时推送，下一交易日 9:30 起自动更新")),
 
-                // ===== AI快讯 =====
-                ((home && home.flash) || []).length > 0 && React.createElement("div", { className: "kpl-flash" },
-                    React.createElement("div", { className: "kpl-flash-head" },
-                        React.createElement("span", { className: "t" }, "AI快讯 ›"),
+                // ===== AI快讯（App 深色大卡：黑底白字+时间红+全文+来源+AI解读，home_s3/s4） =====
+                ((home && home.flash) || []).length > 0 && React.createElement("div", { className: "kpl-flash2" },
+                    React.createElement("div", { className: "kpl-flash2-head" },
+                        React.createElement("span", { className: "t" }, "AI快讯"),
+                        React.createElement("span", { className: "arr" }, "›"),
                         React.createElement("span", { className: "robot" }, "🤖")),
-                    home.flash.slice(0, 3).map(f => React.createElement("div", { key: f.id, className: "kpl-flash-item" },
-                        React.createElement("div", { className: "kpl-flash-line" },
-                            React.createElement("b", { className: "kpl-flash-time" }, f.time ? new Date(f.time * 1000).toTimeString().slice(0, 8) : ""),
-                            React.createElement("span", null, " ", f.title || (f.content || "").slice(0, 60))),
-                        f.stocks && f.stocks.length > 0 && React.createElement("div", { className: "kpl-flash-stocks" },
-                            f.stocks.slice(0, 3).map(s =>
-                                React.createElement("span", { key: s.code, className: "kpl-flash-stock" },
-                                    s.name, " ", React.createElement("b", { className: rateCls(s.rate) }, fmtRate(s.rate))))))),
-                    React.createElement("div", { className: "kpl-flash-foot" }, "来源：开盘啦快讯")),
+                    home.flash.slice(0, 1).map(f => React.createElement("div", { key: f.id, className: "kpl-flash2-body" },
+                        React.createElement("div", { className: "kpl-flash2-line" },
+                            React.createElement("b", { className: "tm" }, f.time ? new Date(f.time * 1000).toTimeString().slice(0, 8) : ""),
+                            React.createElement("span", { className: "tx" }, " " + (f.title || (f.content || "")))),
+                        React.createElement("div", { className: "ft" },
+                            React.createElement("span", { className: "src" }, "来源：" + (f.source || "开盘啦快讯")),
+                            React.createElement("span", { className: "ai" }, "AI解读")))),
+                    home.flash.length > 1 && React.createElement("div", { className: "kpl-flash2-more" },
+                        home.flash.slice(1, 3).map(f => React.createElement("div", { key: f.id, className: "kpl-flash2-line sm" },
+                            React.createElement("b", { className: "tm" }, f.time ? new Date(f.time * 1000).toTimeString().slice(0, 5) : ""),
+                            React.createElement("span", { className: "tx" }, " " + (f.title || (f.content || "")).slice(0, 46)))))),
 
                 // ===== 市场情绪（App 首页模块 1:1：白底三列 + 红绿家数条 + 量能行） =====
                 React.createElement("div", { className: "kpl-sent3" },
@@ -1961,18 +1986,14 @@ window.__ModuleLoader__.load({
                                 React.createElement("span", { className: "down" }, "跌" + x + "家")));
                     })(),
                     (db && db.head && db.head.szln) && React.createElement("div", { className: "kpl-sent3-ln" },
-                        React.createElement("div", { className: "ln" },
-                            React.createElement("span", { className: "k" }, "量能"),
-                            React.createElement("b", { className: "up" }, (Number(db.head.szln) / 1e8).toFixed(0) + "亿"),
-                            React.createElement("span", { className: "arr" }, "↑"),
-                            React.createElement("span", { className: "yest" }, "昨日此时 --"),
-                            React.createElement("span", { className: "yest" }, "昨日总计 --")),
-                        React.createElement("div", { className: "ln" },
-                            React.createElement("span", { className: "k" }, "沪深京量能"),
-                            React.createElement("b", { className: "up" }, (Number(db.head.qscln) / 1e8).toFixed(0) + "亿"),
-                            React.createElement("span", { className: "arr" }, "↑"),
-                            React.createElement("span", { className: "yest" }, "昨日此时 --"),
-                            React.createElement("span", { className: "yest" }, "昨日总计 --")))),
+                        [["上证量能", home && home.capln && home.capln.sh],
+                         ["沪深京量能", home && home.capln && home.capln.hsjk]].map(([k2, cp], i) =>
+                            React.createElement("div", { key: i, className: "ln" },
+                                React.createElement("span", { className: "k" }, k2),
+                                React.createElement("b", { className: "up" },
+                                    (cp && cp.cur ? (Number(cp.cur) / 1e8).toFixed(0) : (Number(db.head.szln) / 1e8).toFixed(0)) + "亿↑"),
+                                React.createElement("span", { className: "yest" }, "昨日此时 " + (cp && cp.yes_now ? (Number(cp.yes_now) / 1e8).toFixed(0) + "亿" : "--")),
+                                React.createElement("span", { className: "yest" }, "昨日总计 " + (cp && cp.yest_total ? (Number(cp.yest_total) / 1e8).toFixed(0) + "亿" : "--")))))),
 
                 // ===== 题材库（Socket 实时, 前3条 + 更多进题材库页） =====
                 ((home && home.tika) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
@@ -2007,30 +2028,26 @@ window.__ModuleLoader__.load({
                                 s.name,
                                 React.createElement("b", { className: rateCls(s.pct) }, fmtRate(s.pct)),
                                 i < Math.min(home.poprank_hot.length, 3) - 1 && React.createElement("i", { className: "sep" }, "·")))),
-                    home.poprank.slice(0, 5).map((s, i) =>
+                    home.poprank.slice(0, 3).map((s, i) =>
                         React.createElement("div", {
-                            key: s.code, className: "kpl-pop2-row",
+                            key: s.code, className: "kpl-pop3-card",
                             onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
                         },
-                            React.createElement("span", { className: `rk ${i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : ""}` }, s.num || i + 1),
-                            React.createElement("div", { className: "main" },
-                                React.createElement("div", { className: "nm" },
-                                    s.name,
-                                    s.lb_status && React.createElement("i", { className: "lb" }, s.lb_status),
-                                    s.rank_change ? React.createElement("span", {
-                                        className: `kpl-pop2-rc ${s.rank_change > 0 ? "up" : "down"}`,
-                                    }, (s.rank_change > 0 ? "↑" : "↓") + Math.abs(s.rank_change)) : null),
-                                (s.zt_reason || (s.tags || []).length > 0) && React.createElement("div", { className: "cd" },
+                            React.createElement("div", { className: "r1" },
+                                React.createElement("span", { className: `rk ${i === 0 ? "c1" : i === 1 ? "c2" : "c3"}` }, i + 1),
+                                React.createElement("b", { className: "nm" }, s.name),
+                                React.createElement("span", { className: "cd" }, s.code),
+                                React.createElement("span", { className: "sp" }),
+                                React.createElement("b", { className: `pct ${rateCls(s.pct)}` }, fmtRate(s.pct)),
+                                React.createElement("span", { className: "fire" }, "🔥", React.createElement("b", null, (s.hot_val || 0).toLocaleString()))),
+                            React.createElement("div", { className: "r2" },
+                                s.rank_change ? React.createElement("span", {
+                                    className: `rc ${s.rank_change > 0 ? "up" : "down"}`,
+                                }, (s.rank_change > 0 ? "↑" : "↓") + Math.abs(s.rank_change)) : React.createElement("span", { className: "rc" }, "-"),
+                                (s.zt_reason || (s.tags || []).length > 0) && React.createElement("span", { className: "chips" },
                                     s.zt_reason && React.createElement("i", { className: "zr" }, s.zt_reason),
                                     (s.tags || []).slice(0, 1).map(t => React.createElement("i", { key: t.value, className: "tg" }, t.value)))),
-                            React.createElement("div", { className: "vals" },
-                                React.createElement("div", { className: "hot" },
-                                    React.createElement("b", null, (s.hot_val || 0).toLocaleString()),
-                                    React.createElement("span", { className: "lbl" }, "人气值")),
-                                s.rank_change != null && s.rank_change !== 0 && React.createElement("span", {
-                                    className: `rc ${s.rank_change > 0 ? "up" : "down"}`,
-                                }, Math.abs(s.rank_change) + (s.rank_change > 0 ? "↑" : "↓")),
-                                React.createElement("b", { className: `pct ${rateCls(s.pct)}` }, fmtRate(s.pct)))))),
+                            s.desc && React.createElement("div", { className: "desc" }, s.desc)))),
 
                 // ===== 严重异动提醒（偏离值监控，App 同款表格 UI） =====
                 ((home && home.yidong) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
@@ -6409,6 +6426,60 @@ window.__ModuleLoader__.load({
                 .kpl-f10-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
                 .kpl-f10-pills span { text-align: center; padding: 9px 2px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; color: #333; cursor: pointer; background: #fff; }
                 .kpl-f10-pills span.on { background: #e03131; border-color: #e03131; color: #fff; font-weight: 700; }
+                /* 首页 1:1 新块 */
+                .kpl-flash2 { background: #1a1a1a; border-radius: 12px; padding: 12px 14px; color: #fff; }
+                .kpl-flash2-head { display: flex; align-items: center; gap: 5px; margin-bottom: 8px; }
+                .kpl-flash2-head .t { font-size: 15px; font-weight: 700; color: #fff; }
+                .kpl-flash2-head .arr { color: #fff; }
+                .kpl-flash2-head .robot { margin-left: auto; font-size: 15px; }
+                .kpl-flash2-line { font-size: 14px; line-height: 1.7; color: #fff; margin-bottom: 6px; }
+                .kpl-flash2-line.sm { font-size: 12px; color: #ddd; margin-bottom: 4px; }
+                .kpl-flash2-line .tm { color: #ff6b6b; font-weight: 700; }
+                .kpl-flash2-body .ft { display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #333; padding-top: 7px; margin-top: 4px; }
+                .kpl-flash2-body .src { color: #999; font-size: 11px; }
+                .kpl-flash2-body .ai { color: #4dabf7; font-size: 12px; font-weight: 700; }
+                .kpl-theme2-row { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+                .kpl-theme2-row:last-child { border-bottom: none; }
+                .kpl-theme2-badge { width: 86px; height: 76px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 15px; font-weight: 700; text-align: center; flex-shrink: 0; line-height: 1.3; padding: 4px; }
+                .kpl-theme2-badge.red { background: linear-gradient(135deg, #e03131, #c92a2a); }
+                .kpl-theme2-badge.gold { background: linear-gradient(135deg, #f0a02a, #e8890c); }
+                .kpl-theme2-main { flex: 1; min-width: 0; }
+                .kpl-theme2-title { font-size: 14px; color: #111; line-height: 1.5; margin-bottom: 7px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                .kpl-theme2-stocks { display: flex; gap: 8px; }
+                .kpl-theme2-stock { display: inline-flex; gap: 5px; align-items: center; background: #f5f6f8; border-radius: 4px; padding: 4px 8px; font-size: 12px; }
+                .kpl-theme2-stock i { font-style: normal; color: #333; }
+                .kpl-theme2-stock b { font-weight: 700; }
+                .kpl-sec-head .date { color: #1c5fbb; font-size: 13px; font-weight: 600; }
+                .kpl-qd3 { display: flex; flex-direction: column; }
+                .kpl-qd3 .hd, .kpl-qd3 .rw { display: grid; grid-template-columns: 1.4fr .8fr .8fr 1fr; padding: 9px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px; align-items: center; }
+                .kpl-qd3 .hd { color: #999; font-size: 12px; }
+                .kpl-qd3 .rw { cursor: pointer; }
+                .kpl-qd3 .nm b { display: block; font-size: 14px; color: #111; }
+                .kpl-qd3 .nm i { font-style: normal; color: #999; font-size: 11px; }
+                .kpl-qd3 .st { font-weight: 700; color: #111; }
+                .kpl-qd3 .pct { text-align: right; }
+                .kpl-qd3 .pct b { font-size: 14px; }
+                .kpl-qd3 .pl { color: #1c5fbb; font-size: 12px; text-align: right; line-height: 1.4; }
+                .kpl-qd3 .lock { text-align: center; padding: 10px 0 2px; color: #e03131; font-size: 13px; font-weight: 600; }
+                .kpl-pop3-card { padding: 10px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+                .kpl-pop3-card:last-child { border-bottom: none; }
+                .kpl-pop3-card .r1 { display: flex; align-items: center; gap: 7px; }
+                .kpl-pop3-card .rk { width: 22px; height: 22px; border-radius: 4px; color: #fff; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+                .kpl-pop3-card .rk.c1 { background: #e03131; }
+                .kpl-pop3-card .rk.c2 { background: #f08c00; }
+                .kpl-pop3-card .rk.c3 { background: #e8b40c; }
+                .kpl-pop3-card .nm { font-size: 15px; color: #111; }
+                .kpl-pop3-card .cd { color: #999; font-size: 12px; }
+                .kpl-pop3-card .sp { flex: 1; }
+                .kpl-pop3-card .pct { font-size: 15px; }
+                .kpl-pop3-card .fire { color: #e03131; font-size: 12px; display: inline-flex; gap: 2px; align-items: center; }
+                .kpl-pop3-card .fire b { color: #e03131; }
+                .kpl-pop3-card .r2 { display: flex; gap: 7px; align-items: center; margin-top: 5px; font-size: 12px; }
+                .kpl-pop3-card .rc.up { color: #e03131; }
+                .kpl-pop3-card .rc.down { color: #2f9e44; }
+                .kpl-pop3-card .zr { font-style: normal; color: #e8590c; border: 1px solid #e8590c; border-radius: 3px; padding: 0 4px; }
+                .kpl-pop3-card .tg { font-style: normal; color: #1c5fbb; border: 1px solid #1c5fbb; border-radius: 3px; padding: 0 4px; }
+                .kpl-pop3-card .desc { margin-top: 6px; font-size: 12px; color: #888; line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
                 .kpl-f10-sec { margin-bottom: 12px; }
                 .kpl-f10-sec .st { font-size: 14px; font-weight: 700; color: #111; margin-bottom: 5px; }
                 .kpl-f10-sec .st .tagi { font-style: normal; font-size: 10px; color: #fff; background: #e8590c; border-radius: 2px; padding: 0 3px; margin-left: 6px; vertical-align: 1px; }

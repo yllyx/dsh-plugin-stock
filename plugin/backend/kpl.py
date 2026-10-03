@@ -754,6 +754,43 @@ class KplClient:
         futs["tuyere"] = pool.submit(self.call, HOST_ART, "ForumsTuyere", "GetHotSearch", {}, False)
         # 6. 市场情绪（今日/昨日 涨停家数/封板率/跌停数）—— 复用情绪历史前两条
         futs["sent"] = pool.submit(self.get_sentiment_history)
+        # 6.5 首页量能对照行（App：上证量能/沪深京量能 + 昨日此时/昨日总计）
+        #     = MarketCapacity Type=1(上证)/Type=4(沪深京)，trends 末条 cur=今日 yes=昨日此时，昨日单日 last=昨日总计
+        def _cap_ln(ctype, day=None):
+            host = "https://apphwhq.kaipanla.com/w1/api/index.php" if not day else "https://apphis.kaipanla.com/w1/api/index.php"
+            ctl = "HomeDingPan" if not day else "HisHomeDingPan"
+            act = "MarketCapacity" if not day else "MarketSCLN"
+            biz = {"Type": ctype} if not day else {"Date": day.replace("-", ""), "Type": ctype}
+            d = self.call(host, ctl, act, biz, False)
+            info = (d or {}).get("info") or {}
+            tr = info.get("trends") or []
+            last_ln = None
+            if tr:
+                tail = tr[-1]
+                try:
+                    last_ln = {"cur": int(float(tail[1])), "yes": int(float(tail[2]))}
+                except Exception:
+                    last_ln = None
+            return {"last": info.get("last"), "yclnstr": info.get("yclnstr"), "tail": last_ln}
+        def _cap_ln_pair(ctype, prev_day):
+            today = _cap_ln(ctype)
+            yest = _cap_ln(ctype, prev_day) if prev_day else {}
+            return {"cur": today.get("last"),
+                    "yes_now": (today.get("tail") or {}).get("yes"),
+                    "yest_total": yest.get("last")}
+
+        # 首页情绪模块量能对照（异步计算，不阻塞主 fetch）
+        def _cap_ln_async():
+            try:
+                from trade_calendar import get_cal
+                prev = get_cal().prev_trading_day(time.strftime("%Y-%m-%d"))
+                out["capln"] = {
+                    "sh": _cap_ln_pair("1", prev),
+                    "hsjk": _cap_ln_pair("4", prev),
+                }
+            except Exception as e:
+                logger.debug(f"capln: {e}")
+        pool.submit(_cap_ln_async)
 
         items = ((futs["news"].result() or {}).get("List")) or []
         explain = next((it for it in items if str(it.get("Type")) == "39"), None)
@@ -796,7 +833,9 @@ class KplClient:
         except Exception:
             out["yidong"] = []
         try:
-            out["qiangdu"] = (futs["qd"].result() or {}).get("list") or []
+            qd_ret = futs["qd"].result() or {}
+            out["qiangdu"] = qd_ret.get("list") or []
+            out["qiangdu_day"] = qd_ret.get("day") or ""
         except Exception:
             out["qiangdu"] = []
         try:

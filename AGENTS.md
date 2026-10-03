@@ -225,6 +225,7 @@ git push origin main --tags
 - **功能宫格 40 项官方配置实锤**：App 本地 KPL_CACHE 库 `SEARCH_FUNC_STOCK_BEAN` 表（root 导出）=搜索页/宫格的权威配置：ID/FUNC_NAME/FUNC_IMG(CDN 图标)/ANDVID(0=H5 webview，>0=原生 Activity)/ANDVURL/JUMP_TITLE/ALIAS(搜索别名)。40 项全列落盘 `backend/static/kpl_func_grid.json`（app_only 标记 6 项 App 账号功能：功能介绍/我的客服/兑换码/消息提示/积分商城/我的特权）。`GET /api/kpl/funcgrid` 直出。
 - **下钻分发改前端 route(id)**：复用已有 13 页（实时龙虎榜/市场情绪/题材库/快讯/最强风口/风向标/市场风口/人气榜/严重异动/避雷啦/我的版面/全球指数/大盘直播=直播页），新增 5 页：**KplFuncGridPage**（4 列宫格 40 项 CDN 图标）、**KplRadarPage**（市场雷达=marketfeed 2101 items 时间线）、**KplNorthPage**（沪深港通=NorthboundFundsB+停发口径说明）、**KplNoticeCenterPage**（公告中心=快讯聚合 50 条；⚠️ CompanyNewsReportList 实测 StockID 必填无全市场流）、**func_pending** 占位页（大宗交易/百日新高/互动易/涨停委买/板块竞价异动/尾盘抢筹/板块叠加/复盘啦/商品现货/区间统计/ETF/业绩披露/股东追踪——ANDVID 原生页协议未逆向，骨架+空态）。
 - **首页新增「全部功能」入口卡**（风向标模块前）→ funcgrid 下钻。
+- **⭐ 首页 12 信息块 1:1 精修（2026-10-04，历史实拍 home_s1~s9 逐块对照）**：①最新主题=左色块大卡（红/金渐变 badge+标题两行 clamp+2 股价 chip 灰底）②最强风口=标题+蓝日期徽标+四列表头(股票名称/强度/涨跌幅/板块)+3 行+「🔓解锁查看更多数据」红字行（qd 返回补 day 字段）③**AI快讯=深色大卡**（黑底#1a1a1a 白字+时间红+首条全文+底部「来源：xx｜AI解读」，次 2 条摘要行）④人气榜=大卡×3（名次方块红/橙/黄+名称代码+涨幅+🔥人气值+排名变化↑↓+板块 chips+desc 全文灰字 clamp3）⑤情绪量能行接真数据：**MarketCapacity Type=1(上证)/Type=4(沪深京)，trends 末条 [cur,yes]=今日/昨日此时，昨日总计=HIS 单日 last**（home feed 新增 capln 字段异步计算）⑥明天炒什么=H5 热更页不在 dex（同最强风口旧案），⏸10-08 抓包。
 - **184 个原生 Activity 全清单**已解（androguard manifest，见 docs/home_page_map.md 附带 grep 命令）；App 首页 webview 本轮持续 ANR（互踢+主线程卡死）动态实拍受阻，首页模块顺序以默认版面（此前各模块已逐一复刻）为准；「我的版面」抽屉（PagerManagerFragment 排序管理）待 App 恢复后补实拍。
 
 ### ⭐ 个股详情页 1:1（2026-10-03 实拍 sd3~sd13，App=readtab/ui/activity/StockQuotationActivity）
