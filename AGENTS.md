@@ -220,6 +220,13 @@ git push origin main --tags
 
 
 
+### ⭐ 首页宫格体系 1:1（2026-10-04 逆向：功能位配置表=权威源，映射文档 kanpan_spec/docs/home_page_map.md）
+
+- **功能宫格 40 项官方配置实锤**：App 本地 KPL_CACHE 库 `SEARCH_FUNC_STOCK_BEAN` 表（root 导出）=搜索页/宫格的权威配置：ID/FUNC_NAME/FUNC_IMG(CDN 图标)/ANDVID(0=H5 webview，>0=原生 Activity)/ANDVURL/JUMP_TITLE/ALIAS(搜索别名)。40 项全列落盘 `backend/static/kpl_func_grid.json`（app_only 标记 6 项 App 账号功能：功能介绍/我的客服/兑换码/消息提示/积分商城/我的特权）。`GET /api/kpl/funcgrid` 直出。
+- **下钻分发改前端 route(id)**：复用已有 13 页（实时龙虎榜/市场情绪/题材库/快讯/最强风口/风向标/市场风口/人气榜/严重异动/避雷啦/我的版面/全球指数/大盘直播=直播页），新增 5 页：**KplFuncGridPage**（4 列宫格 40 项 CDN 图标）、**KplRadarPage**（市场雷达=marketfeed 2101 items 时间线）、**KplNorthPage**（沪深港通=NorthboundFundsB+停发口径说明）、**KplNoticeCenterPage**（公告中心=快讯聚合 50 条；⚠️ CompanyNewsReportList 实测 StockID 必填无全市场流）、**func_pending** 占位页（大宗交易/百日新高/互动易/涨停委买/板块竞价异动/尾盘抢筹/板块叠加/复盘啦/商品现货/区间统计/ETF/业绩披露/股东追踪——ANDVID 原生页协议未逆向，骨架+空态）。
+- **首页新增「全部功能」入口卡**（风向标模块前）→ funcgrid 下钻。
+- **184 个原生 Activity 全清单**已解（androguard manifest，见 docs/home_page_map.md 附带 grep 命令）；App 首页 webview 本轮持续 ANR（互踢+主线程卡死）动态实拍受阻，首页模块顺序以默认版面（此前各模块已逐一复刻）为准；「我的版面」抽屉（PagerManagerFragment 排序管理）待 App 恢复后补实拍。
+
 ### ⭐ 个股详情页 1:1（2026-10-03 实拍 sd3~sd13，App=readtab/ui/activity/StockQuotationActivity）
 
 - **页面结构（实拍定案）**：红头（◀开盘 logo + ◀▶ 同列表切股 + 融/板块 tag + 代码 + 🔍）→报价头（左大价+右 3×4 字段）→主力净/买/卖行→消息速递（涨停原因）→**左右横移两页**（页1=分时+右栏五档/分布/委托 tabs+分时成交；页2=K线：日/周/月/年/60/30/15/5 分周期+MA+成交量副图+主力净额副图+筹码+区间统计手势）→关联板块卡（group_tag）→**大 tab 区：盘口/盯盘/F10/涨停原因/新闻**（可横滑出 公告/机构纪要/研报/机构持仓——接口未逆向）→底部工具栏（▲/上证指数/预警/龙虎榜/笔记/加自选）。

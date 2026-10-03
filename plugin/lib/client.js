@@ -1888,6 +1888,12 @@ window.__ModuleLoader__.load({
                     qdRows.length > 0 && React.createElement("div", null, qdRows),
                     qdRows.length === 0 && React.createElement("div", { className: "kpl-empty" }, "盘中数据，收盘后清空")),
 
+                // ===== 全部功能宫格入口（App 搜索页宫格同款） =====
+                React.createElement("div", { className: "kpl-sec", style: { padding: "8px 12px" } },
+                    React.createElement("div", { className: "kpl-fg-entry", onClick: () => go({ page: "funcgrid" }) },
+                        React.createElement("span", { className: "ic" }, "▦"),
+                        React.createElement("span", { className: "t" }, "全部功能"),
+                        React.createElement("span", { className: "more" }, "›"))),
                 // ===== 风向标（App 同源 CWeatherVaneList：SZ 涨 3 卡 + XD 跌 3 卡） =====
                 React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
@@ -3902,6 +3908,126 @@ window.__ModuleLoader__.load({
                 children);
         }
 
+        /* ---- 功能宫格页（App 搜索功能宫格 40 项官方配置 1:1，kpl_func_grid.json）---- */
+
+        function KplFuncGridPage({ go }) {
+            const [items, setItems] = useState(null);
+            useEffect(() => { api("/api/kpl/funcgrid").then(setItems).catch(() => setItems([])); }, []);
+            // 官方 ID→插件下钻分发（复用已有页；app_only=App 账号功能不适用）
+            const route = (it) => {
+                const id = it.id;
+                if (id === "1" || id === "6") return go({ page: "lhb" });
+                if (id === "2") return go({ page: "market", sub: "live" });
+                if (id === "3") return go({ page: "sentiment" });
+                if (id === "4") return go({ page: "tika" });
+                if (id === "5") return go({ page: "func_grid_notice" });
+                if (id === "7") return go({ page: "func_pending", name: "复盘啦" });
+                if (id === "8") return go({ page: "func_pending", name: "商品现货" });
+                if (id === "9") return go({ page: "func_pending", name: "区间统计" });
+                if (id === "10") return go({ page: "func_h5", name: "机构增仓", url: "/insPosInc/incPlate.html" });
+                if (id === "12") return go({ page: "func_h5", name: "股东变更", url: "/web/Shareholder.html" });
+                if (id === "13") return go({ page: "func_pending", name: "股东追踪" });
+                if (id === "14") return go({ page: "func_pending", name: "大宗交易" });
+                if (id === "16") return go({ page: "func_north" });
+                if (id === "18") return go({ page: "func_pending", name: "百日新高" });
+                if (id === "19") return go({ page: "func_pending", name: "互动易" });
+                if (id === "20") return null;   // 我的版面=首页本体
+                if (id === "21") return go({ page: "themes" });
+                if (id === "23") return go({ page: "qiangdu" });
+                if (id === "24") return go({ page: "daban" });
+                if (id === "25") return go({ page: "fengkou" });
+                if (id === "26") return go({ page: "poprank" });
+                if (id === "27") return go({ page: "lhb", sub: "yizi" });
+                if (id === "28") return go({ page: "func_pending", name: "涨停委买" });
+                if (id === "29") return go({ page: "func_pending", name: "板块竞价异动" });
+                if (id === "30") return go({ page: "func_radar" });
+                if (id === "31") return go({ page: "func_pending", name: "尾盘抢筹" });
+                if (id === "32") return go({ page: "func_pending", name: "板块叠加" });
+                if (id === "33") return go({ page: "market", sub: "global" });
+                if (id === "34") return go({ page: "func_zte" });
+                if (id === "35") return go({ page: "func_pending", name: "严重异动提醒" });
+                if (id === "40") return go({ page: "func_pending", name: "ETF基金" });
+                if (id === "41") return go({ page: "func_pending", name: "业绩披露" });
+                if (id === "42") return go({ page: "avoid" });
+                return null;
+            };
+            const items2 = (items || []).filter((it) => !it.app_only);
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "全部功能", onBack: () => go({ page: "back" }) }),
+                React.createElement("div", { className: "kpl-fg-grid" },
+                    (items2 || []).map((it) => React.createElement("div", {
+                        key: it.id, className: "kpl-fg-cell",
+                        onClick: () => { const r = route(it); if (r) r(); },
+                    },
+                        React.createElement("img", { className: "ic", src: it.icon, loading: "lazy", onError: (e) => { e.target.style.visibility = "hidden"; } }),
+                        React.createElement("div", { className: "nm" }, it.name)))));
+        }
+
+        // 宫格下钻：市场雷达（marketfeed 2101 已订阅）
+        function KplRadarPage({ go }) {
+            const [d, setD] = useState(null);
+            const load = useCallback(async () => {
+                try { setD(await api("/api/kpl/marketfeed")); } catch (e) { /* */ }
+            }, []);
+            useEffect(() => { load(); }, [load]);
+            usePolling(load, 20000, []);
+            const items = ((d || {}).radar || {}).data && d.radar.data.items || [];
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "市场雷达", onBack: () => go({ page: "back" }) }),
+                items.length ? React.createElement("div", { className: "kpl-fg-radar" },
+                    items.map((r, i) => React.createElement("div", { key: i, className: "rw" },
+                        React.createElement("span", { className: "tm" }, r.ts ? fmtTs(Number(r.ts)) : "--"),
+                        React.createElement("span", { className: "st", style: { color: r.color == 1 ? "#e03131" : "#2f9e44" } }, r.status || ""),
+                        React.createElement("span", { className: "nm" }, r.name || ""),
+                        r.incRate != null ? React.createElement("b", { className: r.incRate >= 0 ? "up" : "down" }, Number(r.incRate).toFixed(2) + "%") : null)))
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, "雷达为盘中推送，下一交易日 9:30 起自动更新"));
+        }
+
+        // 宫格下钻：沪深港通·北向资金历史（NorthboundFundsB Day 序列）
+        function KplNorthPage({ go }) {
+            const [d, setD] = useState(null);
+            const load = useCallback(async () => {
+                try { setD(await api("/api/kpl/mood")); } catch (e) { /* */ }
+            }, []);
+            useEffect(() => { load(); }, [load]);
+            const nb = (d || {}).northbound || null;
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "沪深港通", onBack: () => go({ page: "back" }) }),
+                nb ? React.createElement("div", { className: "kpl-fg-north" },
+                    React.createElement("div", { className: "r1" },
+                        "北向资金（", d.day, "）:",
+                        React.createElement("b", null, " " + String(nb.totalB) + "亿")),
+                    React.createElement("div", { className: "r2" }, nb.sign || ""),
+                    Number(nb.status) > 0 ? React.createElement("div", { className: "kpl-mkt-tips", style: { padding: "8px 0" } },
+                        "盘中分钟走势与沪股通/深股通分项见 App；北向自 2024-08 起盘中停发实时值，App 同口径") : null,
+                    React.createElement("div", { className: "kpl-mkt-tips", style: { padding: "8px 0" } },
+                        "历史单日序列接口（NorthwardCapital 系）待逆向（10-08 抓包）"))
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, "加载中…"));
+        }
+
+        // 宫格下钻：公告中心（CompanyNotice 列表复用）
+        function KplNoticeCenterPage({ go }) {
+            const [list, setList] = useState(null);
+            const [err, setErr] = useState(null);
+            const load = useCallback(async () => {
+                try { const d = await api("/api/kpl/funcgrid_notice"); setList(d.list || []); setErr(null); }
+                catch (e) { setErr(e.message); }
+            }, []);
+            useEffect(() => { load(); }, [load]);
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "公告中心", onBack: () => go({ page: "back" }) }),
+                React.createElement(ErrorBox, { error: err }),
+                (list || []).length ? React.createElement("div", { className: "kpl-sd-news" },
+                    list.map((r, i) => React.createElement("a", {
+                        key: i, className: "nw lnk", href: r.pdf || "#", target: "_blank", rel: "noreferrer",
+                    },
+                        React.createElement("div", { className: "nt" }, r.title || ""),
+                        React.createElement("div", { className: "ns" }, r.date || "",
+                            React.createElement("i", null, " " + (r.src || "") + " PDF ▸")))))
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, list ? "暂无公告" : "加载中…"));
+        }
+
+
         function KplGlobalSub() {
             const [data, setData] = useState(null);
             const load = useCallback(async () => {
@@ -5289,6 +5415,14 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "mood_zte") content = React.createElement(KplZtePage, { go, day: drill.day });
                 else if (drill.page === "mood_withdraw") content = React.createElement(KplWithdrawPage, { go, day: drill.day });
                 else if (drill.page === "mood_weights") content = React.createElement(KplWeightsPage, { go, day: drill.day });
+                else if (drill.page === "funcgrid") content = React.createElement(KplFuncGridPage, { go });
+                else if (drill.page === "func_radar") content = React.createElement(KplRadarPage, { go });
+                else if (drill.page === "func_north") content = React.createElement(KplNorthPage, { go });
+                else if (drill.page === "func_grid_notice") content = React.createElement(KplNoticeCenterPage, { go });
+                else if (drill.page === "func_pending") content = React.createElement("div", { className: "kpl-page" },
+                    React.createElement(KplPageHeader, { title: drill.name || "功能页", onBack: () => go({ page: "back" }) }),
+                    React.createElement("div", { className: "kpl-mdd-empty" },
+                        (drill.name || "该功能") + " 页面骨架已就位，数据通道待 10-08 盘中抓包后点亮"));
                 else if (drill.page === "daban") content = React.createElement(KplDabanPage, { go });
                 else content = React.createElement(KplOverview, { go });
             } else if (activeNav === "home") {
@@ -6253,6 +6387,24 @@ window.__ModuleLoader__.load({
                 .kpl-sd-bar .it .ico { font-style: normal; font-size: 17px; color: #e03131; }
                 .kpl-sd-bar .it .ico.star { color: #e03131; }
                 .kpl-sd-bar .it b { font-weight: 700; }
+                /* 功能宫格 kpl-fg-* */
+                .kpl-fg-entry { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+                .kpl-fg-entry .ic { font-style: normal; color: #e03131; font-size: 16px; }
+                .kpl-fg-entry .t { font-size: 14px; font-weight: 700; color: #111; }
+                .kpl-fg-entry .more { margin-left: auto; color: #999; }
+                .kpl-fg-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 6px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px 8px; }
+                .kpl-fg-cell { display: flex; flex-direction: column; align-items: center; gap: 5px; cursor: pointer; }
+                .kpl-fg-cell .ic { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; background: #f7f8fa; }
+                .kpl-fg-cell .nm { font-size: 11px; color: #333; text-align: center; }
+                .kpl-fg-radar { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 4px 12px; }
+                .kpl-fg-radar .rw { display: flex; gap: 8px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid #f5f5f5; font-size: 12px; }
+                .kpl-fg-radar .rw:last-child { border-bottom: none; }
+                .kpl-fg-radar .tm { color: #999; flex-shrink: 0; }
+                .kpl-fg-radar .st { font-weight: 700; }
+                .kpl-fg-radar .nm { color: #111; flex: 1; }
+                .kpl-fg-north { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px; }
+                .kpl-fg-north .r1 { font-size: 14px; color: #111; margin-bottom: 6px; }
+                .kpl-fg-north .r2 { font-size: 12px; color: #666; }
                 /* F10 六宫格 kpl-f10-* */
                 .kpl-f10-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
                 .kpl-f10-pills span { text-align: center; padding: 9px 2px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; color: #333; cursor: pointer; background: #fff; }
@@ -7139,6 +7291,7 @@ window.__ModuleLoader__.load({
         return pluginModule.exports;
     },
 });
+
 
 
 

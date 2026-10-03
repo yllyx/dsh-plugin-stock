@@ -1622,6 +1622,32 @@ async def kpl_mood(day: str = ""):
     return await asyncio.to_thread(kpl_api.get_kpl().get_mood_page, day)
 
 
+@app.get("/api/kpl/funcgrid")
+async def kpl_func_grid():
+    """功能宫格 40 项官方配置（App KPL_CACHE SEARCH_FUNC_STOCK_BEAN 同源，含 CDN 图标/ANDVID 跳转类型/搜索别名）"""
+    import json as _json
+    from pathlib import Path
+    p2 = Path(__file__).parent / "static" / "kpl_func_grid.json"
+    return _json.loads(p2.read_text(encoding="utf-8"))
+
+
+@app.get("/api/kpl/funcgrid_notice")
+async def kpl_funcgrid_notice():
+    """公告中心：App 无全市场公告流（CompanyNewsReportList 实测需 StockID 必填），
+    用快讯聚合（PCNewsFlash 含公告类条目）+提示，个股公告在详情页公告 tab 已有。"""
+    def _f():
+        d = kpl_api.get_kpl().call("https://apparticle.longhuvip.com/w1/api/index.php", "PCNewsFlash",
+                                   "GetList", {"st": "50", "Type": "0", "Index": "0", "Date": ""}, False)
+        rows = []
+        for it in ((d or {}).get("List") or []):
+            if not isinstance(it, dict):
+                continue
+            title = str(it.get("Title") or it.get("Content") or "")[:80]
+            rows.append({"title": title, "date": str(it.get("Time") or ""), "src": str(it.get("Source") or "快讯"), "pdf": ""})
+        return {"list": rows}
+    return await asyncio.to_thread(_f)
+
+
 @app.get("/api/kpl/stockdetail/extras/{code}")
 async def kpl_stock_detail_extras(code: str, day: str = ""):
     """个股详情大 tab 数据（涨停原因历史/公司新闻/公告/研报/F10 三件套/主力监控）"""
