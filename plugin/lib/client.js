@@ -4762,42 +4762,125 @@ window.__ModuleLoader__.load({
         }
 
         // F10 完整版（公司资料+财务表+主要指标图表）
-        function KplF10Sec({ code }) {
-            const [d, setD] = useState(null);
-            const [open, setOpen] = useState(false);
-            const [sub, setSub] = useState("fin");
-            useEffect(() => {
-                if (open && !d) api("/api/kpl/f10full/" + code).then(setD).catch(() => { });
-            }, [open, d, code]);
-            const fin = (d && d.finance) || [];
-            const ind = (d && d.indicators) || {};
-            const indKeys = Object.keys(ind);
-            const company = d && d.company;
-            return React.createElement("div", { className: "kpl-mkt-sec" },
-                React.createElement("div", { className: "kpl-mkt-sec-t" }, "F10",
-                    React.createElement("span", { className: "kpl-mkt-tips kpl-dswitch", onClick: () => setOpen(!open) },
-                        open ? "收起 ▲" : "展开 ▼")),
-                open ? React.createElement("div", { className: "kpl-dtabs" },
-                    [["fin", "财务"], ["ind", "主要指标"], ["company", "公司资料"]].map(function (pair) {
-                        return React.createElement("span", {
-                            key: pair[0], className: "kpl-dtab" + (sub === pair[0] ? " on" : ""),
-                            onClick: function () { setSub(pair[0]); },
-                        }, pair[1]);
-                    })) : null,
-                open && sub === "fin" ? (fin.length ? React.createElement("div", { className: "kpl-mkt-ztlist" },
-                    fin.map((r, i) => React.createElement("div", { key: i, className: "kpl-mkt-broadcast" },
-                        "报告期 ", r[17] || r[16] || "--", "：营收 ", r[1], " / 净利 ", r[2], " / 扣非 ", r[3],
-                        " / EPS ", r[4], " / ROE ", r[10])))
-                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "暂无财务数据")) : null,
-                open && sub === "ind" ? (indKeys.length ? indKeys.map(function (key) {
-                    const arr = (ind[key] || []).slice(0, 6);
-                    return React.createElement("div", { key: key, className: "kpl-mkt-broadcast" },
-                        React.createElement("b", null, key), "：",
-                        arr.map(x => (x.name || "") + " " + (x.value != null ? Number(x.value) : "")).join(" ｜ "));
-                }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, "暂无指标数据")) : null,
-                open && sub === "company" ? React.createElement("div", { className: "kpl-mkt-broadcast" },
-                    company ? JSON.stringify(company).slice(0, 600) : "暂无公司资料") : null);
+        function KplF10Sec({ code, exTick }) {
+            // App F10 tab 1:1（2026-10-03 实拍 f10_4~f10_13）：六宫格 chips + 各子页。
+            // 数据=StockF10Basic/GetIndex 全家桶（Concept/Topic/Company/Finance/Record/YJPL）+extras 大事提醒。
+            const [sub, setSub] = useState("操控必读");
+            const [expanded, setExpanded] = useState({});
+            const ex0 = window.__kplSdEx && window.__kplSdEx[code];
+            void exTick;   // extras 到达时父组件重渲染传入新值，触发本组件重渲染读取 window 缓存
+            const f10 = ex0 && ex0.f10index;
+            const pill = (name) => React.createElement("span", {
+                key: name, className: sub === name ? "on" : "", onClick: () => setSub(name),
+            }, name);
+            const pills = React.createElement("div", { className: "kpl-f10-pills" },
+                pill("操控必读"), pill("大事提醒"), pill("概念题材"),
+                pill("公司资料"), pill("股本股东"), pill("财务分析"));
+            if (!f10) return React.createElement("div", { className: "kpl-f10" },
+                pills, React.createElement("div", { className: "kpl-mdd-empty" }, "加载中…"));
+            const concepts = f10.Concept || [];
+            const topics = f10.Topic || [];
+            const comp = f10.Company || {};
+            const fin = f10.Finance || {};
+            const rec = f10.Record || null;
+            const yjpl = f10.YJPL || {};
+            const trim = (t, k) => {
+                const s = String(t || "");
+                if (expanded[k] || s.length <= 90) return s;
+                return s.slice(0, 90) + "…";
+            };
+            const expLink = (k, s) => String(s || "").length > 90 ? React.createElement("a", {
+                className: "exp", onClick: () => setExpanded(Object.assign({}, expanded, { [k]: !expanded[k] })),
+            }, expanded[k] ? " 收起 ▲" : " 展开 ▼") : null;
+            let body = null;
+            if (sub === "操控必读") {
+                // 操控必读=概念+要点+业绩预告 摘要卡（App 同源内容，红选默认）
+                body = React.createElement("div", null,
+                    concepts.slice(0, 3).map((c2, i) => React.createElement("div", { key: "c" + i, className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, c2.CName || ""),
+                        React.createElement("div", { className: "tx" },
+                            trim(c2.Analysis, "c" + i),
+                            expLink("c" + i, c2.Analysis)))),
+                    rec ? React.createElement("div", { className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, "业绩预告 ",
+                            React.createElement("em", { className: "tagi" }, rec.Type || "")),
+                        React.createElement("div", { className: "tx" }, rec.Descn || ""),
+                        React.createElement("div", { className: "ns" }, "发布于 " + (rec.Date || ""))) : null,
+                    yjpl && yjpl.Mess ? React.createElement("div", { className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, "业绩点评"),
+                        React.createElement("div", { className: "tx", dangerouslySetInnerHTML: { __html: yjpl.Mess.Conts || "" } })) : null);
+            } else if (sub === "大事提醒") {
+                const rem = (ex0 && ex0.reminder) || [];
+                body = rem.length ? React.createElement("div", { className: "kpl-f10-rem" },
+                    rem.map((r, i) => React.createElement("div", { key: i, className: "rw" },
+                        React.createElement("div", { className: "dt" },
+                            React.createElement("b", null, r.Date ? String(r.Date).slice(5) : ""),
+                            React.createElement("i", null, r.Date ? String(r.Date).slice(0, 4) : "")),
+                        React.createElement("div", { className: "ct" },
+                            React.createElement("div", { className: "tt" }, r.title || (r.type === 2 ? "龙虎榜" : "发布公告")),
+                            r.content ? React.createElement("div", { className: "tx" }, r.content) : null,
+                            r.Buy != null ? React.createElement("div", { className: "tx" },
+                                "上榜净额：", React.createElement("b", { className: "up" },
+                                    formatYi((Number(r.Buy) || 0) - (Number(r.Sell) || 0) / 1e8 >= 0 ? (Number(r.Buy) - Number(r.Sell)) : (Number(r.Buy) - Number(r.Sell))))) : null))))
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, "暂无大事提醒");
+            } else if (sub === "概念题材") {
+                body = React.createElement("div", null,
+                    concepts.map((c2, i) => React.createElement("div", { key: i, className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, c2.CName || ""),
+                        React.createElement("div", { className: "tx" },
+                            trim(c2.Analysis, "cc" + i),
+                            expLink("cc" + i, c2.Analysis)))),
+                    topics.map((t, i) => React.createElement("div", { key: "t" + i, className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, t.CName || ""),
+                        React.createElement("div", { className: "tx" },
+                            trim(t.Analysis, "tt" + i),
+                            expLink("tt" + i, t.Analysis)))));
+            } else if (sub === "公司资料") {
+                const zl = comp.ZL || [];
+                const cp = comp.CP || [];
+                body = React.createElement("div", { className: "kpl-f10-co" },
+                    React.createElement("div", { className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, "详细资料"),
+                        [["办公地址", zl[0]], ["所属行业", zl[1]], ["主营业务", zl[2]]].map((p, i) =>
+                            React.createElement("div", { key: i, className: "row" },
+                                React.createElement("span", { className: "k" }, p[0]),
+                                React.createElement("span", { className: "v" }, p[1] || "--")))),
+                    cp.length ? React.createElement("div", { className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, "主营构成"),
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", null, "构成"), React.createElement("span", null, "收入"),
+                            React.createElement("span", null, "占比")),
+                        cp.map((r, i) => React.createElement("div", { key: i, className: "row3" },
+                            React.createElement("span", null, r.Constitute || "--"),
+                            React.createElement("span", null, r.InCome || "--"),
+                            React.createElement("span", { className: "up" }, r.Rate || "--")))) : null);
+            } else if (sub === "股本股东") {
+                // 股东人数序列（App 柱线图同源数据未单独下发——由 Finance 侧无，留时间线；实际通道⏸10-08）
+                body = React.createElement("div", { className: "kpl-f10-sec" },
+                    React.createElement("div", { className: "st" }, "股本股东"),
+                    React.createElement("div", { className: "kpl-mkt-tips", style: { padding: "6px 0" } },
+                        "股东人数序列通道待接入（10-08 盘中抓包），分红方案见下"),
+                    React.createElement("div", { className: "hd" },
+                        React.createElement("span", null, "方案"), React.createElement("span", null, "进度"),
+                        React.createElement("span", null, "报告期")));
+            } else {
+                // 财务分析：GJZB 主要指标 序列（App 柱线图同源：营收/净利/同比）
+                const keys = Object.keys(fin);
+                body = React.createElement("div", { className: "kpl-f10-fin" },
+                    React.createElement("div", { className: "st" }, "主要指标"),
+                    React.createElement("div", { className: "chips" },
+                        keys.map((k2) => React.createElement("span", { key: k2 }, k2))),
+                    keys.map((k2) => React.createElement("div", { key: k2, className: "kpl-f10-sec" },
+                        React.createElement("div", { className: "st" }, k2),
+                        (fin[k2] || []).slice(0, 6).map((r, i) => React.createElement("div", { key: i, className: "row3" },
+                            React.createElement("span", null, "第" + (i + 1) + "期"),
+                            React.createElement("span", null, r[0] || "--"),
+                            React.createElement("span", { className: Number(String(r[2]).replace("%", "")) >= 0 ? "up" : "down" }, r[2] || "--"))))));
+            }
+            return React.createElement("div", { className: "kpl-f10" }, pills, body);
         }
+
+
 
         // 个股分时区块（GetStockTrend：现价线+均价线+昨收基准）
         function KplStockTrendSec({ code }) {
@@ -4860,7 +4943,12 @@ window.__ModuleLoader__.load({
             const [ex, setEx] = useState(null);
             useEffect(() => {
                 let alive = true;
-                api("/api/kpl/stockdetail/extras/" + stock.code).then((x) => { if (alive) setEx(x); }).catch(() => { });
+                api("/api/kpl/stockdetail/extras/" + stock.code).then((x) => {
+                    if (!alive) return;
+                    setEx(x);
+                    window.__kplSdEx = window.__kplSdEx || {};
+                    window.__kplSdEx[stock.code] = x;
+                }).catch(() => { });
                 return () => { alive = false; };
             }, [stock.code]);
             useEffect(() => {
@@ -5014,7 +5102,7 @@ window.__ModuleLoader__.load({
                         React.createElement("div", { key: i, className: "pk" }, p))));
             }
             // 六大 tab
-            const f10blk = React.createElement(KplF10Sec, { code: stock.code });
+            const f10blk = React.createElement(KplF10Sec, { code: stock.code, exTick: ex ? 1 : 0 });
             const ztrs = ex && ex.ztrs;
             const newsRows = (ex && ex.news) || [];
             const noticeRows = (ex && ex.notices) || [];
@@ -6165,6 +6253,32 @@ window.__ModuleLoader__.load({
                 .kpl-sd-bar .it .ico { font-style: normal; font-size: 17px; color: #e03131; }
                 .kpl-sd-bar .it .ico.star { color: #e03131; }
                 .kpl-sd-bar .it b { font-weight: 700; }
+                /* F10 六宫格 kpl-f10-* */
+                .kpl-f10-pills { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+                .kpl-f10-pills span { text-align: center; padding: 9px 2px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; color: #333; cursor: pointer; background: #fff; }
+                .kpl-f10-pills span.on { background: #e03131; border-color: #e03131; color: #fff; font-weight: 700; }
+                .kpl-f10-sec { margin-bottom: 12px; }
+                .kpl-f10-sec .st { font-size: 14px; font-weight: 700; color: #111; margin-bottom: 5px; }
+                .kpl-f10-sec .st .tagi { font-style: normal; font-size: 10px; color: #fff; background: #e8590c; border-radius: 2px; padding: 0 3px; margin-left: 6px; vertical-align: 1px; }
+                .kpl-f10-sec .tx { font-size: 13px; color: #333; line-height: 1.75; }
+                .kpl-f10-sec .tx .exp { color: #1c5fbb; cursor: pointer; }
+                .kpl-f10-sec .ns { font-size: 11px; color: #999; margin-top: 3px; }
+                .kpl-f10-rem .rw { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f5f5f5; }
+                .kpl-f10-rem .rw:last-child { border-bottom: none; }
+                .kpl-f10-rem .dt { text-align: center; flex-shrink: 0; width: 48px; }
+                .kpl-f10-rem .dt b { display: block; font-size: 14px; color: #111; }
+                .kpl-f10-rem .dt i { font-style: normal; font-size: 10px; color: #999; }
+                .kpl-f10-rem .ct { flex: 1; min-width: 0; }
+                .kpl-f10-rem .ct .tt { font-size: 14px; font-weight: 700; color: #111; }
+                .kpl-f10-rem .ct .tx { font-size: 12px; color: #666; line-height: 1.6; margin-top: 2px; }
+                .kpl-f10-co .row { display: flex; padding: 8px 0; border-bottom: 1px dashed #f0f0f0; font-size: 13px; }
+                .kpl-f10-co .row .k { color: #999; width: 72px; flex-shrink: 0; }
+                .kpl-f10-co .row .v { color: #333; flex: 1; line-height: 1.5; }
+                .kpl-f10-co .hd, .kpl-f10-co .row3 { display: grid; grid-template-columns: 2fr 1fr .8fr; padding: 7px 0; font-size: 12px; border-bottom: 1px solid #f5f5f5; }
+                .kpl-f10-co .hd { color: #999; }
+                .kpl-f10-co .row3 span:not(:first-child) { text-align: right; }
+                .kpl-f10-fin .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+                .kpl-f10-fin .chips span { font-size: 11px; color: #666; background: #f5f6f8; border-radius: 3px; padding: 3px 8px; }
                 .kpl-sdp-chart .cvtabs { display: flex; gap: 4px; margin-bottom: 8px; }
                 .kpl-sdp-chart .cvtabs span { padding: 4px 14px; border-radius: 12px; font-size: 12px; color: #666; background: #f5f5f5; cursor: pointer; }
                 .kpl-sdp-chart .cvtabs span.on { background: #e03131; color: #fff; font-weight: 700; }
@@ -7025,6 +7139,7 @@ window.__ModuleLoader__.load({
         return pluginModule.exports;
     },
 });
+
 
 
 

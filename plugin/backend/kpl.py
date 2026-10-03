@@ -1265,6 +1265,9 @@ class KplClient:
             "monitor": pool.submit(self.call, HQ, "StockYiDongKanPan", "StockMainMonitor",
                                    {"StockID": str(code), "Money": "300000", "Sort": "1",
                                     "Type": "1", "Order": "0", "Index": "0", "st": "30"}, False),
+            # F10 全家桶：GetIndex 一个接口返回 Concept/Topic/Company/Finance/Record/YJPL（2026-10-03 实测定案）
+            "f10index": pool.submit(self.call, ART, "StockF10Basic", "GetIndex",
+                                    {"StockID": str(code)}, False),
         }
         g = lambda k: futs[k].result()
         def _list3(d):
@@ -1285,6 +1288,8 @@ class KplClient:
             "company": ((g("company") or {}).get("List") or {}),
             "finance": _list3(g("finance")),
             "monitor_vip": True,
+            # ⭐ GetIndex 数据在顶层（无 info 包裹，实测；与 ox0 其它接口相反）
+            "f10index": g("f10index") or {},
         }
         if out["ztrs"] or out["news"]:
             self._cache[key] = {"data": out, "ts": time.time()}
