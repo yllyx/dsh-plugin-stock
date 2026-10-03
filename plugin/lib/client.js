@@ -4932,6 +4932,7 @@ window.__ModuleLoader__.load({
                         React.createElement("span", { className: "cd" }, stock.code))),
                 lst && idx < lst.length - 1 ? React.createElement("span", { className: "nav", onClick: () => jump(1) }, "▶") : React.createElement("span", { className: "nav dis" }, "▶"),
                 React.createElement("span", { className: "sch", onClick: () => go({ page: "search" }) }, "🔍")));
+            const netIn = q ? (q.amount_in || 0) - (q.amount_out || 0) : 0;
             if (q) {
                 // 报价头（App：左大价+右侧 3×4 字段）
                 kids.push(React.createElement("div", { key: "q", className: "kpl-stock-quote" },
@@ -4948,7 +4949,6 @@ window.__ModuleLoader__.load({
                                 React.createElement("span", { className: "k" }, k2),
                                 React.createElement("span", { className: "v" }, v))))));
                 // 主力净/买/卖 行
-                const netIn = (q.amount_in || 0) - (q.amount_out || 0);
                 kids.push(React.createElement("div", { key: "zl", className: "kpl-sd-mainrow" },
                     React.createElement("span", null, "主力净：", React.createElement("b", { className: cls(netIn) }, formatYi(netIn / 1e8))),
                     React.createElement("span", null, "主力买：", React.createElement("b", { className: "up" }, formatYi((q.amount_in || 0) / 1e8))),
@@ -5177,7 +5177,7 @@ window.__ModuleLoader__.load({
             let content;
             if (drill) {
                 if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
-                else if (drill.page === "stock") content = React.createElement(KplStockDetail, { stock: drill.stock, go });
+                else if (drill.page === "stock") content = React.createElement(kplGuard(KplStockDetail, "个股详情"), { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
                 else if (drill.page === "lhb") content = React.createElement(KplLhbPage, { go });
                 else if (drill.page === "lhbBiz") content = React.createElement(KplLhbBizDetail, { id: drill.id, name: drill.name, go });
