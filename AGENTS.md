@@ -112,6 +112,26 @@ git push origin main --tags
 | 0.4.1 | **投资建议具体化+自动进化闭环+真实日历**：建议接入东财实时板块/龙头（SECTOR_BRIDGE桥接+148词库）、百度股市通真实日历（前值/预期/公布值，替换mock）、FOMC官方日期修正（原编造8错5）、事件→板块映射、进化循环（回填/学习/验证/日历，每日盘后自动） |
 | 未发版 | **🚀 开盘啦登录协议逆向完成并实现**（详见下方「开盘啦登录协议」小节）：短信验证码登录+账号密码登录+自动重登，前端三模式登录卡 |
 
+### ⭐ 纯 Python 签名（算法级白盒逆向，2026-10-02 主体攻克，tag 一环待续）
+
+**目标**：`sign(challenge, device_id, conn_type, server_time)` 为后端纯 Python 函数，删 Java/unicorn/26MB signer 部署物。**已完成 95%**：明文组装/IV 规则/密文管线/H 全部逐位复现（`backend/kpl_sign_whitebox.py` 自校验通过，金标 `backend/golden.json`）。
+
+**已定案（全部逐位验证）**：
+- **明文组装**（67B）：`kp26` + deviceId + `1` + `6.3.20.0` + `129`(channelID) + connType + serverTime + `w48`（versionName 前有个固定 "1"）
+- **sig 布局**（95B）= `challenge[:12]`(ASCII, 即 IV) + 密文(与明文等长) + tag(16)
+- **GCM CTR**：密文块 n(0起) = 明文块 ⊕ keystream；keystream = **wb_block(IV‖be32(n+2)) 的 word 反转**（大端 w3w2w1w0），首块用 IV‖2（NIST incr(J0)）；部分块取前 len 字节
+- **白盒 SM4 块函数 wb_block**（复刻 `wbsm4_wsise_encrypt`，unicorn 逐位对拍 7/7 块全中）：
+  - ctx 表 283KB（固化 `backend/wb_ctx_dump.bin`）≈ middle_new.bin 经 set_key 后的全量常量；key 恒定 d6c8a0bcf7b472eb34751af6471877f4（EncryptInit_ex 边界 dump）
+  - 头 4 仿射：表 ctx+0x5280/0x5304/0x5388/0x540c，mask=输入 BE word
+  - 32 轮：每轮 5 次 affine（轮表序列固化 `backend/tbl_seq.json` 168 项，各块相同）+ **S 盒**（表 ctx+0x66a0，轮步进 ×0x2000；4 byte 子表偏移 {+0x804,+4,-0x7fc,-0xffc}，每 byte*8）→ 新状态 word = affine#4 输出 ^ affine#5(S 输出)；队列轮转 Q'=(q1,q2,new,q0)
+  - 尾 4 仿射 mask 顺序=(Q3,Q0,Q1,Q2)；affine 原语=**压缩仿射表**：TAB_A[256]（0/1 真值表，so 0xd6178）+TAB_B[32]（bit 基 0x80000000>>i），`out_bit[i]=TAB_A[fold(w[i]&mask)]`，fold=m^(m>>16) 后高低 8bit 异或；返回 acc^bias(stack[28])
+- **H = wb_block(0^16) = e5dce5e7acf56429c11d172238e8b454**（GCM 域乘用）；E(J0)=wb_block(IV‖1)=7b7c3037...； EncryptInit 走 **OpenSSL 3.x provider 架构**（evp_generic_fetch），default provider 需 add_builtin+try_load 激活
+
+**唯一缺口：tag(16B)**。金标 tag=ebb9b31fcfb3baf91c328640b9943ed3（GET_TAG@0x401effb0 读出）。已排除：标准 GHASH(H=e5dce5e7..., aad∈{空,IV,challenge,dev,...}, 长度块两种序, H/EJ0 的 word/字节反转变体全组合)、tag=wb_block(GHASH变体)。**线索**：①GHASH 不走 affineU32（unicorn trace=7×168 次块调用全覆盖，tag 算在 EVP 层）②wrapper 在 GET_TAG 后崩溃于 lr=0x102a4feb 的未绑定 GOT（修掉可拿完整 95B sig 金标+SET_TAG 前状态）③EVP ctx 0x500478e0 在崩溃时点已被清理（EK0/Yi 找不到）——下会话在 EncryptFinal 入口处 dump GCM ctx（Yi=GHASH 流式终态）反推 aad/长度块组成，或 hook GET_TAG 的写入点。
+
+**unicorn 模拟器修复清单**（kpl_signer_py.py，开发仪器已能完整跑 initBaxPwd+EncryptUpdate/Final，产物不发布）：SHT_DYNSYM=11（曾误写 6 致 DEFINED 符号全没注册）、R_ARM_RELATIVE(23) 重定位+base（12201 个，函数指针表全靠它；读 emu 内存非文件）、_fix_bare_vaddrs **必须停用**（会把表内小整数 id 误 +base 污染 core dispatch 表）、pthread_once/pthread_key_create/getspecific/setspecific 真语义（TLS 寄存器 UC_ARM_REG_C13_C0_3 指向分配块；__errno 返回真指针）、OpenSSL3 全局初始化链（OPENSSL_init_crypto(0)→OSSL_PROVIDER_add_builtin(default,ossl_default_provider_init@0x234ae4)→try_load；ADD_ALL 标志会鸡生蛋失败）、std::string 家族模拟器（libc++ 32 位 SSO 布局，Get*ArrayElements 返回原生指针非句柄、method id 存 name+sig）、AAsset 分块续读（可变 list）、零页 mem_map(0,0x1000)、.init_array 执行、ARM/THUMB 双模式 _call(arm=True)。
+
+
 ## 开盘啦登录协议（逆向自 App 6.3.20.0，mitmproxy 抓包+字节码双重验证）
 
 - **RSA 加密**：用 APK `assets/pub.key`（**RSA-2048** X.509 SPKI），PKCS#1 v1.5，输出 Java `Base64.encode(bytes,0)` 风格（76字符/行+\n，URL 编码后 349 字符/手机号）。⚠️ `assets/PublicKey`+`PrivateKey` 是另一对（服务端下发数据的解密对），**不是**加密钥对——曾误用 PrivateKey 解请求密文得 93B 乱码，走上弯路

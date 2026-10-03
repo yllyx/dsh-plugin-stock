@@ -1,0 +1,14 @@
+{
+ "challenge": "abcdef1234567890abcdef1234567890",
+ "device_id": "cff05554-1f7f-3d76-9392-1352a7ebeec4",
+ "conn_type": "99",
+ "server_time": "1789963509",
+ "iv": "abcdef123456",
+ "plaintext": "kp26cff05554-1f7f-3d76-9392-1352a7ebeec416.3.20.0129991789963509w48",
+ "ciphertext": "43790152803f43624fa747960af31ff61f18301cb53bf1c5aee0d5bdc49e1267b1fc7a23dfa666f0d21660eb55a940cb5e85b522d9048a962cbfc768417ab7ceea2f3a",
+ "tag": "ebb9b31fcfb3baf91c328640b9943ed3",
+ "H_wb": "e5dce5e7acf56429c11d172238e8b454",
+ "E_J0": "7b7c30376a72476df38b567fc44f1bed",
+ "sig_len": 95,
+ "sig_layout": "challenge[:12] + ciphertext(67) + tag(16)"
+}
