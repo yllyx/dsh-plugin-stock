@@ -4851,7 +4851,13 @@ window.__ModuleLoader__.load({
                 catch (e) { setError(e.message); }
             }, [stock.code]);
             usePolling(load, 10000, [stock.code]);
-            // 新闻 tab：从 AI快讯里过滤本股（App 新闻 tab 数据源待逆向，先给关联快讯）
+            // 大 tab 数据（涨停原因历史/新闻/公告/研报/F10 三件套，HIS 域 HTTP 已实锤）
+            const [ex, setEx] = useState(null);
+            useEffect(() => {
+                let alive = true;
+                api("/api/kpl/stockdetail/extras/" + stock.code).then((x) => { if (alive) setEx(x); }).catch(() => { });
+                return () => { alive = false; };
+            }, [stock.code]);
             useEffect(() => {
                 let alive = true;
                 api("/api/kpl/home").then((h) => {
@@ -5004,6 +5010,11 @@ window.__ModuleLoader__.load({
             }
             // 六大 tab
             const f10blk = React.createElement(KplF10Sec, { code: stock.code });
+            const ztrs = ex && ex.ztrs;
+            const newsRows = (ex && ex.news) || [];
+            const noticeRows = (ex && ex.notices) || [];
+            const researchRows = (ex && ex.research) || [];
+            const reminderRows = (ex && ex.reminder) || [];
             const bigBody = {
                 "盘口": q ? React.createElement("div", { className: "kpl-sd-pk3" },
                     [["开盘", formatNum(q.open)], ["最高", formatNum(q.high)], ["量比", formatNum(q.vol_ratio)],
@@ -5033,24 +5044,51 @@ window.__ModuleLoader__.load({
                             (q.amount || 0) > 0 ? (-((q.amount_out || 0) / q.amount * 100)).toFixed(2) + "%" : "--"),
                         React.createElement("span", { className: "down" }, formatYi((q.amount_out || 0) / 1e8))),
                     React.createElement("div", { className: "net" }, "主力净额：",
-                        React.createElement("b", { className: cls(netIn) }, formatYi(netIn / 1e8)))) : null,
+                        React.createElement("b", { className: cls(netIn) }, formatYi(netIn / 1e8))),
+                    React.createElement("div", { className: "kpl-mkt-tips", style: { padding: "6px 0 0" } },
+                        "主力监控逐笔明细为 App VIP 订阅功能（errcode 1018），插件如实标注")) : null,
                 "F10": f10blk,
-                "涨停原因": q && q.zt_reason ? React.createElement("div", { className: "kpl-sd-ztrs" },
-                    React.createElement("div", { className: "card" },
-                        React.createElement("em", { className: "lab" }, "涨停解析"),
-                        q.zt_reason),
-                    React.createElement("div", { className: "kpl-mkt-tips", style: { padding: "8px 2px" } },
-                        "历史涨停原因列表通道待逆向（10-08 盘中抓包）"))
-                    : React.createElement("div", { className: "kpl-mdd-empty" }, q ? "当日无涨停原因（非涨停股）" : "加载中…"),
-                "新闻": (news && news.length) ? React.createElement("div", { className: "kpl-sd-news" },
-                    news.slice(0, 8).map((f, i) => React.createElement("div", { key: i, className: "nw" },
-                        React.createElement("b", { className: "tm" }, f.time ? new Date(f.time * 1000).toTimeString().slice(0, 5) : ""),
-                        React.createElement("div", null, (f.title || (f.content || "").slice(0, 80)))))) 
-                    : React.createElement("div", { className: "kpl-mdd-empty" }, "暂无该股关联快讯"),
+                "涨停原因": React.createElement("div", { className: "kpl-sd-ztrs" },
+                    q && q.zt_reason ? React.createElement("div", { className: "card" },
+                        React.createElement("em", { className: "lab" }, "当日"),
+                        q.zt_reason) : null,
+                    ztrs ? React.createElement("div", { className: "card" },
+                        React.createElement("div", { className: "ztd" },
+                            React.createElement("span", { className: "blue" }, ztrs.reason || ""),
+                            React.createElement("i", { className: "tagi" }, "日内龙"),
+                            React.createElement("span", { className: "dt" }, ex.day)),
+                        ztrs.reason ? React.createElement("div", { className: "quote" }, ztrs.reason) : null,
+                        ztrs.bfreason ? React.createElement("div", { className: "bf" },
+                            React.createElement("em", { className: "lab o" }, "概念解析"),
+                            ztrs.bfreason) : null)
+                        : React.createElement("div", { className: "kpl-mdd-empty" }, ex ? "该日无涨停原因记录" : "加载中…")),
+                "新闻": newsRows.length ? React.createElement("div", { className: "kpl-sd-news" },
+                    newsRows.slice(0, 20).map((r, i) => React.createElement("div", { key: i, className: "nw" },
+                        React.createElement("div", { className: "nt" }, r[2] || ""),
+                        React.createElement("div", { className: "ns" },
+                            r[1] ? new Date(Number(r[1]) * 1000).toISOString().slice(5, 10) : "",
+                            React.createElement("i", null, " " + (r[3] || "")))))) 
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, ex ? "暂无公司新闻" : "加载中…"),
+                "公告": noticeRows.length ? React.createElement("div", { className: "kpl-sd-news" },
+                    noticeRows.slice(0, 20).map((r, i) => React.createElement("a", {
+                        key: i, className: "nw lnk", href: r[4] || r[3] || "#", target: "_blank", rel: "noreferrer",
+                    },
+                        React.createElement("div", { className: "nt" }, r[2] || ""),
+                        React.createElement("div", { className: "ns" },
+                            r[1] ? new Date(Number(r[1]) * 1000).toISOString().slice(0, 10) : "",
+                            React.createElement("i", null, " PDF ▸"))))) 
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, ex ? "暂无公告" : "加载中…"),
+                "研报": researchRows.length ? React.createElement("div", { className: "kpl-sd-news" },
+                    researchRows.slice(0, 20).map((r, i) => React.createElement("div", { key: i, className: "nw" },
+                        React.createElement("div", { className: "nt" }, r[2] || ""),
+                        React.createElement("div", { className: "ns" },
+                            r[1] ? new Date(Number(r[1]) * 1000).toISOString().slice(0, 10) : "",
+                            React.createElement("i", null, " " + (r[3] || "券商研报")))))) 
+                    : React.createElement("div", { className: "kpl-mdd-empty" }, ex ? "暂无研报" : "加载中…"),
             };
             kids.push(React.createElement("div", { key: "bt", className: "kpl-sd-bigtabs" },
                 React.createElement("div", { className: "tabs" },
-                    ["盘口", "盯盘", "F10", "涨停原因", "新闻"].map((t) => React.createElement("span", {
+                    ["盘口", "盯盘", "F10", "涨停原因", "新闻", "公告", "研报"].map((t) => React.createElement("span", {
                         key: t, className: bigTab === t ? "on" : "", onClick: () => setBigTab(t),
                     }, t))),
                 React.createElement("div", { className: "body" }, bigBody[bigTab] || null)));
@@ -6103,6 +6141,17 @@ window.__ModuleLoader__.load({
                 .kpl-sd-dp .net { text-align: right; padding-top: 10px; font-size: 13px; color: #666; }
                 .kpl-sd-ztrs .card { background: #f7f8fa; border-radius: 8px; padding: 10px 12px; font-size: 13px; color: #333; line-height: 1.7; margin-bottom: 8px; }
                 .kpl-sd-ztrs .lab { font-style: normal; color: #e8590c; font-weight: 700; margin-right: 6px; }
+                .kpl-sd-ztrs .ztd { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+                .kpl-sd-ztrs .ztd .blue { color: #1c5fbb; font-weight: 700; font-size: 13px; flex: 1; }
+                .kpl-sd-ztrs .ztd .tagi { font-style: normal; font-size: 10px; color: #e8590c; border: 1px solid #e8590c; border-radius: 2px; padding: 0 3px; }
+                .kpl-sd-ztrs .ztd .dt { color: #999; font-size: 11px; }
+                .kpl-sd-ztrs .quote { background: #f0f3f7; border-radius: 6px; padding: 8px 10px; font-size: 12px; color: #555; line-height: 1.6; margin-bottom: 8px; }
+                .kpl-sd-ztrs .bf { font-size: 13px; color: #333; line-height: 1.7; }
+                .kpl-sd-ztrs .lab.o { color: #e8590c; }
+                .kpl-sd-news .nw.lnk { display: block; text-decoration: none; }
+                .kpl-sd-news .nt { font-size: 13px; color: #111; line-height: 1.5; margin-bottom: 3px; }
+                .kpl-sd-news .ns { font-size: 11px; color: #999; }
+                .kpl-sd-news .ns i { font-style: normal; color: #1c5fbb; }
                 .kpl-sd-news .nw { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px solid #f5f5f5; font-size: 12px; }
                 .kpl-sd-news .tm { color: #999; flex-shrink: 0; }
                 .kpl-sd-news .nw > div { color: #333; line-height: 1.5; }

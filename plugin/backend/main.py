@@ -1622,6 +1622,12 @@ async def kpl_mood(day: str = ""):
     return await asyncio.to_thread(kpl_api.get_kpl().get_mood_page, day)
 
 
+@app.get("/api/kpl/stockdetail/extras/{code}")
+async def kpl_stock_detail_extras(code: str, day: str = ""):
+    """个股详情大 tab 数据（涨停原因历史/公司新闻/公告/研报/F10 三件套/主力监控）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_stock_detail_extras, code, day)
+
+
 @app.get("/api/kpl/plate/extras/{plate_id}")
 async def kpl_plate_extras(plate_id: str, day: str = ""):
     """板块详情增强（App IndexQuotationActivity：概要强度/排名 QJ+分时直播+机构纪要 InfoBKR）"""

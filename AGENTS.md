@@ -223,7 +223,16 @@ git push origin main --tags
 ### ⭐ 个股详情页 1:1（2026-10-03 实拍 sd3~sd13，App=readtab/ui/activity/StockQuotationActivity）
 
 - **页面结构（实拍定案）**：红头（◀开盘 logo + ◀▶ 同列表切股 + 融/板块 tag + 代码 + 🔍）→报价头（左大价+右 3×4 字段）→主力净/买/卖行→消息速递（涨停原因）→**左右横移两页**（页1=分时+右栏五档/分布/委托 tabs+分时成交；页2=K线：日/周/月/年/60/30/15/5 分周期+MA+成交量副图+主力净额副图+筹码+区间统计手势）→关联板块卡（group_tag）→**大 tab 区：盘口/盯盘/F10/涨停原因/新闻**（可横滑出 公告/机构纪要/研报/机构持仓——接口未逆向）→底部工具栏（▲/上证指数/预警/龙虎榜/笔记/加自选）。
-- **数据源映射**：报价头+盘口+盯盘=**GetStockPanKou**（已有 get_pankou：high/low/open/avg/换手/量比/振幅/涨跌停/内外界/市盈/市值/流通/amount_in/out——盯盘主力买卖占比即 amount_in/amount，实拍净额 1.45 亿与插件计算一致）；分时=GetStockTrend（已有）；K线=Stock/GetStockChart（已有 /api/kpl/kline，close[i]=[open,close,high,low] 530 根）；分时成交=GetStockFenBi（已有）；F10=StockF10Basic@apparticle（已有 f10full）；涨停原因当日=PanKou.ZTReason（已有）。**缺口⏸**：筹码分布/逐笔委托/大单筛选（大单封单/占比）/K线分钟周期（socket 2400/2402）/涨停原因历史列表/新闻-公告-机构纪要-研报-机构持仓 tab/区间统计——通道未逆向，页面留空态说明。
+- **数据源映射**：报价头+盘口+盯盘=**GetStockPanKou**（已有 get_pankou：high/low/open/avg/换手/量比/振幅/涨跌停/内外界/市盈/市值/流通/amount_in/out——盯盘主力买卖占比即 amount_in/amount，实拍净额 1.45 亿与插件计算一致）；分时=GetStockTrend（已有）；K线=Stock/GetStockChart（已有 /api/kpl/kline，close[i]=[open,close,high,low] 530 根）；分时成交=GetStockFenBi（已有）；F10=StockF10Basic@apparticle（已有 f10full）；涨停原因当日=PanKou.ZTReason（已有）。**缺口第二轮逆向（2026-10-03 晚，ox0 全 action 扫描+批量实测 8 接口一次通）**：
+  - **涨停原因历史**=`LimitResumption(HisLimitResumption 历史)/KLineZhangTingReason{StockID,Date}`（HQ=今日/HIS=历史；info={reason 概念串,bfreason 概念解析,autoLt,tiCai,group,sonTiCai}）——09-30 康希诺 reason 与 App 涨停原因 tab 逐字同；
+  - **新闻**=`CompanyNotice/CorporateNewsStockList{StockID,Index,st}`@HIS（List=["id_时间戳_标题_来源"]）；
+  - **公告**=`CompanyNotice/CompanyNewsReportList{StockID,Index,st,Type:0}`@HIS（…_PDF 链接 appdata.kaipanla.com）；
+  - **研报**=`CompanyNotice/ResearchFieldList{StockID,Type,Index,st}`@HIS（…_券商名_评级）+ResearchFieldGrades/ResearchFieldExcel；
+  - **F10 子接口族**=`StockF10Basic`@apparticle：BigReminderW43(大事提醒)/GetCompanyInfo(公司资料 ZYGCList 主营构成)/GetFinanceInfo{StockID,State:1,Type:1,DL}(财务 10 期)/GetDividends/GetValuation{StockID,year,key}/GetConceptw23+GetConceptTopic(概念)/GetIndex；
+  - **主力监控**（盯盘子 tab）=`StockYiDongKanPan/StockMainMonitor{StockID,Money:300000,Sort,Type,Order,Index,st}`@HQ——**errcode 1018 未订阅=App VIP 功能如实标注**；趋势版 GetMainMonitor_w30/GetMainMonitor_Trend_w30{StockID,Money,IsBS,(Time),Date}；
+  - **机构持仓**=HisHomeDingPan/InstitutionalPositionsInfo 系（StockInstitutionalPositions/InstitutionalShowDate/StockHoldingFund/FundManagerDetails{MGRID}）——实测需正确 Season 参数（盲试 null，⏸10-08 抓包 Season 格式）；
+  - **落地**：`/api/kpl/stockdetail/extras/{code}`（8 路并行 300s 缓存）+前端大 tab 扩为 盘口/盯盘/F10/涨停原因/新闻/公告/研报 七个（涨停原因=当日 PanKou+历史 reason/bfreason 双卡；新闻/公告(可点 PDF)/研报=列表）；
+  - **仍缺（HTTP 层未定位，10-08 抓包）**：筹码分布（StockChip/StockChipDetail/StockChipRealTime 实体在 readtab 但无 ox0 方法——可能客户端算法或独立控制器）、逐笔委托、K线分钟周期（GetStockChart Type=2/3/4 响应变 x/y 结构但数据空）、区间统计（RangeVolTur 实体）、机构纪要（个股版）。
 - **插件落地**：KplStockDetail 整函数重写（kpl-sd-* CSS 显式色值）：红头 ◀▶ 切股（stock.list/idx 上下文）、横移 touch swipe+双指示条、右栏 tabs、大 tab 区、底栏（上证指数=mkttrend、龙虎榜=go lhb_stock、加自选=watchlist）；K线页=loadKlineChart+/api/kpl/kline（日K 周期可用，其余周期空态待 socket）；新闻 tab=AI快讯按股票过滤（App 新闻源待逆向的过渡方案，标如实）。
 ### ⭐ App 本地存储全景 + 非交易日展示机制（2026-10-03 root 枚举实拍，全文 kanpan_spec/docs/local_storage_map.md）
 

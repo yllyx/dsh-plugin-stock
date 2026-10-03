@@ -1226,6 +1226,70 @@ class KplClient:
         threading.Thread(target=_bg, daemon=True).start()
         return building
 
+    def get_stock_detail_extras(self, code: str, day: str = "") -> Dict[str, Any]:
+        """个股详情页大 tab 数据（2026-10-03 逆向 ox0 实锤，接口全部一次实测通）：
+        - 涨停原因历史 = LimitResumption(His)/KLineZhangTingReason{StockID,Date}：reason+bfreason 双段
+        - 公司新闻 = CompanyNotice/CorporateNewsStockList{StockID,Index,st} @HIS（List=["id_时间_标题_来源"]）
+        - 公告(PDF) = CompanyNotice/CompanyNewsReportList{StockID,Index,st,Type} @HIS（…_PDF链接）
+        - 研报 = CompanyNotice/ResearchFieldList{StockID,Type,Index,st} @HIS
+        - F10：BigReminderW43(大事提醒)/GetCompanyInfo(公司资料)/GetFinanceInfo(财务) @apparticle
+        - 主力监控 = StockYiDongKanPan/StockMainMonitor @HQ——errcode 1018 未订阅（App 同为 VIP 盯盘功能）
+        300s 缓存。筹码/逐笔委托/分钟K/区间统计接口未在 HTTP 层定位（StockChip 系实体存在但无 ox0 方法），待盘中抓包。"""
+        day = day or self._mood_norm_day("")
+        key = f"sdex:{code}:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 300:
+            return hit["data"]
+        HQ = "https://apphwhq.kaipanla.com/w1/api/index.php"
+        HIS = "https://apphis.kaipanla.com/w1/api/index.php"
+        ART = "https://apparticle.longhuvip.com/w1/api/index.php"
+        from concurrent.futures import ThreadPoolExecutor
+        if not KplClient._mood_pool or KplClient._mood_pool[0]._shutdown:
+            KplClient._mood_pool = [ThreadPoolExecutor(max_workers=10)]
+        pool = KplClient._mood_pool[0]
+        futs = {
+            "ztrs": pool.submit(self.call, HIS, "HisLimitResumption", "KLineZhangTingReason",
+                                {"StockID": str(code), "Date": day}, False),
+            "news": pool.submit(self.call, HIS, "CompanyNotice", "CorporateNewsStockList",
+                                {"StockID": str(code), "Index": "0", "st": "20"}, False),
+            "notice": pool.submit(self.call, HIS, "CompanyNotice", "CompanyNewsReportList",
+                                  {"StockID": str(code), "Index": "0", "st": "20", "Type": "0"}, False),
+            "research": pool.submit(self.call, HIS, "CompanyNotice", "ResearchFieldList",
+                                    {"StockID": str(code), "Type": "0", "Index": "0", "st": "20"}, False),
+            "reminder": pool.submit(self.call, ART, "StockF10Basic", "BigReminderW43",
+                                    {"StockID": str(code), "Index": "0", "st": "20"}, False),
+            "company": pool.submit(self.call, ART, "StockF10Basic", "GetCompanyInfo",
+                                   {"StockID": str(code)}, False),
+            "finance": pool.submit(self.call, ART, "StockF10Basic", "GetFinanceInfo",
+                                   {"StockID": str(code), "State": "1", "Type": "1", "DL": ""}, False),
+            "monitor": pool.submit(self.call, HQ, "StockYiDongKanPan", "StockMainMonitor",
+                                   {"StockID": str(code), "Money": "300000", "Sort": "1",
+                                    "Type": "1", "Order": "0", "Index": "0", "st": "30"}, False),
+        }
+        g = lambda k: futs[k].result()
+        def _list3(d):
+            rows = []
+            for it in ((d or {}).get("List") or []):
+                if isinstance(it, list):
+                    rows.append(it)
+                elif isinstance(it, str):
+                    rows.append(it.split("_"))
+            return rows
+        out = {
+            "day": day, "code": code,
+            "ztrs": (g("ztrs") or {}).get("info") or None,
+            "news": _list3(g("news")),
+            "notices": _list3(g("notice")),
+            "research": _list3(g("research")),
+            "reminder": (g("reminder") or {}).get("info") or [],
+            "company": ((g("company") or {}).get("List") or {}),
+            "finance": _list3(g("finance")),
+            "monitor_vip": True,
+        }
+        if out["ztrs"] or out["news"]:
+            self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
     def get_plate_extras(self, plate_id: str, day: str = "") -> Dict[str, Any]:
         """板块详情下钻增强数据（2026-10-03 逆向 IndexQuotaTLinePresenter/IndexQuotationActivity）：
         - 概要 8 项 = ZhiShuRanking/GetPlate_Info_QJ{PlateID}（List=[排名,强度,成交额,涨停数,?,涨停封单,大单封单,?]，
