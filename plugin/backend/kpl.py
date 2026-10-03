@@ -1054,6 +1054,64 @@ class KplClient:
         self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    def get_plate_extras(self, plate_id: str, day: str = "") -> Dict[str, Any]:
+        """板块详情下钻增强数据（2026-10-03 逆向 IndexQuotaTLinePresenter/IndexQuotationActivity）：
+        - 概要 8 项 = ZhiShuRanking/GetPlate_Info_QJ{PlateID}（List=[排名,强度,成交额,涨停数,?,涨停封单,大单封单,?]，
+          09-30 实测强度 -174 与 App 逐位、成交额 59685254552=596.85 亿逐位）+ ZhiShuL2Data/GetPlateZF{StockID,Day}(涨幅因子)
+        - 分时 = ConceptionPoint/BKFenShiZhiBo{PlateID}（盘中直播分钟点，盘后空=App 亦靠本地缓存；
+          当日分钟订阅=socket 2202，10-08 盘中接入）
+        - 机构纪要 = Theme/InfoBKR{ZSCode} @applhb（实测 errcode=0）
+        60s 缓存。"""
+        day = self._mood_norm_day(day)
+        key = f"plateextras:{plate_id}:{day}"
+        hit = self._cache.get(key)
+        if hit and time.time() - hit["ts"] < 60:
+            return hit["data"]
+        HQ = "https://apphwhq.kaipanla.com/w1/api/index.php"
+        HIS = "https://apphis.kaipanla.com/w1/api/index.php"
+        LHB = "https://applhb.kaipanla.com/w1/api/index.php"
+        from concurrent.futures import ThreadPoolExecutor
+        if not KplClient._mood_pool or KplClient._mood_pool[0]._shutdown:
+            KplClient._mood_pool = [ThreadPoolExecutor(max_workers=8)]
+        pool = KplClient._mood_pool[0]
+        futs = {
+            "qj": pool.submit(self.call, HQ, "ZhiShuRanking", "GetPlate_Info_QJ",
+                              {"PlateID": str(plate_id), "RStart": "", "REnd": ""}, False),
+            "zf": pool.submit(self.call, HIS, "ZhiShuL2Data", "GetPlateZF",
+                              {"StockID": str(plate_id), "Day": day}, False),
+            "fenshi": pool.submit(self.call, HQ, "ConceptionPoint", "BKFenShiZhiBo",
+                                  {"PlateID": str(plate_id)}, False),
+            "bkr": pool.submit(self.call, LHB, "Theme", "InfoBKR", {"ZSCode": str(plate_id)}, False),
+        }
+        g = lambda k: futs[k].result()
+        qj = (g("qj") or {}).get("List") or []
+        def _num(i):
+            try:
+                v = qj[i]
+                return None if v == "--" else v
+            except Exception:
+                return None
+        out = {
+            "day": day,
+            "qj": {
+                "rank": _num(0),
+                "strength": _num(1),
+                "amount": _num(2),
+                "zt_num": _num(3),
+                "main_net": _num(4),
+                "zt_seal": _num(5),
+                "big_seal": _num(6),
+            } if qj else None,
+            "zf": (g("zf") or {}).get("ZF"),
+            "fenshi": {"list": (g("fenshi") or {}).get("list") or [],
+                       "date": (g("fenshi") or {}).get("date")},
+            "bkr": g("bkr") or {},
+            "pending": {"fenshi_live": True,
+                        "note": "分时为盘中直播推送(2202 订阅+HTTP 初拉)，盘后无数据=App 同款读本地缓存；K线=socket 2400/2402 盘后静默待盘中"},
+        }
+        self._cache[key] = {"data": out, "ts": time.time()}
+        return out
+
     def get_theme_detail(self, news_id) -> Dict[str, Any]:
         """主题详情（点击最新主题条目）：ThemeNews/GetInfo（apparticle）。
         含标题/时间/HTML正文/主题介绍卡(ZSCode/ZSName/ZSDesc)/关联个股(带Desn公司简介)"""

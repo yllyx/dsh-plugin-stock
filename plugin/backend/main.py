@@ -1622,6 +1622,12 @@ async def kpl_mood(day: str = ""):
     return await asyncio.to_thread(kpl_api.get_kpl().get_mood_page, day)
 
 
+@app.get("/api/kpl/plate/extras/{plate_id}")
+async def kpl_plate_extras(plate_id: str, day: str = ""):
+    """板块详情增强（App IndexQuotationActivity：概要强度/排名 QJ+分时直播+机构纪要 InfoBKR）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_plate_extras, plate_id, day)
+
+
 @app.get("/api/kpl/mood/capacity")
 async def kpl_mood_capacity(day: str = "", type: str = "4"):
     """情绪页·市场量能按指数切换（App 筛选弹窗；Type: 0沪深 1上证 2创业板 3北证 4沪深京 5科创板）"""
