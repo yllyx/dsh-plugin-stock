@@ -1893,8 +1893,8 @@ window.__ModuleLoader__.load({
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "风向标"),
                         React.createElement("span", {
-                            className: "more", onClick: () => go({ page: "daban" }),
-                        }, (home && home.daban && ((home.daban.sz || []).length + (home.daban.xd || []).length)) ? "更多 ›" : "进入 ›")),
+                            className: "more", onClick: () => go({ page: "sector", plate: { code: "801225", name: "并购重组" } }),
+                        }, "更多 ›")),
                     home && home.daban && ((home.daban.sz || []).length + (home.daban.xd || []).length) > 0 &&
                         React.createElement("div", { className: "kpl-fx-cards" },
                             (home.daban.sz || []).map((r, i) =>
@@ -3724,7 +3724,7 @@ window.__ModuleLoader__.load({
                     // ⑧ 风向标
                     (wv.top || []).length ? React.createElement("div", { className: "kpl-mood-sec" },
                         React.createElement("div", { className: "sec-t" }, "风向标",
-                            React.createElement("span", { className: "more" }, "更多")),
+                            React.createElement("span", { className: "more lnk", onClick: () => go({ page: "sector", plate: { code: "801225", name: "并购重组" } }) }, "更多")),
                         React.createElement("div", { className: "kpl-mood-cards" },
                             wv.top.map((r, i) => React.createElement("div", {
                                 key: "t" + i, className: "card",
@@ -4505,24 +4505,33 @@ window.__ModuleLoader__.load({
             const title = (data && data.name) || name || plateId;
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement(KplPageHeader, { title: title, onBack: () => go({ page: "back" }) }),
-                sum ? React.createElement("div", { className: "kpl-sdp-sum" },
+                sum ? React.createElement("div", { className: "kpl-sdp-sum eight" },
                     React.createElement("div", { className: "cell" },
-                        React.createElement("div", { className: "lbl" }, "板块涨幅"),
+                        React.createElement("div", { className: "lbl" }, "强度"),
+                        React.createElement("div", { className: "v" }, "--")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "排名"),
+                        React.createElement("div", { className: "v" }, "--")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "涨停数"),
+                        React.createElement("div", { className: "v up" }, sum.zt_num != null ? sum.zt_num : "--")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "涨停封单"),
+                        React.createElement("div", { className: "v" }, sum.zt_seal != null ? sum.zt_seal + "亿" : "--")),
+                    React.createElement("div", { className: "cell" },
+                        React.createElement("div", { className: "lbl" }, "涨幅"),
                         React.createElement("div", { className: "v " + (Number(sum.rate) >= 0 ? "up" : "down") },
                             sum.rate != null ? Number(sum.rate).toFixed(2) + "%" : "--")),
                     React.createElement("div", { className: "cell" },
                         React.createElement("div", { className: "lbl" }, "主力净额"),
                         React.createElement("div", { className: "v " + (sum.main_net >= 0 ? "up" : "down") },
-                            sum.main_net + "亿")),
-                    React.createElement("div", { className: "cell" },
-                        React.createElement("div", { className: "lbl" }, "涨停数"),
-                        React.createElement("div", { className: "v up" }, sum.zt_num)),
+                            sum.main_net != null ? sum.main_net + "亿" : "--")),
                     React.createElement("div", { className: "cell" },
                         React.createElement("div", { className: "lbl" }, "成交额"),
-                        React.createElement("div", { className: "v" }, sum.amount_sum + "亿")),
+                        React.createElement("div", { className: "v" }, sum.amount_sum != null ? sum.amount_sum + "亿" : "--")),
                     React.createElement("div", { className: "cell" },
-                        React.createElement("div", { className: "lbl" }, "成员数"),
-                        React.createElement("div", { className: "v" }, sum.stock_num))) : null,
+                        React.createElement("div", { className: "lbl" }, "大单封单"),
+                        React.createElement("div", { className: "v" }, "--"))) : null,
                 error && React.createElement("div", { className: "kpl-empty" }, "加载失败：" + error),
                 pending && React.createElement("div", { className: "kpl-empty" },
                     "行情连接建立中，数据稍后自动补全…"),
@@ -5834,6 +5843,7 @@ window.__ModuleLoader__.load({
                 .kpl-lhb-head.sdp, .kpl-lhb-row.sdp { grid-template-columns: 1.3fr .7fr .75fr .8fr .9fr .9fr; }
                 .kpl-lhb-row.sdp.zt { background: #fff5f5; }
                 .kpl-sdp-sum { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                .kpl-sdp-sum.eight { grid-template-columns: repeat(4, 1fr); gap: 8px 4px; }
                 .kpl-sdp-sum .cell { text-align: center; }
                 .kpl-sdp-sum .lbl { font-size: 11px; color: #999; }
                 .kpl-sdp-sum .v { font-size: 14px; font-weight: 700; color: #111; margin-top: 2px; }
