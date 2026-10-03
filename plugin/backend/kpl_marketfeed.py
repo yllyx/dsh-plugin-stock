@@ -90,6 +90,157 @@ def _plate_rank_body(plate_type: int = 1, count: int = 30) -> bytes:
 MAX_PUSH_AGE = 120          # 推送超过该秒数视为 stale（服务端推送周期约 30-60s）
 SNAP_FRESH_S = 20           # snapshot 内存缓存新鲜窗
 
+# ---------- 磁盘快照层（App 同款"非交易日/冷启动显示最近交易日最后快照"） ----------
+# 实测（2026-10-03 休市日）：pb.Empty 族"盘后照推"仅限当日盘后，跨天休市服务端零推送
+# → 行情 7 tab 依赖本层在休市/后端重启后展示最近交易日快照（数据带 ts/stale，前端如实显示数据时间）。
+MF_DISK_DEBOUNCE_S = 30
+_mf_disk_saved = {"ts": 0.0}
+
+
+def _mf_disk_path():
+    from storage import storage as _st
+    return _st.data_dir / "kpl_marketfeed_cache.json"
+
+
+def load_mf_disk():
+    """磁盘快照（7 天有效）。返回 {name: {data, ts, stale, source}} 或 None"""
+    try:
+        pth = _mf_disk_path()
+        if pth.exists():
+            d = json.loads(pth.read_text(encoding="utf-8"))
+            if time.time() - d.get("ts", 0) < 7 * 86400:
+                return d.get("data")
+    except Exception as e:
+        logger.debug(f"marketfeed 磁盘缓存读: {e}")
+    return None
+
+
+def _http_fallback_slots() -> Dict[str, Dict[str, Any]]:
+    """休市日 HTTP 合成槽（App 同款：非交易日数据来自 HTTP HIS 域最近交易日，2026-10-03）。
+    输出与 parse_cmd 对应槽严格同构；数据全部复用 get_mood_page 的缓存链路（内存 60s+磁盘）。
+    覆盖 dabanhead/zdstat/zddist/windvane/weights/ladder/energy/overview/north；
+    radar/ztsitu/ztseries/ztlist/stockrank/platerank/dabancount/dabanlist 无 HTTP 同源，保持空。"""
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        from kpl import get_kpl
+        c = get_kpl()
+        mood = c.get_mood_page() or {}
+    except Exception as e:
+        logger.debug(f"mf HTTP 合成: mood 拉取失败 {e}")
+        return out
+    now = int(time.time())
+
+    def slot(name, data):
+        if data is not None:
+            out[name] = {"data": data, "ts": now, "stale": True,
+                         "source": "http", "waiting": False}
+
+    head = mood.get("head") or {}
+    if head:
+        slot("dabanhead", {"zt": [head.get("tZhangTing"), head.get("lZhangTing")],
+                           "fb": [head.get("tFengBan"), head.get("lFengBan")],
+                           "dt": [head.get("tDieTing"), head.get("lDieTing")]})
+    z = mood.get("zdtj") or {}
+    if z:
+        slot("zdstat", {"zt": z.get("zt"), "dt": z.get("dt"),
+                        "realZt": z.get("sjzt"), "realDt": z.get("sjdt"),
+                        "rise": z.get("szjs"), "down": z.get("xdjs"),
+                        "sign": None, "day": mood.get("day"), "dists": None})
+        raw = z.get("raw") or {}
+        if raw:
+            dists = []
+            for bucket in range(-11, 12):
+                v = raw.get(str(bucket))
+                if v is not None:
+                    dists.append({"k": str(bucket), "v": int(v or 0)})
+            dists.sort(key=lambda x: float(x["k"]))
+            sub = {"zt": z.get("zt"), "dt": z.get("dt"), "realZt": z.get("sjzt"),
+                   "realDt": z.get("sjdt"), "rise": z.get("szjs"), "down": z.get("xdjs"),
+                   "dists": dists}
+            slot("zddist", {"day": mood.get("day"), "today": sub, "yest": {}})
+    wv = mood.get("windvane") or {}
+    if wv.get("top") or wv.get("bottom"):
+        slot("windvane", {"up": [{"code": r[0], "name": r[1], "pct": r[2], "plate": r[3]}
+                                 for r in wv.get("top") or []],
+                          "down": [{"code": r[0], "name": r[1], "pct": r[2], "plate": r[3]}
+                                   for r in wv.get("bottom") or []]})
+    wt = mood.get("weights") or {}
+    if wt.get("SZ") or wt.get("XD"):
+        def _wp(r):
+            return {"id": r[0], "name": r[1], "pct": r[2], "leadCode": r[3], "leadName": r[4]}
+        slot("weights", {"upPlates": [_wp(r) for r in wt.get("SZ") or []],
+                         "downPlates": [_wp(r) for r in wt.get("XD") or []],
+                         "comment": None, "day": mood.get("day")})
+    expr = mood.get("ztexpr") or {}
+    if expr.get("ladder"):
+        # DailyLimitIndex=[一板,二板,三板,四板,更高] → 2117 同构 {h, stocks:[]}（明细无 HTTP 源）
+        slot("ladder", {"day": mood.get("day"),
+                        "ladder": [{"h": h + 1, "stocks": []}
+                                   for h in range(4, -1, -1)
+                                   if h < len(expr["ladder"])]})
+    cap = mood.get("cap") or {}
+    if cap.get("trends"):
+        slot("energy", {"amount": cap.get("last"), "text": cap.get("yclnstr"),
+                        "flag": None, "day": mood.get("day"),
+                        "series": [{"time": t[0], "cur": t[1], "yes": t[2], "pred": t[3],
+                                    "pct": t[4], "text": t[5], "color": t[6], "ratio": None}
+                                   for t in cap.get("trends") or []]})
+    hist = mood.get("lb_strength") or []
+    if hist:
+        strong0 = hist[0].get("strong")
+        slot("overview", {"hsjAmount": cap.get("last"),
+                          "strongTD": strong0,
+                          "strongYD": hist[1].get("strong") if len(hist) > 1 else None,
+                          "qx": strong0,
+                          "qxStatus": "休市，展示最近交易日数据" if strong0 else None,
+                          "drawback": None,
+                          "forecastMoney": cap.get("ycln"), "forecastZf": None})
+    nb = mood.get("northbound") or {}
+    if nb:
+        slot("north", {"day": nb.get("day"), "net": nb.get("totalB"), "text": nb.get("sign"),
+                       "disclose": {}, "amounts": {}})
+    # 2116 播报文本（GetLiveNews 首条；分钟序列本身无 HTTP 源）
+    news = mood.get("live_news") or []
+    if news:
+        n0 = news[0]
+        ts = n0.get("time")
+        tlabel = ""
+        try:
+            tlabel = time.strftime("%H:%M", time.localtime(int(ts))) + " " if ts else ""
+        except Exception:
+            pass
+        slot("ztseries", {"day": mood.get("day"), "series": [],
+                          "broadcast": tlabel + str(n0.get("comment") or "")})
+    # 2111 情绪提示（ChangeStatistics 顶层 tip）
+    try:
+        st = c.call("https://apphis.kaipanla.com/w1/api/index.php", "HisHomeDingPan",
+                    "ChangeStatistics", {"Index": "0", "st": "2"}, False) or {}
+        tip = st.get("tip")
+        if isinstance(tip, str) and tip:
+            slot("zdtip", {"v1": None, "v2": None,
+                           "realZt": None, "realDt": None,
+                           "day": mood.get("day"), "tip": tip})
+    except Exception as e:
+        logger.debug(f"mf 合成 zdtip: {e}")
+    return out
+
+
+def _maybe_save_mf_disk(result):
+    """有真实推送数据时 30s 防抖落盘（空数据不覆盖磁盘）。"""
+    now = time.time()
+    if now - _mf_disk_saved["ts"] < MF_DISK_DEBOUNCE_S:
+        return
+    if not any(isinstance(v, dict) and v.get("data") for k, v in result.items() if k != "_meta"):
+        return
+    try:
+        tmp = _mf_disk_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps({"ts": now, "day": time.strftime("%Y-%m-%d"),
+                                   "data": result}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(_mf_disk_path())
+        _mf_disk_saved["ts"] = now
+    except Exception as e:
+        logger.debug(f"marketfeed 磁盘缓存写: {e}")
+
 
 # ============= 通用 protobuf 解析 =============
 
@@ -668,6 +819,27 @@ class MarketFeed:
                             "source": "push", "waiting": False}
         result["_meta"] = {"alive": bool(alive), "ages": api.push_ages(),
                            "day": time.strftime("%Y-%m-%d")}
+        fresh = sum(1 for k, v in result.items()
+                    if k != "_meta" and isinstance(v, dict) and v.get("data"))
+        if fresh == 0:
+            # 零推送（休市日/会话未建立）：①磁盘快照补槽（真实推送的最后快照，优先）
+            disk = load_mf_disk()
+            if disk:
+                for k, v in result.items():
+                    if k == "_meta":
+                        continue
+                    dk = disk.get(k)
+                    if isinstance(dk, dict) and dk.get("data"):
+                        result[k] = {"data": dk["data"], "ts": dk.get("ts"),
+                                     "stale": True, "source": "disk", "waiting": False}
+                result["_meta"]["disk_day"] = disk.get("day")
+            # ②其余空槽用 HTTP HIS 域合成（App 非交易日同款数据源）
+            for k, v in _http_fallback_slots().items():
+                if not (isinstance(result.get(k), dict) and result[k].get("data")):
+                    result[k] = v
+            result["_meta"]["fallback"] = "http"
+        else:
+            _maybe_save_mf_disk(result)
         with self._snap_lock:
             self._snap = result
             self._snap_ts = time.time()

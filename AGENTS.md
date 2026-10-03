@@ -219,6 +219,12 @@ git push origin main --tags
 
 
 
+### ⭐ App 本地存储全景 + 非交易日展示机制（2026-10-03 root 枚举实拍，全文 kanpan_spec/docs/local_storage_map.md）
+
+- **App 数据库存清单**：KPL_CACHE（STOCK 13843 行名称库/DYNAMIC_QUOTA_BEAN 动态列/**HolidayList 316 行节假日本地表**/PhoneList 登录凭据/搜索浏览历史）、Goods.db（商品标的）、StockGroup.db（自选分组+分时缓存）、UserRelate.db（用户/token/签到）、LHBUpdateTips/Record/TrackRecord（埋点）、cg/dim/gtc3/push*（推送 SDK）；SP=KPL_PREFS（app_switch_cache 服务端开关）+PARAMS_INFO（节假日更新戳/自选板块）；files/ 1079 个=ELF so+埋点缓存，**行情快照不落盘**。
+- **关键实测定案**：①socket pb.Empty 族"盘后照推"**仅限当日盘后**（09-30 18:4x 实测），**跨天休市零推送**（10-03 marketfeed 全空实测）——行情 7 tab 休市全空的根因；②App 非交易日有数据=进程内存快照+HTTP HIS 域任意时刻可拉，非本地快照库。
+- **插件落地（非交易日与 App 同款展示）**：①**marketfeed 磁盘快照层**（kpl_marketfeed_cache.json，有推送 30s 防抖落盘 7 天有效；零推送时磁盘补槽 source=disk → HTTP 合成补槽 source=http）+**`_http_fallback_slots` 合成器**（复用 get_mood_page 缓存链，与 parse_cmd 输出严格同构：dabanhead←HisDaBanHeadInfo/zdstat+zddist←MarketZDTJ(±11 桶)/windvane←HisWeatherVane/weights←WeightPerformance/ladder←DailyLimitIndex/energy←MarketSCLN trends/overview←strong+cap/zdtip←ChangeStatistics.tip/ztseries←GetLiveNews 播报/north←NorthboundFundsB）——**休市实测 11/18 槽有数据，marketfeed 4.2s 返回**；radar/ztsitu/ztlist/stockrank/platerank/dabancount/dabanlist=订阅增量类无 HTTP 同源保持空（前端空态，盘中自动恢复）；②题材库列表磁盘层 kpl_tika_cache.json；③mood 磁盘缓存 v2 结构校验（zdtj.raw 键，旧缓存弃用重拉）。至此磁盘层覆盖：首页/人气榜/题材详情/题材列表/情绪页/行情订阅面/港股/名称库/交易日历。
+
 ### ⭐ 权威交易日历（2026-09-30 接入，深交所官方口径，法定节假日/调休全覆盖）
 
 - **数据源**：`https://www.szse.cn/api/report/exchange/onepersistenthour/monthList?month=YYYY-MM`（深交所官方月历，`jybz=1` 交易日/`0` 休市；10-01~10-07 国庆全休、10-08 复市这类安排直接以交易所数据为准，**插件不做任何自己的节假日推断**）。模块 `backend/trade_calendar.py`（TradeCalendar：按月拉取+磁盘缓存 `trade_calendar.json` 7 天过期+过期后网络失败仍用旧缓存；完全无数据才退化周末规则）。`GET /api/trade-calendar` 返回今日状态摘要（is_trading_day/in_trading_hours/prev/next_trading_day）

@@ -1164,6 +1164,26 @@ class KplClient:
         data = _fetch()
         if data.get("items"):
             self._cache["themesock"] = {"data": data, "ts": time.time()}
+            # 磁盘层（App 同款）：休市日/会话异常时秒显最近列表
+            try:
+                from storage import storage as _st
+                tmp = (_st.data_dir / "kpl_tika_cache.json").with_suffix(".tmp")
+                tmp.write_text(json.dumps({"ts": time.time(),
+                                           "data": data}, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(_st.data_dir / "kpl_tika_cache.json")
+            except Exception as e:
+                logger.debug(f"tika 磁盘缓存写: {e}")
+        else:
+            try:
+                from storage import storage as _st
+                pth = _st.data_dir / "kpl_tika_cache.json"
+                if pth.exists():
+                    dj = json.loads(pth.read_text(encoding="utf-8"))
+                    if dj.get("data", {}).get("items") and time.time() - dj.get("ts", 0) < 7 * 86400:
+                        data = dict(dj["data"])
+                        data["stale"] = True
+            except Exception as e:
+                logger.debug(f"tika 磁盘缓存读: {e}")
         return data
 
     # ---- 人气榜（cmd 3008；实现见下方 get_pop_rank，含 SWR 陈旧缓存）----
@@ -1992,7 +2012,9 @@ class KplClient:
             p = self._mood_disk_path()
             if p.exists():
                 dj = json.loads(p.read_text(encoding="utf-8"))
-                if dj.get("day") == day and time.time() - dj.get("ts", 0) < 7 * 86400:
+                # v2 结构校验（zdtj.raw 为 2026-10-03 新增；旧缓存无此键则弃用重拉）
+                zj = ((dj.get("data") or {}).get("zdtj") or {})
+                if dj.get("day") == day and zj.get("raw") and time.time() - dj.get("ts", 0) < 7 * 86400:
                     disk = dj.get("data")
         except Exception as e:
             logger.debug(f"mood 磁盘缓存读: {e}")
@@ -2109,7 +2131,8 @@ class KplClient:
         out = {
             "day": day,
             "head": hn.get("nums") if isinstance(hn, dict) else None,
-            "zdtj": {"bars": bars, "sjzt": z.get("SJZT"), "sjdt": z.get("SJDT"),
+            "zdtj": {"bars": bars, "zt": z.get("ZT"), "dt": z.get("DT"),
+                     "raw": z, "sjzt": z.get("SJZT"), "sjdt": z.get("SJDT"),
                      "szjs": z.get("SZJS"), "xdjs": z.get("XDJS"),
                      "stzt": z.get("STZT"), "stdt": z.get("STDT")} if z else None,
             "cap": {"last": cap.get("last"), "ycln": cap.get("ycln"), "yclnstr": cap.get("yclnstr"),
