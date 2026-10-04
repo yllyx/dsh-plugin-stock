@@ -1,0 +1,45 @@
+=== initBaxPwd OK ===
+=== ENC len= 0 hex= 
+magic 调用总数: 65
+最后 40 个:
+   JNI.GetArrayLength -> 0x1
+   SHA256 -> 0x401effa4
+   JNI.slot192 -> 0x500012a0
+   memcmp -> -0x1
+   memcmp -> -0x1
+   memcmp -> -0x1
+   memcmp -> -0x1
+   JNI.FindClass -> 0x118
+   JNI.GetStaticMethodID -> 0x119
+   JNI.CallStaticObjectMethodV -> 0x11a
+   JNI.ExceptionCheck -> 0x0
+   JNI.GetObjectClass -> 0x11b
+   JNI.GetMethodID -> 0x11c
+   JNI.CallObjectMethodV -> 0x11d
+   JNI.GetStringUTFChars -> 0x500012b0
+   strncpy -> 0x401efe50
+   JNI.ReleaseStringUTFChars -> 0x0
+   JNI.GetMethodID -> 0x11e
+   JNI.CallObjectMethodV -> 0x11f
+   JNI.GetObjectClass -> 0x120
+   JNI.GetMethodID -> 0x121
+   JNI.CallObjectMethodV -> 0x122
+   JNI.ExceptionCheck -> 0x0
+   JNI.GetObjectClass -> 0x123
+   JNI.GetFieldID -> 0x124
+   JNI.GetObjectField -> 0x125
+   JNI.GetArrayLength -> 0x1
+   JNI.GetObjectArrayElement -> 0x126
+   JNI.GetObjectClass -> 0x127
+   JNI.GetMethodID -> 0x128
+   JNI.CallObjectMethodV -> 0x129
+   JNI.slot184 -> 0x500012c0
+   JNI.GetArrayLength -> 0x1
+   SHA256 -> 0x401efed4
+   JNI.slot192 -> 0x500012d0
+   memcmp -> -0x1
+   memcmp -> -0x1
+   memcmp -> -0x1
+   memcmp -> -0x1
+   JNI.NewByteArray -> 0x12a
+_emu_error: None

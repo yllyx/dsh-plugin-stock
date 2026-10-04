@@ -34,7 +34,11 @@
     "PUBLISHING.md",
     "CHANGELOG.md",
     "backend/certs/*",
-    "backend/signer/**"
+    "backend/wb_ctx_dump.bin",
+    "backend/tab_a.bin",
+    "backend/tbl_seq.json",
+    "backend/ghash_matrix.json",
+    "backend/golden.json"
   ],
   "scripts": {
     "release": "node publish.js",

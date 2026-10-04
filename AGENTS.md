@@ -124,7 +124,8 @@ git push origin main --tags
 5. **GCM 管线**：明文=`kp26`+deviceId+`1`+`6.3.20.0`+`129`+connType+serverTime+`w48`（67B）；sig(95B)=challenge[:12]+密文+tag(16)；密文块 n=明文⊕word反转(wb_block(IV‖n+2))（首块 IV‖2）；H=wb_block(0^16)、E(J0)=wb_block(IV‖1)（两者经 CTR/finish 用于 tag）；tag=魔改GHASH(密文5块+len块大端(0,536))⊕word反转(E(J0))。
 6. **验证**：`python kpl_sign_whitebox.py` 自校验（golden.json 全对比）；换 challenge/serverTime 第二组 unicorn 金标对拍整签一致。
 
-**数据文件**（backend/ 下随包）：wb_ctx_dump.bin(283KB)、tab_a.bin(1KB)、tbl_seq.json、ghash_matrix.json(2KB)、golden.json。**下阶段**（待用户确认后做）：kpl.py sign_local 改调 white_box_sign、删 Java 通道（_WarmSigner/_find_java）、backend/signer/ 26MB 部署物剔除、无 Java 环境验收（610 鉴权+tika）。
+**数据文件**（backend/ 下随包）：wb_ctx_dump.bin(280KB)、tab_a.bin、tbl_seq.json、ghash_matrix.json、golden.json。
+**✅ 阶段三/四已完成（2026-10-02）**：kpl_socket.py 的 sign_local 改调 white_box_sign（返回 hex，线程安全无锁）、socket_signer_available 恒 True、Java 全家（_find_java/_WarmSigner/_sign_lock/SIGNER_DIR）删除；package.json files 剔除 `backend/signer/**`（26MB）改收 5 个常量文件（**包体 26MB→837KB**）；热改部署+重启后端实测：/api/kpl/tika（socket 3009+610 鉴权）与 /api/kpl/poprank（3008）均正常出数据，日志无签名报错。signer/ 目录仅开发机保留（kpl_signer_py.py 探针链在 git 历史 probe27-42），不进发布包。
 
 **App 升级再提取 SOP**：新版 APK 出包后→重跑 unicorn 探针链（probe 流程见 git 历史 probe27-40）→重新 dump wb_ctx_dump.bin（表会变）→tbl_seq 反查→TAB_A/ghash_matrix 重观测→golden 对拍→换常量。骨架代码全部可复用。
 

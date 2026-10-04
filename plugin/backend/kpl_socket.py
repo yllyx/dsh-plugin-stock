@@ -221,149 +221,27 @@ def ensure_cert_pems(static_dir: str, data_dir) -> Tuple[str, str]:
 from cryptography.hazmat.primitives.serialization import NoEncryption  # noqa: E402
 
 
-# ============= 内置白盒签名器（unidbg 离线模拟 libauthSign.so） =============
+# ============= 内置白盒签名器（纯 Python 算法级复现，无 Java/unicorn/子进程） =============
 
-# 签名器部署物：backend/signer/{kplsigner.jar, lib/*.jar, kpl_min.apk, libauthSign_armv7_patched.so}
-# 需要系统 Java 8+（java 在 PATH 或 JAVA_HOME）。签名仅在 socket 建连时需要一次（约2秒）。
-SIGNER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signer")
-_warm_signer = None  # 常驻签名器子进程（_WarmSigner）
-
-
-def _find_java() -> Optional[str]:
-    """定位可用的 java：PATH 里的存根可能不可执行（Oracle java8path 已知问题），
-    逐个候选执行 -version 校验，失败则尝试 JAVA_HOME 与常见安装目录的真实 JDK。"""
-    import shutil
-    cands = []
-    p = shutil.which("java")
-    if p and "Common Files\\Oracle" not in p:   # Oracle 存根优先级降低（排后仍校验）
-        cands.append(p)
-    cands.append(os.path.join(os.environ.get("JAVA_HOME", ""), "bin", "java.exe"))
-    cands.append(r"D:\Program Files\Java\jdk-1.8\bin\java.exe")
-    cands.append(r"C:\Program Files\Java\jdk-1.8\bin\java.exe")
-    seen = set()
-    import subprocess
-    for cand in cands:
-        if not cand or cand in seen or not os.path.isfile(cand):
-            continue
-        seen.add(cand)
-        try:
-            r = subprocess.run([cand, "-version"], capture_output=True, timeout=15)
-            if r.returncode == 0:
-                return cand
-        except Exception:
-            continue
-    # 兜底：PATH 存根再试一次（万一可用）
-    return p
-
-
-_sign_lock = threading.Lock()  # 暖签名器 stdin/stdout 行协议非线程安全，单飞串行
+# 常量数据（backend/ 下）：wb_ctx_dump.bin(白盒表 283KB) / tab_a.bin / tbl_seq.json /
+# ghash_matrix.json——算法全案见 kpl_sign_whitebox.py 模块文档与 AGENTS.md。
+# 单次签名 ~7ms（原 Java 暖进程 0.14s、冷进程 1.8s），线程安全（无共享可变状态）。
 
 
 def sign_local(challenge: str, device_id: str, conn_type: str, server_time: str,
                timeout_s: float = 120) -> Optional[str]:
-    """白盒签名。优先常驻暖进程（JVM 只启一次, 后续签名 ~50ms）；
-    暖进程失败回退单次调用。多线程并发调用必须串行（行协议会串包）。"""
-    with _sign_lock:
-        return _sign_local_impl(challenge, device_id, conn_type, server_time, timeout_s)
-
-
-def _sign_local_impl(challenge: str, device_id: str, conn_type: str, server_time: str,
-                     timeout_s: float) -> Optional[str]:
-    global _warm_signer
-    java = _find_java()
-    if not java:
-        logger.warning("KPL 签名器: 未找到 java（需要 Java 8+）")
-        return None
-    signer_jar = os.path.join(SIGNER_DIR, "kplsigner.jar")
-    lib_dir = os.path.join(SIGNER_DIR, "lib")
-    if not os.path.isfile(signer_jar):
-        logger.warning("KPL 签名器: 部署物缺失 (signer/kplsigner.jar)")
-        return None
-    req = json.dumps({"challenge": challenge, "device_id": device_id,
-                      "conn_type": conn_type, "server_time": str(server_time)})
-    # 1) 常驻暖进程
-    warm = _warm_signer
-    if warm is not None and warm.alive():
-        try:
-            return warm.sign(req)
-        except Exception as e:
-            logger.debug(f"KPL 暖签名器异常, 重启: {str(e)[:80]}")
-            try:
-                warm.kill()
-            except Exception:
-                pass
-            _warm_signer = None
-    # 2) 启动暖进程并首签（首签含 JVM 启动 ~2s）
-    cp = signer_jar + os.pathsep + os.pathsep.join(
-        os.path.join(lib_dir, j) for j in sorted(os.listdir(lib_dir)) if j.endswith(".jar"))
+    """白盒签名，返回 sig hex；失败返回 None。"""
     try:
-        warm = _WarmSigner(java, cp, SIGNER_DIR)
-        sig = warm.sign(req, timeout_s=timeout_s)
-        if sig:
-            _warm_signer = warm
-            return sig
-        warm.kill()
+        from kpl_sign_whitebox import white_box_sign
+        return white_box_sign(challenge, device_id, conn_type, str(server_time)).hex()
     except Exception as e:
-        logger.debug(f"KPL 暖签名器启动失败: {str(e)[:100]}")
-    # 3) 回退单次调用（无 cwd 依赖）
-    try:
-        r = subprocess.run([java, "-Xmx512m", "-cp", cp, "kplsigner.KplSigner"],
-                           input=req.encode(), capture_output=True,
-                           timeout=timeout_s, cwd=SIGNER_DIR)
-        for line in r.stdout.decode("utf-8", "replace").splitlines():
-            line = line.strip()
-            if line.startswith('{"sig"'):
-                d = json.loads(line)
-                if d.get("sig") and len(d["sig"]) > 20:
-                    return str(d["sig"])
-        logger.debug(f"KPL 签名器输出异常: {r.stdout.decode('utf-8', 'replace')[-200:]}")
+        logger.warning(f"KPL 纯 Python 白盒签名失败: {str(e)[:150]}")
         return None
-    except Exception as e:
-        logger.debug(f"KPL 签名器调用失败: {str(e)[:100]}")
-        return None
-
-
-class _WarmSigner:
-    """常驻签名器子进程（stdin/stdout 行协议）"""
-
-    def __init__(self, java: str, cp: str, cwd: str):
-        self.proc = subprocess.Popen(
-            [java, "-Xmx512m", "-cp", cp, "kplsigner.KplSigner"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, cwd=cwd)
-
-    def alive(self) -> bool:
-        return self.proc is not None and self.proc.poll() is None
-
-    def kill(self):
-        try:
-            self.proc.kill()
-        except Exception:
-            pass
-
-    def sign(self, req_line: str, timeout_s: float = 60) -> Optional[str]:
-        # readline 无超时且 Java 子进程偶发卡死会永久阻塞（持锁饿死全部 socket 拉取），
-        # 必须用读线程+队列实现真超时（2026-09-27 后端"永远拉不到新数据"的根因）
-        self.proc.stdin.write((req_line + "\n").encode())
-        self.proc.stdin.flush()
-        q: "queue.Queue[str]" = queue.Queue()
-        threading.Thread(target=lambda: q.put(self.proc.stdout.readline()), daemon=True).start()
-        try:
-            line = q.get(timeout=max(5.0, timeout_s)).decode("utf-8", "replace").strip()
-        except queue.Empty:
-            self.kill()
-            raise RuntimeError(f"signer timeout after {timeout_s}s")
-        if line.startswith('{"sig"'):
-            d = json.loads(line)
-            sig = d.get("sig")
-            if sig and len(sig) > 20:
-                return str(sig)
-        raise RuntimeError(f"bad signer output: {line[:120]}")
 
 
 def socket_signer_available() -> bool:
-    """内置签名器是否可用（java + 部署物齐全）"""
-    return _find_java() is not None and os.path.isfile(os.path.join(SIGNER_DIR, "kplsigner.jar"))
+    """内置签名器是否可用（纯 Python 实现，恒可用）"""
+    return True
 
 
 # ============= Socket 会话 =============
@@ -516,7 +394,7 @@ class KplSocketSession:
             sig = sign_local(challenge, self.device_id, "99", str(server_time))
             if not sig:
                 self.close()
-                logger.warning("KPL Socket: 离线签名失败（需 Java 8+ 且 signer 部署物完整）")
+                logger.warning("KPL Socket: 纯 Python 白盒签名失败")
                 return False
 
             # 鉴权（App 同款：登录态 UserID/Token，与 HTTP 数据面同一用户）
