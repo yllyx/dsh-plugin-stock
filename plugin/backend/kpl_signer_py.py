@@ -106,6 +106,7 @@ class KplSoEmu:
         self._retprobes = {}       # EVP 函数名 -> 返回值探针 magic
         self._retprobe_lr = {}
         self._trace_init = False   # EncryptInit_ex 窗口块级 trace
+        self._watch_memcpy = False
         self._init_trace = []
 
         cert = open(os.path.join(signer_dir, "cert.der"), "rb").read()
@@ -385,7 +386,10 @@ class KplSoEmu:
         def memcpy_like():
             dst, src, n = uc.reg_read(UC_ARM_REG_R0), uc.reg_read(UC_ARM_REG_R1), uc.reg_read(UC_ARM_REG_R2)
             if n and src:
-                uc.mem_write(dst, bytes(uc.mem_read(src, n)))
+                data = bytes(uc.mem_read(src, n))
+                if self._watch_memcpy and n <= 64:
+                    print(f"[memcpy] n={n} dst={dst:#x} src={src:#x} data={data.hex()}", file=sys.stderr)
+                uc.mem_write(dst, data)
             return dst
 
         def memset():
