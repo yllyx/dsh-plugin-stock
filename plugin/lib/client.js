@@ -4794,47 +4794,68 @@ window.__ModuleLoader__.load({
                         }))));
         }
 
-        /* ---- 推荐菜单（App 底部导航推荐：文章流+文章详情，AppNews 分页） ---- */
+        /* ---- 推荐菜单（App 底部导航推荐：栏目 tab+文章卡片流，ForumsMsgColumn 同源） ---- */
 
         function KplRecommendPage({ go }) {
-            const [arts, setArts] = useState(null);
+            const [cols, setCols] = useState(null);
+            const [cur, setCur] = useState(null);
+            const [feed, setFeed] = useState(null);
+            const [preIndex, setPreIndex] = useState(null);
             const [error, setError] = useState(null);
-            const [index, setIndex] = useState(0);
-            const [more, setMore] = useState(true);
             const [loading, setLoading] = useState(false);
-            const load = useCallback(async (idx) => {
+            const loadFeed = useCallback(async (cid, pi) => {
                 setLoading(true);
                 try {
-                    const d = await api(`/api/kpl/recommend?st=20&index=${idx}`);
+                    const d = await api(`/api/kpl/column/${cid}` + (pi ? `?pre_index=${encodeURIComponent(pi)}` : ""));
                     setError(null);
-                    setArts((prev) => (idx === 0 ? d : (prev || []).concat(d)));
-                    setMore((d || []).length >= 10);
+                    setFeed((prev) => (pi ? (prev || []).concat(d.list || []) : (d.list || [])));
+                    setPreIndex(d.pre_index != null ? String(d.pre_index) : null);
                 } catch (e) { setError(e.message); }
                 finally { setLoading(false); }
             }, []);
-            useEffect(() => { load(0); }, []);
+            useEffect(() => {
+                (async () => {
+                    try {
+                        const d = await api("/api/kpl/recommend");
+                        setCols(d.columns || []);
+                        setCur(d.current || "27");
+                        setFeed(d.list || []);
+                        setPreIndex(d.pre_index != null ? String(d.pre_index) : null);
+                    } catch (e) { setError(e.message); }
+                })();
+            }, []);
+            const switchCol = (cid) => {
+                if (cid === cur) return;
+                setCur(cid); setFeed(null); setPreIndex(null);
+                loadFeed(cid, null);
+            };
             const fmtT = (t) => t ? new Date(t * 1000).toLocaleString("zh-CN",
                 { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
             return React.createElement("div", { className: "kpl-page" },
-                React.createElement("div", { className: "kpl-rcm-head" },
-                    React.createElement("span", { className: "t" }, "推荐"),
-                    React.createElement("span", { className: "d" }, "要闻 · 教程 · 专栏文章")),
+                React.createElement("div", { className: "kpl-rcm-cols" },
+                    (cols || []).map((c) => React.createElement("span", {
+                        key: c.id, className: "c " + (cur === c.id ? "on" : ""),
+                        onClick: () => switchCol(c.id),
+                    }, c.name))),
                 React.createElement(ErrorBox, { error }),
-                React.createElement(LoadingBar, { show: arts === null && !error }),
-                (arts || []).map((a) => React.createElement("div", { key: a.id, className: "kpl-rcm-row",
-                    onClick: () => go({ page: "article", aid: a.id, title: (a.title || a.content || "").slice(0, 30) }) },
+                React.createElement(LoadingBar, { show: feed === null && !error }),
+                (feed || []).map((a) => React.createElement("div", { key: a.id, className: "kpl-rcm-card",
+                    onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30) }) },
                     React.createElement("div", { className: "main" },
-                        React.createElement("div", { className: "tt" },
-                            (a.title || a.content || "--").slice(0, 50) + ((a.title || a.content || "").length > 50 ? "…" : "")),
+                        React.createElement("div", { className: "tt" }, a.title),
+                        a.zhaiyao ? React.createElement("div", { className: "zy" },
+                            a.zhaiyao.slice(0, 46) + (a.zhaiyao.length > 46 ? "…" : "")) : null,
                         React.createElement("div", { className: "meta" },
-                            fmtT(a.time),
-                            a.stock_name ? React.createElement("span", { className: "stk" }, " " + a.stock_name) : null,
-                            a.type === 13 ? React.createElement("span", { className: "tag" }, "教程") : null)),
-                    React.createElement("div", { className: "thumb" }, "📄"))),
+                            React.createElement("span", null, fmtT(a.time)),
+                            React.createElement("span", null, "赞 " + a.vote),
+                            a.is_pay ? React.createElement("span", { className: "pay" }, "订阅") : null)),
+                    a.img ? React.createElement("img", { className: "thumb", src: a.img,
+                        onError: (e) => { e.target.style.display = "none"; } }) : null)),
                 React.createElement("div", { className: "kpl-rcm-more" },
                     loading ? React.createElement("span", { className: "ld" }, "加载中…")
-                        : more ? React.createElement("button", { onClick: () => { const ni = index + 1; setIndex(ni); load(ni); } }, "加载更多")
-                            : React.createElement("span", { className: "ld" }, "已显示全部")));
+                        : preIndex ? React.createElement("button", {
+                            onClick: () => loadFeed(cur, preIndex) }, "加载更多")
+                            : (feed && feed.length ? React.createElement("span", { className: "ld" }, "已显示全部") : null)));
         }
 
         /* ---- 文章详情（ForumsMsgJX/GetInfo，App PContent2.html 同源） ---- */
@@ -6820,9 +6841,17 @@ window.__ModuleLoader__.load({
                 .kpl-sp-grp .grp-it .tt { font-size: 13px; color: #222; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
                 .kpl-sp-grp .grp-it .dd { font-size: 11px; color: #999; margin-top: 3px; }
                 /* ==== 推荐菜单/文章详情 kpl-rcm-*/ /*kpl-art-*（App 文章 H5 同源，显式白底） ==== */
-                .kpl-rcm-head { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
-                .kpl-rcm-head .t { font-size: 16px; font-weight: 700; color: #111; margin-right: 8px; }
-                .kpl-rcm-head .d { font-size: 11px; color: #999; }
+                .kpl-rcm-cols { display: flex; gap: 4px; overflow-x: auto; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 4px 6px; margin-bottom: 8px; scrollbar-width: none; }
+                .kpl-rcm-cols::-webkit-scrollbar { display: none; }
+                .kpl-rcm-cols .c { flex-shrink: 0; font-size: 13px; color: #444; padding: 6px 12px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
+                .kpl-rcm-cols .c.on { background: #e03131; color: #fff; font-weight: 700; }
+                .kpl-rcm-card { display: flex; gap: 10px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 11px 12px; margin-bottom: 8px; cursor: pointer; }
+                .kpl-rcm-card .main { flex: 1; min-width: 0; }
+                .kpl-rcm-card .tt { font-size: 15px; color: #111; font-weight: 600; line-height: 1.5; }
+                .kpl-rcm-card .zy { font-size: 12px; color: #666; line-height: 1.6; margin-top: 4px; }
+                .kpl-rcm-card .meta { font-size: 11px; color: #999; margin-top: 6px; display: flex; gap: 12px; }
+                .kpl-rcm-card .meta .pay { font-style: normal; color: #f08c00; border: 1px solid #f08c00; border-radius: 3px; padding: 0 4px; font-size: 10px; }
+                .kpl-rcm-card .thumb { width: 96px; height: 68px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: #f5f6f8; }
                 .kpl-rcm-row { display: flex; gap: 10px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 11px 12px; margin-bottom: 8px; cursor: pointer; }
                 .kpl-rcm-row .main { flex: 1; min-width: 0; }
                 .kpl-rcm-row .tt { font-size: 14px; color: #111; line-height: 1.5; }

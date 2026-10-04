@@ -1863,9 +1863,20 @@ async def kpl_article(aid: str):
 
 
 @app.get("/api/kpl/recommend")
-async def kpl_recommend(st: int = 20, index: int = 0):
-    """推荐页文章流（UserInfo/AppNews 分页）"""
-    return await asyncio.to_thread(kpl_api.get_recommend_articles, st, index)
+async def kpl_recommend():
+    """推荐页栏目 tab + 默认栏目 feed（ForumsMsgColumn GetList/GetInfo）"""
+    def _all():
+        columns = kpl_api.get_recommend_columns()
+        first = columns[0]["id"] if columns else "27"
+        feed = kpl_api.get_column_feed(first)
+        return {"columns": columns, "current": first, **feed}
+    return await asyncio.to_thread(_all)
+
+
+@app.get("/api/kpl/column/{cid}")
+async def kpl_column_feed(cid: str, pre_index: str = ""):
+    """栏目文章 feed 分页（ForumsMsgColumn/GetInfo）"""
+    return await asyncio.to_thread(kpl_api.get_column_feed, cid, pre_index or None)
 
 
 # ============= WebSocket =============

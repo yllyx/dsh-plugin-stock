@@ -866,6 +866,49 @@ class KplClient:
             })
         return out
 
+    def get_recommend_columns(self) -> List[Dict[str, Any]]:
+        """推荐页栏目 tab（ForumsMsgColumn/GetList @ART，App 推荐页顶部分类）。
+        "热门"(27) 固定首位，其余按 Recommend 标记+原序。"""
+        d = self.call(HOST_ART, "ForumsMsgColumn", "GetList",
+                      {"Index": "0", "st": "50"}, authed=False)
+        cols = []
+        for x in (d or {}).get("List") or []:
+            cols.append({"id": str(x.get("ID")), "name": x.get("Name") or "",
+                         "recommend": str(x.get("Recommend")) == "1",
+                         "focus": x.get("Focus") or 0})
+        hot = [c for c in cols if c["id"] == "27"]
+        rest = [c for c in cols if c["id"] != "27" and c["recommend"]]
+        rest += [c for c in cols if c not in hot and c not in rest]
+        return hot + rest
+
+    def get_column_feed(self, column_id: str, pre_index: Optional[str] = None) -> Dict[str, Any]:
+        """栏目文章 feed（ForumsMsgColumn/GetInfo {ColumnID, PreIndex} @ART，带缩略图卡片）。
+        PreIndex 为上一页返回的游标（首页不传）。"""
+        biz = {"ColumnID": str(column_id)}
+        if pre_index:
+            biz["PreIndex"] = str(pre_index)
+        d = self.call(HOST_ART, "ForumsMsgColumn", "GetInfo", biz, authed=False)
+        base = (d or {}).get("Base") or {}
+        lst = []
+        for x in (d or {}).get("List") or []:
+            img = ((x.get("img") or {}).get("List") or [])
+            lst.append({
+                "id": x.get("ID"), "title": x.get("Title") or "",
+                "zhaiyao": x.get("ZhaiYao") or "",
+                "time": x.get("CreateTime"),
+                "msg_type": x.get("MsgType"),
+                "vote": x.get("VoteCount") or 0, "share": x.get("ShareCount") or 0,
+                "img": img[0] if img else "",
+                "is_pay": x.get("IsPay") or 0,
+                "stocks": x.get("Stock") or [],
+            })
+        return {
+            "column": {"id": base.get("ID") or column_id, "name": base.get("Name") or "",
+                       "descn": base.get("Descn") or ""},
+            "pre_index": (d or {}).get("PreIndex"),
+            "list": lst,
+        }
+
 
     # ---------- 首页聚合（复刻 App 首页信息流，模块接口均为 2026-09-22 实测） ----------
 
