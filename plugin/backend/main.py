@@ -1873,6 +1873,12 @@ async def kpl_recommend():
     return await asyncio.to_thread(_all)
 
 
+@app.get("/api/kpl/recommend_articles")
+async def kpl_recommend_articles(st: int = 20, index: int = 0):
+    """推荐 tab 文章流（UserInfo/AppNews 分页）"""
+    return await asyncio.to_thread(kpl_api.get_recommend_articles, st, index)
+
+
 @app.get("/api/kpl/column/{cid}")
 async def kpl_column_feed(cid: str, pre_index: str = ""):
     """栏目文章 feed 分页（ForumsMsgColumn/GetInfo）"""

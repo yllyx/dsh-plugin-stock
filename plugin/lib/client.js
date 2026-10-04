@@ -4798,9 +4798,12 @@ window.__ModuleLoader__.load({
 
         /* ---- 推荐菜单（App 底部导航推荐：栏目 tab 横滑+更多弹层+专栏页，ForumsMsgColumn 同源） ---- */
 
+        /* ---- 推荐菜单最终 1:1（App 实拍 m0/m1：双大 tab+栏目横滑 HOT+左文右图卡片） ---- */
+
         function KplRecommendPage({ go }) {
+            const [bigTab, setBigTab] = useState("art");          // art=文章 / follow=关注
             const [cols, setCols] = useState(null);
-            const [cur, setCur] = useState(null);
+            const [cur, setCur] = useState("rec");                // rec=推荐(AppNews) 或栏目 ID
             const [feed, setFeed] = useState(null);
             const [preIndex, setPreIndex] = useState(null);
             const [error, setError] = useState(null);
@@ -4821,59 +4824,101 @@ window.__ModuleLoader__.load({
                     try {
                         const d = await api("/api/kpl/recommend");
                         setCols(d.columns || []);
-                        const first = (d.columns || [])[0];
-                        setCur(d.current || (first && first.id) || "27");
-                        setFeed(d.list || []);
-                        setPreIndex(d.pre_index != null ? String(d.pre_index) : null);
+                        setFeed(await api("/api/kpl/recommend_articles?st=20&index=0"));
                     } catch (e) { setError(e.message); }
                 })();
             }, []);
             const switchCol = (cid) => {
                 if (cid === cur) return;
                 setCur(cid); setFeed(null); setPreIndex(null);
-                loadFeed(cid, null);
+                if (cid !== "rec") loadFeed(cid, null);
+                else (async () => {
+                    try { setFeed(await api("/api/kpl/recommend_articles?st=20&index=0")); } catch { setFeed([]); }
+                })();
             };
-            const fmtT = (t) => t ? new Date(t * 1000).toLocaleString("zh-CN",
-                { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
-            const feedCards = (list) => (list || []).map((a) => React.createElement("div", { key: a.id,
+            const relTime = (t) => {
+                if (!t) return "";
+                const d = new Date(t * 1000), now = new Date();
+                const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+                const sameDay = d.toDateString() === now.toDateString();
+                const yest = new Date(now.getTime() - 86400000).toDateString() === d.toDateString();
+                if (sameDay) return hm;
+                if (yest) return "昨天 " + hm;
+                return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${hm}`;
+            };
+            const stockChips = (stocks) => (stocks || []).slice(0, 3).map((s, i) => {
+                const code = s[0], nm = s[1], pct = s[2];
+                const up = String(pct).indexOf("-") !== 0;
+                return React.createElement("span", { key: i, className: "chip " + (up ? "up" : "down") },
+                    nm + " " + (pct != null ? pct + "%" : ""));
+            });
+            const cards = (list) => (list || []).map((a) => React.createElement("div", { key: a.id,
                 className: "kpl-rcm-card",
-                onClick: () => go({ page: "article", aid: a.aid || a.id, title: a.title.slice(0, 30),
+                onClick: () => go({ page: "article", aid: a.aid || a.id, title: (a.title || a.content || "").slice(0, 30),
                     zhaiyao: a.zhaiyao, img: a.img, time: a.time, pay: a.is_pay }) },
                 React.createElement("div", { className: "main" },
-                    React.createElement("div", { className: "tt" }, a.title),
-                    a.zhaiyao ? React.createElement("div", { className: "zy" },
-                        a.zhaiyao.slice(0, 46) + (a.zhaiyao.length > 46 ? "…" : "")) : null,
+                    React.createElement("div", { className: "tt" },
+                        (a.title || a.content || "--").slice(0, 50) + ((a.title || a.content || "").length > 50 ? "…" : "")),
+                    (a.stocks || []).length ? React.createElement("div", { className: "chips" }, stockChips(a.stocks)) : null,
                     React.createElement("div", { className: "meta" },
-                        React.createElement("span", null, fmtT(a.time)),
-                        React.createElement("span", null, "赞 " + a.vote),
-                        a.is_pay ? React.createElement("span", { className: "pay" }, "订阅") : null)),
+                        React.createElement("span", { className: "src" }, a.account || ""),
+                        React.createElement("span", null, relTime(a.time)))),
                 a.img ? React.createElement("img", { className: "thumb", src: a.img,
                     onError: (e) => { e.target.style.display = "none"; } }) : null));
-            const TABN = 8;
             return React.createElement("div", { className: "kpl-page" },
-                React.createElement("div", { className: "kpl-rcm-cols" },
-                    (cols || []).slice(0, TABN).map((c) => React.createElement("span", {
+                React.createElement("div", { className: "kpl-rcm-top" },
+                    React.createElement("span", { className: "bt " + (bigTab === "follow" ? "on" : ""),
+                        onClick: () => setBigTab("follow") }, "关注"),
+                    React.createElement("span", { className: "bt " + (bigTab === "art" ? "on" : ""),
+                        onClick: () => setBigTab("art") }, "文章"),
+                    React.createElement("span", { className: "tools" },
+                        React.createElement("i", { className: "tl", onClick: () => go({ page: "search" }) }, "🔍"))),
+                bigTab === "art" && React.createElement("div", { className: "kpl-rcm-cols" },
+                    React.createElement("span", { className: "c " + (cur === "rec" ? "on" : ""),
+                        onClick: () => switchCol("rec") }, "推荐"),
+                    (cols || []).map((c) => React.createElement("span", {
                         key: c.id, className: "c " + (cur === c.id ? "on" : ""),
                         onClick: () => switchCol(c.id),
-                    }, c.name)),
-                    React.createElement("span", { className: "c more", onClick: () => setAllOpen(true) }, "更多")),
-                React.createElement(ErrorBox, { error }),
-                React.createElement(LoadingBar, { show: feed === null && !error }),
-                feedCards(feed),
-                React.createElement("div", { className: "kpl-rcm-more" },
-                    loading ? React.createElement("span", { className: "ld" }, "加载中…")
-                        : preIndex ? React.createElement("button", {
-                            onClick: () => loadFeed(cur, preIndex) }, "加载更多")
-                            : (feed && feed.length ? React.createElement("span", { className: "ld" }, "已显示全部") : null)),
-                allOpen && React.createElement("div", { className: "kpl-rcm-allmask", onClick: () => setAllOpen(false) },
-                    React.createElement("div", { className: "kpl-rcm-all", onClick: (e) => e.stopPropagation() },
-                        React.createElement("div", { className: "t" }, "全部栏目"),
-                        React.createElement("div", { className: "grid" },
-                            (cols || []).map((c) => React.createElement("span", {
-                                key: c.id, className: "g " + (cur === c.id ? "on" : ""),
-                                onClick: () => { setCur(c.id); setAllOpen(false);
-                                    go({ page: "colPage", cid: c.id, name: c.name }); },
-                            }, c.name))))));
+                    }, c.name, c.hot ? React.createElement("i", { className: "hot" }, "HOT") : null))),
+                bigTab === "art" && React.createElement(LoadingBar, { show: feed === null && !error }),
+                bigTab === "art" && React.createElement(ErrorBox, { error }),
+                bigTab === "art" && cards(feed),
+                bigTab === "art" && React.createElement("div", { className: "kpl-rcm-more" },
+                    loading ? React.createElement("span", { className: "ld" }, "加载中…") : null),
+                bigTab === "follow" && React.createElement(FollowPane, { cols, go, cards }));
+        }
+
+        /* 关注 pane：我的关注栏目头像横滑+首个栏目文章流（App m1 实拍形态） */
+        function FollowPane({ cols, go, cards }) {
+            const followed = (cols || []).filter((c) => c.sub);
+            const showCols = followed.length ? followed : (cols || []).slice(0, 6);
+            const [curF, setCurF] = useState(null);
+            const [fl, setFl] = useState(null);
+            const [err, setErr] = useState(null);
+            const target = curF || (showCols[0] && showCols[0].id) || null;
+            useEffect(() => {
+                if (!target) return;
+                (async () => {
+                    try {
+                        const d = await api(`/api/kpl/column/${target}`);
+                        setErr(null);
+                        setFl(d.list || []);
+                    } catch (e) { setErr(e.message); }
+                })();
+            }, [target]);
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement("div", { className: "kpl-rcm-followhead" },
+                    React.createElement("span", { className: "t" }, "我的关注"),
+                    React.createElement("span", { className: "more", onClick: () => go({ page: "artCenter" }) }, "更多 ›"),
+                    React.createElement("div", { className: "avatars" },
+                        showCols.map((c) => React.createElement("span", { key: c.id, className: "av",
+                            onClick: () => setCurF(c.id) },
+                            React.createElement("img", { src: c.head_pic,
+                                onError: (e) => { e.target.style.display = "none"; } }),
+                            React.createElement("span", { className: "nm" }, c.name))))),
+                React.createElement(ErrorBox, { error: err }),
+                React.createElement(LoadingBar, { show: !fl && !err }),
+                cards(fl));
         }
 
         /* ---- 栏目专栏页（ForumsMsgColumn/GetInfo：栏目头+文章流） ---- */
@@ -6924,7 +6969,28 @@ window.__ModuleLoader__.load({
                 .kpl-sp-grp .grp-it .tt { font-size: 13px; color: #222; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
                 .kpl-sp-grp .grp-it .dd { font-size: 11px; color: #999; margin-top: 3px; }
                 /* ==== 推荐菜单/文章详情 kpl-rcm-*/ /*kpl-art-*（App 文章 H5 同源，显式白底） ==== */
+                                .kpl-rcm-top { display: flex; align-items: center; gap: 16px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
+                .kpl-rcm-top .bt { font-size: 18px; color: #999; cursor: pointer; }
+                .kpl-rcm-top .bt.on { color: #111; font-weight: 800; }
+                .kpl-rcm-top .tools { margin-left: auto; }
+                .kpl-rcm-top .tools .tl { font-style: normal; font-size: 15px; cursor: pointer; }
                 .kpl-rcm-cols { display: flex; gap: 4px; overflow-x: auto; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 4px 6px; margin-bottom: 8px; scrollbar-width: none; }
+                .kpl-rcm-cols .c { position: relative; flex-shrink: 0; font-size: 13px; color: #444; padding: 6px 12px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
+                .kpl-rcm-cols .c.on { background: #e03131; color: #fff; font-weight: 700; }
+                .kpl-rcm-cols .c .hot { font-style: normal; position: absolute; top: -4px; right: -2px; font-size: 8px; color: #fff; background: #e03131; border-radius: 5px 5px 5px 0; padding: 0 3px; font-weight: 700; }
+                .kpl-rcm-card .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+                .kpl-rcm-card .chips .chip { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #f5f6f8; }
+                .kpl-rcm-card .chips .chip.up { color: #e03131; }
+                .kpl-rcm-card .chips .chip.down { color: #2f9e44; }
+                .kpl-rcm-card .meta .src { color: #666; }
+                .kpl-rcm-followhead { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+                .kpl-rcm-followhead .t { font-size: 14px; font-weight: 700; color: #111; }
+                .kpl-rcm-followhead .more { float: right; font-size: 12px; color: #999; cursor: pointer; }
+                .kpl-rcm-followhead .avatars { display: flex; gap: 12px; overflow-x: auto; padding-top: 10px; scrollbar-width: none; }
+                .kpl-rcm-followhead .avatars::-webkit-scrollbar { display: none; }
+                .kpl-rcm-followhead .av { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; flex-shrink: 0; width: 56px; }
+                .kpl-rcm-followhead .av img { width: 46px; height: 46px; border-radius: 50%; object-fit: cover; background: #f0f2f5; }
+                .kpl-rcm-followhead .av .nm { font-size: 10px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 56px; }
                 .kpl-rcm-cols::-webkit-scrollbar { display: none; }
                 .kpl-rcm-cols .c { flex-shrink: 0; font-size: 13px; color: #444; padding: 6px 12px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
                 .kpl-rcm-cols .c.on { background: #e03131; color: #fff; font-weight: 700; }

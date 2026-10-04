@@ -870,13 +870,15 @@ class KplClient:
         """推荐页栏目 tab（ForumsMsgColumn/GetList @ART，App 推荐页顶部分类）。
         顺序=服务端 Orders 序（GetList 返回序，与 App 一致），不过滤不重排。"""
         d = self.call(HOST_ART, "ForumsMsgColumn", "GetList",
-                      {"Index": "0", "st": "50"}, authed=False)
+                      {"Index": "0", "st": "50"}, authed=True)
         cols = []
         for x in (d or {}).get("List") or []:
             cols.append({"id": str(x.get("ID")), "name": x.get("Name") or "",
                          "recommend": str(x.get("Recommend")) == "1",
                          "focus": x.get("Focus") or 0,
-                         "head_pic": x.get("HeadPic") or "", "descn": x.get("Descn") or ""})
+                         "head_pic": x.get("HeadPic") or "", "descn": x.get("Descn") or "",
+                         "sub": str(x.get("Sub")) == "1",
+                         "hot": str(x.get("Tag")) == "2"})
         return cols
 
     def get_column_feed(self, column_id: str, pre_index: Optional[str] = None) -> Dict[str, Any]:
@@ -901,6 +903,7 @@ class KplClient:
                 "vote": x.get("VoteCount") or 0, "share": x.get("ShareCount") or 0,
                 "img": img[0] if img else "",
                 "is_pay": x.get("IsPay") or 0,
+                "account": x.get("Account") or "",
                 "stocks": x.get("Stock") or [],
             })
         return {
