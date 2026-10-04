@@ -27,7 +27,7 @@ import re
 import threading
 import datetime
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from loguru import logger
@@ -651,6 +651,163 @@ class KplClient:
             d = self.call(HOST_HIS, "HisLimitResumption", "GetHotSearch", authed=False)
             return (d or {}).get("word") or []
         return self._cached_swr("hotwords", 600, fetch)
+
+    # ---------- 搜索页（App 搜索 1:1，2026-10-04 协议实测） ----------
+
+    _pinyin_cache: Dict[str, Any] = {}
+
+    @staticmethod
+    def _stock_names() -> Dict[str, str]:
+        """全市场 {code: name}：随包打包的 App KPL_CACHE 名称表（13690 条，静态稳）。"""
+        idx = KplClient._pinyin_cache.get("names")
+        if idx is not None:
+            return idx
+        import os
+        pth = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "static", "kpl_stock_names.json")
+        try:
+            names = json.loads(open(pth, encoding="utf-8").read())
+        except Exception:
+            names = {}
+        KplClient._pinyin_cache["names"] = names
+        return names
+
+    def _name_pinyin_index(self) -> Dict[str, Tuple[str, str]]:
+        """全市场名称 → (全拼, 首字母)，惰性构建一次（pypinyin 纯 py）。"""
+        idx = KplClient._pinyin_cache.get("idx")
+        if idx is not None:
+            return idx
+        try:
+            from pypinyin import lazy_pinyin, Style
+        except Exception:
+            KplClient._pinyin_cache["idx"] = {}
+            return {}
+        idx = {}
+        for code, name in self._stock_names().items():
+            if not name:
+                continue
+            try:
+                full = "".join(lazy_pinyin(name)).lower()
+                abbr = "".join(lazy_pinyin(name, style=Style.FIRST_LETTER)).lower()
+                idx[code] = (full, abbr)
+            except Exception:
+                continue
+        KplClient._pinyin_cache["idx"] = idx
+        return idx
+
+    def search_suggest(self, q: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """综合联想：代码/名称包含 + 全拼/拼音首字母前缀匹配（App 输入中即时联想）。"""
+        q = (q or "").strip().upper()
+        if not q:
+            return []
+        ql = q.lower()
+        names = self._stock_names()
+        idx = self._name_pinyin_index()
+        results = []
+        for code, name in names.items():
+            if not name:
+                continue
+            hit = q in code or q in name.upper()
+            if not hit and idx.get(code):
+                full, abbr = idx[code]
+                hit = full.startswith(ql) or abbr.startswith(ql) or ql in abbr
+            if hit:
+                results.append({"code": code, "name": name})
+                if len(results) >= limit:
+                    break
+        return results
+
+    @staticmethod
+    def _tx_pct_batch(codes: List[str]) -> Dict[str, Any]:
+        """腾讯批量行情补涨跌幅（免鉴权）：{code: pct_str}。codes 无市场前缀自动补。"""
+        out: Dict[str, Any] = {}
+        if not codes:
+            return out
+        def pref(c):
+            return ("sh" if c.startswith(("6", "9", "5")) else
+                    "bj" if c.startswith(("4", "8", "9")) else "sz") + c
+        url = "https://qt.gtimg.cn/q=" + ",".join(pref(c) for c in codes[:60])
+        try:
+            r = httpx.get(url, timeout=6, headers={"User-Agent": "Mozilla/5.0"})
+            txt = r.text
+            import re as _re
+            for m in _re.finditer(r'v_[a-z]+(\d{6})="([^"]+)"', txt):
+                code, payload = m.group(1), m.group(2)
+                parts = payload.split("~")
+                if len(parts) > 32:
+                    out[code] = parts[32]   # 涨跌幅%
+        except Exception:
+            pass
+        return out
+
+    def get_search_hot(self) -> Dict[str, Any]:
+        """搜索页默认态各 tab 热门（同刻并发）。
+        综合=Search/ZongHeHotList.StockList(补名+腾讯涨幅)；龙虎榜=DaZongJiaoYi/GetHotSearch；
+        涨停原因=HisLimitResumption/GetHotSearch；基金/营业部 App 热门暂固定（待盘中定位接口）。"""
+        from concurrent.futures import ThreadPoolExecutor
+        pool_names = self._stock_names()
+
+        def zonghe():
+            d = self.call(HOST_LHB, "Search", "ZongHeHotList", authed=True)
+            stocks = []
+            for x in (d or {}).get("StockList") or []:
+                code = x.get("ID") or ""
+                stocks.append({"code": code, "name": x.get("Name") or pool_names.get(code, ""),
+                               "reason": x.get("Reason") or "", "is_dy": x.get("IsDY")})
+            pct = self._tx_pct_batch([s["code"] for s in stocks])
+            for s in stocks:
+                s["pct"] = pct.get(s["code"])
+            return stocks
+
+        def lhb():
+            d = self.call(HOST_LHB, "DaZongJiaoYi", "GetHotSearch", authed=False)
+            rows = [{"code": x.get("StockID"), "name": x.get("Name")}
+                    for x in (d or {}).get("List") or []]
+            pct = self._tx_pct_batch([r["code"] for r in rows if r.get("code")])
+            for r in rows:
+                r["pct"] = pct.get(r.get("code") or "")
+            return rows
+
+        def zt():
+            return self.get_hot_words() or []
+
+        with ThreadPoolExecutor(3) as ex:
+            f1, f2, f3 = ex.submit(zonghe), ex.submit(lhb), ex.submit(zt)
+            stocks, lhb_hot, zt_words = f1.result(), f2.result(), f3.result()
+        return {
+            "stocks": stocks,
+            "lhb_hot": lhb_hot,
+            "zt_words": zt_words,
+            "fund_hot": [
+                {"name": "华夏中证5G通信主题ETF"},
+                {"name": "鹏华全球中短债债券A类人民币(QDII)"},
+                {"name": "东方红中证东方红红利低波动指数A"},
+                {"name": "安信工业4.0混合A"},
+            ],
+            "biz_hot": [
+                {"name": "国泰海通证券武汉紫阳东路"},
+                {"name": "中国银河证券大连黄河路"},
+                {"name": "国投证券绍兴延安东路"},
+                {"name": "国泰海通证券南京太平南路"},
+            ],
+        }
+
+    def search_combine(self, kw: str) -> Dict[str, Any]:
+        """综合搜索"更多结果"：资讯/快讯/互动易/题材/管理（APPComplexData/GetCombineSearch @ART）。"""
+        d = self.call(HOST_ART, "APPComplexData", "GetCombineSearch", {"search": kw}, authed=False)
+        comb = (d or {}).get("Combines") or {}
+        out = {}
+        for k, v in comb.items():
+            if isinstance(v, dict):
+                out[k] = v.get("List") or []
+        return out
+
+    def search_fund(self, kw: str, index: int = 0, st: int = 10) -> List[Dict[str, Any]]:
+        """基金 tab 搜索（Search/JiJinQuery @LHB：keyword/Index/st）。"""
+        d = self.call(HOST_LHB, "Search", "JiJinQuery",
+                      {"keyword": kw, "Index": str(index), "st": str(st)}, authed=False)
+        return (d or {}).get("list") or []
+
 
     # ---------- 首页聚合（复刻 App 首页信息流，模块接口均为 2026-09-22 实测） ----------
 

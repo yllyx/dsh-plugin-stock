@@ -1830,6 +1830,31 @@ async def kpl_search_local(q: str = Query(...)):
     return {"results": results}
 
 
+# ============= 搜索页（App 搜索 1:1，2026-10-04） =============
+@app.get("/api/kpl/search/suggest")
+async def kpl_search_suggest(q: str = Query(...)):
+    """综合联想：代码/名称/全拼/拼音首字母（App 输入中即时联想）"""
+    return await asyncio.to_thread(kpl_api.search_suggest, q)
+
+
+@app.get("/api/kpl/search/hot")
+async def kpl_search_hot():
+    """搜索页默认态各 tab 热门：综合热搜股票/龙虎榜热门/涨停原因热词/基金与营业部热门"""
+    return await asyncio.to_thread(kpl_api.get_search_hot)
+
+
+@app.get("/api/kpl/search/combine")
+async def kpl_search_combine(kw: str = Query(...)):
+    """综合搜索"更多结果"：资讯/快讯/互动易/题材/管理（APPComplexData/GetCombineSearch）"""
+    return await asyncio.to_thread(kpl_api.search_combine, kw)
+
+
+@app.get("/api/kpl/search/fund")
+async def kpl_search_fund(kw: str = Query(...), index: int = 0, st: int = 10):
+    """基金 tab 搜索（Search/JiJinQuery）"""
+    return await asyncio.to_thread(kpl_api.search_fund, kw, index, st)
+
+
 # ============= WebSocket =============
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

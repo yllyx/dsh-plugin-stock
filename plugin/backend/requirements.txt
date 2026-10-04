@@ -18,3 +18,4 @@ pydantic>=2.0
 
 # 工具
 loguru>=0.7
+pypinyin>=1.0

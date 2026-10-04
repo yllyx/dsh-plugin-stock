@@ -1564,6 +1564,7 @@ window.__ModuleLoader__.load({
         const KPL_NAV = [
             { id: "home", label: "首页", icon: "🏠" },
             { id: "market", label: "行情", icon: "📈" },
+            { id: "search", label: "搜索", icon: "🔍" },
             { id: "watchlist", label: "自选股", icon: "➕" },
             { id: "lhb", label: "龙虎榜", icon: "📊" },
             { id: "recommend", label: "推荐", icon: "👍" },
@@ -5348,40 +5349,185 @@ window.__ModuleLoader__.load({
 
 
 
-        /* ---- 搜索（下钻） ---- */
+        /* ---- 搜索页（App 搜索 1:1：5 tab + 历史 + 热搜 + 联想 + 更多结果） ---- */
 
         function KplSearch({ go }) {
+            const TABS = [
+                ["c", "综合", "搜索个股/板块/题材库/功能"],
+                ["lhb", "龙虎榜", "请输入股票简称/代码"],
+                ["fund", "基金", "请输入基金名称/基金经理"],
+                ["biz", "营业部", "请输入营业部名称"],
+                ["zt", "涨停原因", "请输入涨停关键词/所属板块"],
+            ];
+            const [tab, setTab] = useState("c");
             const [q, setQ] = useState("");
-            const [hot, setHot] = useState([]);
-            const [results, setResults] = useState(null);
+            const [hot, setHot] = useState(null);
+            const [sug, setSug] = useState(null);
+            const [fundRes, setFundRes] = useState(null);
+            const [combine, setCombine] = useState(null);
+            const [showMore, setShowMore] = useState(false);
+            const [hist, setHist] = useState(() => {
+                try { return JSON.parse(localStorage.getItem("kpl_sp_hist") || "[]"); }
+                catch { return []; }
+            });
             const loadHot = useCallback(async () => {
-                try { const d = await api("/api/kpl/overview"); setHot((d && d.hot_stocks) || []); } catch { /* */ }
+                try { setHot(await api("/api/kpl/search/hot")); } catch { /* */ }
             }, []);
             useEffect(() => { loadHot(); }, []);
             useEffect(() => {
-                if (!q.trim()) { setResults(null); return; }
+                setCombine(null); setShowMore(false);
+                if (!q.trim()) { setSug(null); setFundRes(null); return; }
+                const kw = q.trim();
                 const t = setTimeout(async () => {
-                    try { const d = await api(`/api/kpl/search-local?q=${encodeURIComponent(q.trim())}`); setResults(d.results || []); }
-                    catch { /* */ }
-                }, 300);
+                    if (tab === "fund") {
+                        try { setFundRes(await api(`/api/kpl/search/fund?kw=${encodeURIComponent(kw)}`)); }
+                        catch { setFundRes([]); }
+                        return;
+                    }
+                    try { setSug(await api(`/api/kpl/search/suggest?q=${encodeURIComponent(kw)}`)); }
+                    catch { setSug([]); }
+                }, 280);
                 return () => clearTimeout(t);
-            }, [q]);
-            const add = async (code) => {
-                try { await post("/api/kpl/watchlist/add", { code }); }
-                catch { /* */ }
+            }, [q, tab]);
+            const saveHist = (item) => {
+                setHist((prev) => {
+                    const next = [item, ...prev.filter((x) => !(x.code && x.code === item.code) && !(x.kw && x.kw === item.kw))].slice(0, 12);
+                    try { localStorage.setItem("kpl_sp_hist", JSON.stringify(next)); } catch { /* */ }
+                    return next;
+                });
             };
-            const rows = results !== null ? results : hot.map((h) => ({ code: h.ID, name: h.Name || "" }));
-            return React.createElement("div", { className: "kpl-page" },
-                React.createElement(KplPageHeader, { title: "搜索", onBack: () => go({ page: "back" }) }),
-                React.createElement("input", { className: "kpl-search-input", placeholder: "搜索个股（代码/名称）",
-                    value: q, onChange: (e) => setQ(e.target.value) }),
-                results === null && React.createElement("div", { className: "kpl-sec-title" }, "🔥 热搜股票"),
-                rows.map((r) => React.createElement("div", { key: r.code, className: "kpl-search-row" },
-                    React.createElement("span", { className: "name", onClick: () => go({ page: "stock", stock: r }) },
-                        (r.name || "—") + " "),
-                    React.createElement("span", { className: "code" }, r.code),
-                    React.createElement("button", { className: "kpl-add-btn", onClick: () => add(r.code) }, "＋"))),
-                results !== null && rows.length === 0 && React.createElement("div", { className: "kpl-placeholder" }, "无匹配结果"));
+            const openStock = (code, name) => {
+                if (!code) return;
+                saveHist({ code, name: name || "" });
+                go({ page: "stock", stock: { code, name: name || code } });
+            };
+            const doSearch = () => {
+                const kw = q.trim();
+                if (kw) saveHist({ kw });
+                if (tab === "fund") return;
+                (async () => {
+                    try { setCombine(await api(`/api/kpl/search/combine?kw=${encodeURIComponent(kw)}`)); setShowMore(true); }
+                    catch { setCombine(null); }
+                })();
+            };
+            const pctSpan = (pct) => React.createElement("span",
+                { className: "pct " + (String(pct || "").indexOf("-") === 0 ? "down" : "up") },
+                pct != null && pct !== "" ? pct + "%" : "--");
+            const rankCls = (i) => i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "rn";
+            const stockRow = (s, i) => React.createElement("div", { key: s.code + i, className: "kpl-sp-row",
+                    onClick: () => openStock(s.code, s.name) },
+                React.createElement("span", { className: "rank " + rankCls(i) }, i + 1),
+                React.createElement("div", { className: "mid" },
+                    React.createElement("b", null, s.name || "--"),
+                    React.createElement("span", { className: "cd" }, s.code)),
+                s.reason ? React.createElement("span", { className: "reason" }, s.reason) : null,
+                pctSpan(s.pct),
+                React.createElement("button", { className: "addbtn",
+                    onClick: (e) => { e.stopPropagation(); post("/api/kpl/watchlist/add", { code: s.code }).catch(() => {}); } }, "＋"));
+
+            const kids = [];
+            if (!q.trim()) {
+                if (tab === "c") {
+                    if (hist.length) kids.push(React.createElement("div", { key: "hh", className: "kpl-sp-sechist" },
+                        React.createElement("span", { className: "t" }, "搜索历史"),
+                        React.createElement("span", { className: "clr", onClick: () => {
+                            setHist([]); try { localStorage.removeItem("kpl_sp_hist"); } catch { /* */ }
+                        } }, "🗑"),
+                        React.createElement("div", { className: "chips" },
+                            hist.map((h, i) => React.createElement("span", { key: i, className: "chip",
+                                onClick: () => h.code ? openStock(h.code, h.name) : setQ(h.kw || "") },
+                                h.code ? (h.name || h.code) : h.kw)))));
+                    if (hot && hot.stocks && hot.stocks.length) {
+                        kids.push(React.createElement("div", { key: "hs", className: "kpl-sp-sec" },
+                            React.createElement("div", { className: "sec-t" },
+                                React.createElement("span", { className: "fire" }, "🔥"),
+                                "热搜股票")));
+                        hot.stocks.forEach((s, i) => kids.push(stockRow(s, i)));
+                    }
+                } else if (tab === "lhb") {
+                    const rows = (hot && hot.lhb_hot) || [];
+                    if (rows.length) kids.push(React.createElement("div", { key: "lh", className: "kpl-sp-sec" },
+                        React.createElement("div", { className: "sec-t" }, "热门搜索")));
+                    kids.push(React.createElement("div", { key: "lg", className: "kpl-sp-grid" },
+                        rows.map((s, i) => React.createElement("div", { key: s.code + i, className: "cell",
+                            onClick: () => openStock(s.code, s.name) },
+                            React.createElement("span", { className: "rank " + rankCls(i) }, i + 1),
+                            React.createElement("div", { className: "mid" },
+                                React.createElement("b", null, s.name || "--"),
+                                React.createElement("span", { className: "cd" }, s.code))))));
+                } else if (tab === "fund") {
+                    const rows = (hot && hot.fund_hot) || [];
+                    kids.push(React.createElement("div", { key: "fh", className: "kpl-sp-sec" },
+                        React.createElement("div", { className: "sec-t" }, "热门搜索")));
+                    rows.forEach((f, i) => kids.push(React.createElement("div", { key: i, className: "kpl-sp-fund",
+                        onClick: () => setQ(f.name) }, f.name)));
+                } else if (tab === "biz") {
+                    const rows = (hot && hot.biz_hot) || [];
+                    kids.push(React.createElement("div", { key: "bh", className: "kpl-sp-sec" },
+                        React.createElement("div", { className: "sec-t" }, "热门搜索")));
+                    rows.forEach((f, i) => kids.push(React.createElement("div", { key: i, className: "kpl-sp-biz" },
+                        React.createElement("span", { className: "nm" }, f.name),
+                        React.createElement("span", { className: "sub" }, "订阅"))));
+                } else if (tab === "zt") {
+                    const words = (hot && hot.zt_words) || [];
+                    kids.push(React.createElement("div", { key: "zh", className: "kpl-sp-sec" },
+                        React.createElement("div", { className: "sec-t" }, "热门搜索")));
+                    kids.push(React.createElement("div", { key: "zg", className: "kpl-sp-grid" },
+                        words.map((wd, i) => React.createElement("div", { key: i, className: "cell word",
+                            onClick: () => setQ(wd) }, wd))));
+                }
+            } else if (tab === "fund") {
+                (fundRes || []).forEach((f, i) => kids.push(React.createElement("div", { key: i, className: "kpl-sp-fund" },
+                    React.createElement("span", { className: "nm" }, f.Name),
+                    React.createElement("span", { className: "cd" }, f.ID))));
+            } else {
+                const rows = sug || [];
+                rows.forEach((s, i) => kids.push(stockRow(s, i)));
+                if (sug !== null && rows.length === 0 && !showMore) {
+                    kids.push(React.createElement("div", { key: "none", className: "kpl-sp-none" }, "无匹配结果"));
+                }
+                if (tab === "c" && q.trim()) {
+                    kids.push(React.createElement("div", { key: "more", className: "kpl-sp-more",
+                        onClick: () => { if (!combine) doSearch(); else setShowMore(!showMore); } },
+                        React.createElement("div", null,
+                            React.createElement("div", { className: "t" }, "搜索：" + q.trim()),
+                            React.createElement("div", { className: "d" }, "查看资讯、互动易、机构纪要等更多结果")),
+                        React.createElement("span", { className: "arr" }, "›")));
+                    if (showMore && combine) {
+                        const groups = [["Article", "资讯"], ["Flash", "快讯"], ["Interact", "互动易"],
+                            ["Theme", "题材"], ["Manage", "管理"]];
+                        groups.forEach(([k, label]) => {
+                            const list = combine[k] || [];
+                            if (!list.length) return;
+                            kids.push(React.createElement("div", { key: k, className: "kpl-sp-grp" },
+                                React.createElement("div", { className: "grp-t" }, label),
+                                list.map((it, i) => React.createElement("div", { key: i, className: "grp-it" },
+                                    React.createElement("div", { className: "tt" },
+                                        it.Title || it.AskMess || it.Name || it.KeyWord || "--"),
+                                    React.createElement("div", { className: "dd" },
+                                        it.Source || it.Account || it.UserName || "",
+                                        it.CreateTime ? " " + new Date(it.CreateTime * 1000).toLocaleDateString() : "")))));
+                        });
+                    }
+                }
+            }
+
+            const ph = (TABS.find((t) => t[0] === tab) || TABS[0])[2];
+            return React.createElement("div", { className: "kpl-page kpl-sp" },
+                React.createElement("div", { className: "kpl-sp-top" },
+                    React.createElement("span", { className: "back", onClick: () => go({ page: "back" }) }, "‹"),
+                    React.createElement("div", { className: "box" },
+                        React.createElement("span", { className: "ico" }, "🔍"),
+                        React.createElement("input", { value: q, placeholder: ph,
+                            onChange: (e) => setQ(e.target.value),
+                            onKeyDown: (e) => { if (e.key === "Enter") doSearch(); } })),
+                    React.createElement("span", { className: "go", onClick: doSearch }, "搜索")),
+                React.createElement("div", { className: "kpl-sp-tabs" },
+                    TABS.map(([id, label]) => React.createElement("span", {
+                        key: id, className: "t " + (tab === id ? "on" : ""),
+                        onClick: () => { setTab(id); setSug(null); setFundRes(null); setShowMore(false); },
+                    }, label))),
+                kids);
         }
 
         /* ---- 主路由：底部导航 + 下钻 ---- */
@@ -5446,6 +5592,8 @@ window.__ModuleLoader__.load({
                 content = React.createElement(KplHomePage, { go, status, reloadStatus: loadStatus });
             } else if (activeNav === "market") {
                 content = React.createElement(KplMarketPage, { go });
+            } else if (activeNav === "search") {
+                content = React.createElement(KplSearch, { go });
             } else if (activeNav === "watchlist") {
                 content = React.createElement(KplWatchPage, { go });
             } else if (activeNav === "lhb") {
@@ -6531,6 +6679,66 @@ window.__ModuleLoader__.load({
                 .kpl-lhb-row .datecol { font-size: 10px; color: #666; line-height: 1.3; }
                 .kpl-lhb-row .nm .blue { color: #1c5fbb; }
                 .kpl-lhb-agency { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
+                /* ==== 搜索页 kpl-sp-*（App 搜索 1:1，显式白底） ==== */
+                .kpl-sp { padding-bottom: 46px; }
+                .kpl-sp-top { display: flex; align-items: center; gap: 8px; background: #e03131; padding: 8px 10px; position: sticky; top: 0; z-index: 5; }
+                .kpl-sp-top .back { color: #fff; font-size: 26px; line-height: 1; padding: 0 4px; cursor: pointer; }
+                .kpl-sp-top .box { flex: 1; display: flex; align-items: center; gap: 6px; background: #fff; border-radius: 17px; padding: 7px 12px; }
+                .kpl-sp-top .box .ico { font-size: 13px; }
+                .kpl-sp-top .box input { flex: 1; border: none; outline: none; font-size: 13px; color: #111; background: transparent; }
+                .kpl-sp-top .go { color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; padding: 0 2px; }
+                .kpl-sp-tabs { display: flex; background: #fff; border-bottom: 1px solid #f0f0f0; position: sticky; top: 44px; z-index: 4; }
+                .kpl-sp-tabs .t { flex: 1; text-align: center; padding: 9px 0; font-size: 13px; color: #333; cursor: pointer; border-bottom: 2px solid transparent; }
+                .kpl-sp-tabs .t.on { color: #e03131; font-weight: 700; border-bottom-color: #e03131; }
+                .kpl-sp-sec { padding: 10px 12px 2px; }
+                .kpl-sp-sec .sec-t { font-size: 14px; font-weight: 700; color: #111; margin-bottom: 4px; }
+                .kpl-sp-sec .sec-t .fire { font-style: normal; margin-right: 3px; }
+                .kpl-sp-sechist { padding: 10px 12px 2px; border-bottom: 6px solid #f5f6f8; }
+                .kpl-sp-sechist .t { font-size: 14px; font-weight: 700; color: #111; }
+                .kpl-sp-sechist .clr { float: right; color: #999; cursor: pointer; font-size: 13px; }
+                .kpl-sp-sechist .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; }
+                .kpl-sp-sechist .chips .chip { font-size: 12px; color: #333; background: #f5f6f8; border-radius: 14px; padding: 5px 12px; cursor: pointer; }
+                .kpl-sp-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #f7f7f7; cursor: pointer; background: #fff; }
+                .kpl-sp-row:last-child { border-bottom: none; }
+                .kpl-sp-row .rank { width: 18px; height: 18px; border-radius: 4px; font-size: 11px; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: #ccc; }
+                .kpl-sp-row .rank.r1 { background: #e03131; }
+                .kpl-sp-row .rank.r2 { background: #f08c00; }
+                .kpl-sp-row .rank.r3 { background: #f5c000; }
+                .kpl-sp-row .mid { flex: 1; min-width: 0; }
+                .kpl-sp-row .mid b { display: block; font-size: 14px; color: #111; }
+                .kpl-sp-row .mid .cd { font-size: 11px; color: #999; }
+                .kpl-sp-row .reason { font-size: 11px; color: #1c5fbb; border: 1px solid #c9def7; border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
+                .kpl-sp-row .pct { width: 56px; text-align: right; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+                .kpl-sp-row .pct.up, .kpl-sp-grid .pct.up { color: #e03131; }
+                .kpl-sp-row .pct.down, .kpl-sp-grid .pct.down { color: #2f9e44; }
+                .kpl-sp-row .addbtn { width: 26px; height: 26px; border-radius: 50%; border: 1px solid #e03131; background: #fff; color: #e03131; font-size: 15px; line-height: 1; flex-shrink: 0; cursor: pointer; }
+                .kpl-sp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; padding: 4px 12px; }
+                .kpl-sp-grid .cell { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid #f7f7f7; cursor: pointer; }
+                .kpl-sp-grid .cell.word { font-size: 13px; color: #333; }
+                .kpl-sp-grid .rank { width: 18px; height: 18px; border-radius: 4px; font-size: 11px; color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: #ccc; }
+                .kpl-sp-grid .rank.r1 { background: #e03131; }
+                .kpl-sp-grid .rank.r2 { background: #f08c00; }
+                .kpl-sp-grid .rank.r3 { background: #f5c000; }
+                .kpl-sp-grid .mid { min-width: 0; }
+                .kpl-sp-grid .mid b { display: block; font-size: 13px; color: #111; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .kpl-sp-grid .mid .cd { font-size: 10px; color: #999; }
+                .kpl-sp-fund { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-bottom: 1px solid #f7f7f7; font-size: 13px; color: #111; cursor: pointer; background: #fff; }
+                .kpl-sp-fund .nm { flex: 1; }
+                .kpl-sp-fund .cd { color: #999; font-size: 11px; }
+                .kpl-sp-biz { display: flex; align-items: center; padding: 11px 12px; border-bottom: 1px solid #f7f7f7; cursor: pointer; background: #fff; }
+                .kpl-sp-biz .nm { flex: 1; font-size: 13px; color: #111; }
+                .kpl-sp-biz .sub { color: #e03131; font-size: 12px; }
+                .kpl-sp-none { text-align: center; color: #999; font-size: 13px; padding: 28px 0; }
+                .kpl-sp-more { display: flex; align-items: center; justify-content: space-between; margin: 10px 12px; padding: 11px 12px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; cursor: pointer; }
+                .kpl-sp-more .t { font-size: 13px; color: #1c5fbb; font-weight: 600; }
+                .kpl-sp-more .d { font-size: 11px; color: #999; margin-top: 2px; }
+                .kpl-sp-more .arr { color: #ccc; font-size: 18px; }
+                .kpl-sp-grp { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; margin: 0 12px 10px; padding: 4px 12px; }
+                .kpl-sp-grp .grp-t { font-size: 13px; font-weight: 700; color: #111; padding: 8px 0 2px; }
+                .kpl-sp-grp .grp-it { padding: 8px 0; border-bottom: 1px solid #f7f7f7; }
+                .kpl-sp-grp .grp-it:last-child { border-bottom: none; }
+                .kpl-sp-grp .grp-it .tt { font-size: 13px; color: #222; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+                .kpl-sp-grp .grp-it .dd { font-size: 11px; color: #999; margin-top: 3px; }
                 /* ==== 情绪页 kpl-mood-*（App MarketMoodFragment 1:1，显式白底） ==== */
                 .kpl-mood { display: flex; flex-direction: column; gap: 10px; padding-bottom: 46px; position: relative; }
                 .kpl-mood-sec { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
