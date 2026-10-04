@@ -4950,13 +4950,14 @@ window.__ModuleLoader__.load({
                 React.createElement(LoadingBar, { show: !art && !error }),
                 React.createElement(ErrorBox, { error }),
                 art && React.createElement("div", { className: "kpl-art" },
-                    React.createElement("div", { className: "kpl-art-card" },
+                    React.createElement("div", { className: "kpl-art-head" },
                         React.createElement("h1", { className: "kpl-art-title" }, art.title || title || "--"),
-                        React.createElement("div", { className: "kpl-art-meta" },
-                            React.createElement("span", null, art.account ? "来源：" + art.account : ""),
-                            (art.time || ptime) ? React.createElement("span", null,
-                                new Date((art.time || ptime) * 1000).toLocaleString("zh-CN",
-                                    { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })) : null)),
+                        React.createElement("div", { className: "kpl-art-time" },
+                            "更新时间：" + ((art.time || ptime) ? new Date((art.time || ptime) * 1000).toLocaleString("zh-CN",
+                                { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "--"))),
+                    React.createElement("div", { className: "kpl-art-decl" },
+                        React.createElement("b", null, "【重点声明】"),
+                        "本文转载自网络，与开盘啦立场无关，不构成投资建议。据此操作，风险自担。"),
                     art.zhaiyao ? React.createElement("div", { className: "kpl-art-zy" }, art.zhaiyao) : null,
                     React.createElement("div", { className: "kpl-art-body",
                         dangerouslySetInnerHTML: { __html: art.content || "" } }),
@@ -6959,6 +6960,10 @@ window.__ModuleLoader__.load({
                 .kpl-rcm-more .ld { color: #999; font-size: 12px; }
                 .kpl-art-card { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 14px 14px 10px; margin-bottom: 8px; }
                 .kpl-art-title { font-size: 19px; color: #111; line-height: 1.45; margin: 0 0 8px; }
+                .kpl-art-head { padding: 2px 0 10px; }
+                .kpl-art-time { font-size: 12px; color: #999; margin-top: 6px; }
+                .kpl-art-decl { background: #f7f7f7; border-radius: 6px; padding: 8px 10px; font-size: 12px; color: #888; line-height: 1.7; margin-bottom: 10px; }
+                .kpl-art-decl b { color: #666; }
                 .kpl-art-meta { display: flex; gap: 12px; font-size: 12px; color: #999; padding-bottom: 10px; border-bottom: 1px solid #f5f5f5; }
                 .kpl-art-zy { background: #f7f9fc; border-left: 3px solid #1c6ef2; border-radius: 6px; padding: 9px 11px; font-size: 13px; color: #444; line-height: 1.7; margin-bottom: 8px; }
                 .kpl-art-body { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px 14px; font-size: 15px; color: #222; line-height: 1.85; word-break: break-word; }
