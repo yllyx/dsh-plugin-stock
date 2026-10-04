@@ -868,18 +868,16 @@ class KplClient:
 
     def get_recommend_columns(self) -> List[Dict[str, Any]]:
         """推荐页栏目 tab（ForumsMsgColumn/GetList @ART，App 推荐页顶部分类）。
-        "热门"(27) 固定首位，其余按 Recommend 标记+原序。"""
+        顺序=服务端 Orders 序（GetList 返回序，与 App 一致），不过滤不重排。"""
         d = self.call(HOST_ART, "ForumsMsgColumn", "GetList",
                       {"Index": "0", "st": "50"}, authed=False)
         cols = []
         for x in (d or {}).get("List") or []:
             cols.append({"id": str(x.get("ID")), "name": x.get("Name") or "",
                          "recommend": str(x.get("Recommend")) == "1",
-                         "focus": x.get("Focus") or 0})
-        hot = [c for c in cols if c["id"] == "27"]
-        rest = [c for c in cols if c["id"] != "27" and c["recommend"]]
-        rest += [c for c in cols if c not in hot and c not in rest]
-        return hot + rest
+                         "focus": x.get("Focus") or 0,
+                         "head_pic": x.get("HeadPic") or "", "descn": x.get("Descn") or ""})
+        return cols
 
     def get_column_feed(self, column_id: str, pre_index: Optional[str] = None) -> Dict[str, Any]:
         """栏目文章 feed（ForumsMsgColumn/GetInfo {ColumnID, PreIndex} @ART，带缩略图卡片）。
@@ -904,7 +902,8 @@ class KplClient:
             })
         return {
             "column": {"id": base.get("ID") or column_id, "name": base.get("Name") or "",
-                       "descn": base.get("Descn") or ""},
+                       "descn": base.get("Descn") or "",
+                       "head_pic": base.get("HeadPic") or "", "focus": base.get("Focus") or 0},
             "pre_index": (d or {}).get("PreIndex"),
             "list": lst,
         }
