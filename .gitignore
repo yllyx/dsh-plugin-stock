@@ -17,3 +17,4 @@ node_modules/
 
 # 后端运行日志（运行时持续写入，不入库）
 plugin/backend/*.log
+*.json.tmp
