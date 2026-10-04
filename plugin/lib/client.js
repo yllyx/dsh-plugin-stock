@@ -4837,7 +4837,8 @@ window.__ModuleLoader__.load({
                 { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
             const feedCards = (list) => (list || []).map((a) => React.createElement("div", { key: a.id,
                 className: "kpl-rcm-card",
-                onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30) }) },
+                onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30),
+                    zhaiyao: a.zhaiyao, img: a.img, time: a.time, pay: a.is_pay }) },
                 React.createElement("div", { className: "main" },
                     React.createElement("div", { className: "tt" }, a.title),
                     a.zhaiyao ? React.createElement("div", { className: "zy" },
@@ -4912,7 +4913,8 @@ window.__ModuleLoader__.load({
                 desc ? React.createElement("div", { className: "kpl-col-desc" }, desc) : null,
                 React.createElement(LoadingBar, { show: !data && !error }),
                 (list || []).map((a) => React.createElement("div", { key: a.id, className: "kpl-rcm-card",
-                    onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30) }) },
+                    onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30),
+                    zhaiyao: a.zhaiyao, img: a.img, time: a.time, pay: a.is_pay }) },
                     React.createElement("div", { className: "main" },
                         React.createElement("div", { className: "tt" }, a.title),
                         a.zhaiyao ? React.createElement("div", { className: "zy" },
@@ -4932,7 +4934,7 @@ window.__ModuleLoader__.load({
 
         /* ---- 文章详情（ForumsMsgJX/GetInfo，App PContent2.html 同源） ---- */
 
-        function KplArticleDetail({ aid, title, go }) {
+        function KplArticleDetail({ aid, title, zhaiyao, img, time: ptime, pay, go }) {
             const [art, setArt] = useState(null);
             const [error, setError] = useState(null);
             const load = useCallback(async () => {
@@ -4952,12 +4954,19 @@ window.__ModuleLoader__.load({
                         React.createElement("h1", { className: "kpl-art-title" }, art.title || title || "--"),
                         React.createElement("div", { className: "kpl-art-meta" },
                             React.createElement("span", null, art.account ? "来源：" + art.account : ""),
-                            art.time ? React.createElement("span", null,
-                                new Date(art.time * 1000).toLocaleString("zh-CN",
+                            (art.time || ptime) ? React.createElement("span", null,
+                                new Date((art.time || ptime) * 1000).toLocaleString("zh-CN",
                                     { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })) : null)),
                     art.zhaiyao ? React.createElement("div", { className: "kpl-art-zy" }, art.zhaiyao) : null,
                     React.createElement("div", { className: "kpl-art-body",
                         dangerouslySetInnerHTML: { __html: art.content || "" } }),
+                    !art.content && (zhaiyao || img) && React.createElement("div", { className: "kpl-art-deg" },
+                        img ? React.createElement("img", { src: img, style: { maxWidth: "100%", borderRadius: 8, marginBottom: 10 },
+                            onError: (e) => { e.target.style.display = "none"; } }) : null,
+                        zhaiyao ? React.createElement("div", { className: "zy" }, zhaiyao) : null,
+                        React.createElement("div", { className: "note" },
+                            "该栏目文章的正文接口未开放（App 内为原生页渲染），以上为摘要；全文请在开盘啦 App 查看"),
+                        pay ? React.createElement("div", { className: "paytip" }, "本文为订阅内容") : null),
                     (art.stocks || []).length > 0 && React.createElement("div", { className: "kpl-art-stks" },
                         React.createElement("div", { className: "t" }, "相关股票"),
                         art.stocks.map((s, i) => React.createElement("span", { key: i, className: "stk",
@@ -6961,6 +6970,10 @@ window.__ModuleLoader__.load({
                 .kpl-art-stks .t { font-size: 13px; font-weight: 700; color: #111; margin-bottom: 7px; }
                 .kpl-art-stks .stk { display: inline-block; font-size: 12px; color: #1c5fbb; background: #eef4fb; border-radius: 6px; padding: 4px 10px; margin: 0 8px 6px 0; cursor: pointer; }
                 .kpl-art-tip { text-align: center; font-size: 11px; color: #bbb; padding: 14px 0 20px; }
+                .kpl-art-deg { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px 14px; }
+                .kpl-art-deg .zy { font-size: 14px; color: #333; line-height: 1.8; }
+                .kpl-art-deg .note { font-size: 12px; color: #999; margin-top: 10px; padding-top: 10px; border-top: 1px dashed #eee; }
+                .kpl-art-deg .paytip { display: inline-block; font-size: 11px; color: #f08c00; border: 1px solid #f08c00; border-radius: 3px; padding: 1px 6px; margin-top: 8px; }
                 /* ==== 情绪页 kpl-mood-*（App MarketMoodFragment 1:1，显式白底） ==== */
                 .kpl-mood { display: flex; flex-direction: column; gap: 10px; padding-bottom: 46px; position: relative; }
                 .kpl-mood-sec { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
