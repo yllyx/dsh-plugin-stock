@@ -866,6 +866,39 @@ class KplClient:
             })
         return out
 
+    def get_art_tab_feed(self) -> List[Dict[str, Any]]:
+        """文章 tab 列表（IndexPlate/GetIndexList view=1,2,3,4,6 st=2 @kaipanla 版 ART）。
+        App 实拍同源：官方教程条目无 TopicID（点开走 ID），转载条目带 TopicID/Account/Stock。
+        TopicID 是 App 点击时传详情的 MsgID（GetInfo 双模式兼容数字 ID 与 TopicID）。"""
+        import httpx
+        common = self._common(False)
+        common.update({"c": "IndexPlate", "a": "GetIndexList",
+                       "view": "1,2,3,4,6", "st": "2", "Type": "0"})
+        host = HOST_ART.replace("longhuvip", "kaipanla")
+        try:
+            r = httpx.post(host, data=common, timeout=15,
+                           headers={"User-Agent": "Mozilla/5.0"})
+            d = r.json()
+        except Exception:
+            return []
+        out = []
+        for x in ((d or {}).get("MsgTop") or {}).get("List") or []:
+            img = ((x.get("img") or {}).get("List") or [])
+            stocks = x.get("Stock") or []
+            out.append({
+                "id": x.get("ID"),
+                "aid": str(x.get("TopicID") or x.get("ID")),   # TopicID 优先（App 点击用它）
+                "title": x.get("Title") or "",
+                "zhaiyao": x.get("ZhaiYao") or "",
+                "time": x.get("CreateTime"),
+                "account": x.get("Account") or "",
+                "img": img[0] if img else "",
+                "stocks": stocks if isinstance(stocks, list) else [],
+                "is_pay": 0,
+                "vote": x.get("Like") or 0,
+            })
+        return out
+
     def get_recommend_columns(self) -> List[Dict[str, Any]]:
         """推荐页栏目 tab（ForumsMsgColumn/GetList @ART，App 推荐页顶部分类）。
         顺序=服务端 Orders 序（GetList 返回序，与 App 一致），不过滤不重排。"""

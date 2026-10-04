@@ -4824,7 +4824,7 @@ window.__ModuleLoader__.load({
                     try {
                         const d = await api("/api/kpl/recommend");
                         setCols(d.columns || []);
-                        setFeed(await api("/api/kpl/recommend_articles?st=20&index=0"));
+                        setFeed(await api("/api/kpl/arttab"));
                     } catch (e) { setError(e.message); }
                 })();
             }, []);
@@ -4833,7 +4833,7 @@ window.__ModuleLoader__.load({
                 setCur(cid); setFeed(null); setPreIndex(null);
                 if (cid !== "rec") loadFeed(cid, null);
                 else (async () => {
-                    try { setFeed(await api("/api/kpl/recommend_articles?st=20&index=0")); } catch { setFeed([]); }
+                    try { setFeed(await api("/api/kpl/arttab")); } catch { setFeed([]); }
                 })();
             };
             const relTime = (t) => {

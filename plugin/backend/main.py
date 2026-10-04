@@ -1873,6 +1873,12 @@ async def kpl_recommend():
     return await asyncio.to_thread(_all)
 
 
+@app.get("/api/kpl/arttab")
+async def kpl_arttab():
+    """文章 tab 列表（IndexPlate/GetIndexList，App 文章 tab 同源）"""
+    return await asyncio.to_thread(kpl_api.get_art_tab_feed)
+
+
 @app.get("/api/kpl/recommend_articles")
 async def kpl_recommend_articles(st: int = 20, index: int = 0):
     """推荐 tab 文章流（UserInfo/AppNews 分页）"""
