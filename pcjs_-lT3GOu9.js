@@ -1,0 +1,1 @@
+import{u as a,a as s}from"./BtxR_f62.js";const{post:e,get:r}=a(s.base4),p=t=>e("/index.php",t),i=t=>e("/index.php",t),o=t=>e("/index.php",t),c=t=>e("/index.php",t),u=t=>e("/index.php",t),d=t=>r("/index.php",t),g=t=>e("/index.php",t);export{u as a,g as b,i as c,o as d,c as e,d as f,p as g};

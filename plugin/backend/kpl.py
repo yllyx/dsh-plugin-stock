@@ -891,7 +891,10 @@ class KplClient:
         for x in (d or {}).get("List") or []:
             img = ((x.get("img") or {}).get("List") or [])
             lst.append({
-                "id": x.get("ID"), "title": x.get("Title") or "",
+                "id": x.get("ID"),
+                # ⭐ AID=文章体系 ID（ForumsMsgJX/GetInfo 的 MsgID 用它，非本表 ID）
+                "aid": x.get("AID") or "",
+                "title": x.get("Title") or "",
                 "zhaiyao": x.get("ZhaiYao") or "",
                 "time": x.get("CreateTime"),
                 "msg_type": x.get("MsgType"),

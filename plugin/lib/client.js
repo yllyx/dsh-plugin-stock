@@ -4837,7 +4837,7 @@ window.__ModuleLoader__.load({
                 { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
             const feedCards = (list) => (list || []).map((a) => React.createElement("div", { key: a.id,
                 className: "kpl-rcm-card",
-                onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30),
+                onClick: () => go({ page: "article", aid: a.aid || a.id, title: a.title.slice(0, 30),
                     zhaiyao: a.zhaiyao, img: a.img, time: a.time, pay: a.is_pay }) },
                 React.createElement("div", { className: "main" },
                     React.createElement("div", { className: "tt" }, a.title),
@@ -4913,7 +4913,7 @@ window.__ModuleLoader__.load({
                 desc ? React.createElement("div", { className: "kpl-col-desc" }, desc) : null,
                 React.createElement(LoadingBar, { show: !data && !error }),
                 (list || []).map((a) => React.createElement("div", { key: a.id, className: "kpl-rcm-card",
-                    onClick: () => go({ page: "article", aid: a.id, title: a.title.slice(0, 30),
+                    onClick: () => go({ page: "article", aid: a.aid || a.id, title: a.title.slice(0, 30),
                     zhaiyao: a.zhaiyao, img: a.img, time: a.time, pay: a.is_pay }) },
                     React.createElement("div", { className: "main" },
                         React.createElement("div", { className: "tt" }, a.title),
