@@ -5415,15 +5415,17 @@ window.__ModuleLoader__.load({
                 pct != null && pct !== "" ? pct + "%" : "--");
             const rankCls = (i) => i === 0 ? "r1" : i === 1 ? "r2" : i === 2 ? "r3" : "rn";
             const stockRow = (s, i) => React.createElement("div", { key: s.code + i, className: "kpl-sp-row",
-                    onClick: () => openStock(s.code, s.name) },
+                    onClick: () => s.market === "A" ? openStock(s.code, s.name) : undefined,
+                    style: s.market && s.market !== "A" ? { opacity: 0.75 } : undefined },
                 React.createElement("span", { className: "rank " + rankCls(i) }, i + 1),
                 React.createElement("div", { className: "mid" },
-                    React.createElement("b", null, s.name || "--"),
+                    React.createElement("b", null, (s.name || "--") +
+                        (s.market && s.market !== "A" ? React.createElement("span", { className: "mk" }, s.market) : null)),
                     React.createElement("span", { className: "cd" }, s.code)),
                 s.reason ? React.createElement("span", { className: "reason" }, s.reason) : null,
-                pctSpan(s.pct),
-                React.createElement("button", { className: "addbtn",
-                    onClick: (e) => { e.stopPropagation(); post("/api/kpl/watchlist/add", { code: s.code }).catch(() => {}); } }, "＋"));
+                s.market === "A" ? pctSpan(s.pct) : null,
+                s.market === "A" ? React.createElement("button", { className: "addbtn",
+                    onClick: (e) => { e.stopPropagation(); post("/api/kpl/watchlist/add", { code: s.code }).catch(() => {}); } }, "＋") : null);
 
             const kids = [];
             if (!q.trim()) {
@@ -6707,6 +6709,7 @@ window.__ModuleLoader__.load({
                 .kpl-sp-row .mid { flex: 1; min-width: 0; }
                 .kpl-sp-row .mid b { display: block; font-size: 14px; color: #111; }
                 .kpl-sp-row .mid .cd { font-size: 11px; color: #999; }
+                .kpl-sp-row .mid .mk { font-style: normal; font-size: 9px; color: #fff; background: #1c5fbb; border-radius: 3px; padding: 0 4px; margin-left: 5px; vertical-align: 1px; }
                 .kpl-sp-row .reason { font-size: 11px; color: #1c5fbb; border: 1px solid #c9def7; border-radius: 3px; padding: 1px 5px; flex-shrink: 0; }
                 .kpl-sp-row .pct { width: 56px; text-align: right; font-size: 14px; font-weight: 600; flex-shrink: 0; }
                 .kpl-sp-row .pct.up, .kpl-sp-grid .pct.up { color: #e03131; }

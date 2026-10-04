@@ -696,26 +696,44 @@ class KplClient:
         return idx
 
     def search_suggest(self, q: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """综合联想：代码/名称包含 + 全拼/拼音首字母前缀匹配（App 输入中即时联想）。"""
+        """综合联想：代码/名称包含 + 全拼/拼音首字母前缀匹配（App 输入中即时联想）。
+        名称表为 App 全量 STOCK 表（含港股/外汇/期货/板块）——外汇期货剔除，
+        A 股排前，港美股/板块带 market 标识（详情页仅支持 A 股）。"""
         q = (q or "").strip().upper()
         if not q:
             return []
         ql = q.lower()
         names = self._stock_names()
         idx = self._name_pinyin_index()
-        results = []
+
+        def market_of(code: str) -> str:
+            if code.startswith("HK:"):
+                return "HK"
+            if code.startswith("US:"):
+                return "US"
+            if code.isdigit() and len(code) == 6:
+                return "A"
+            if code.startswith(("88", "80", "85", "99")):
+                return "板块"
+            return ""   # 外汇/期货等杂码，剔除
+
+        a_rows, other_rows = [], []
         for code, name in names.items():
             if not name:
                 continue
+            mk = market_of(code)
+            if not mk:
+                continue   # 外汇/期货等（App 搜索结果亦无此类）
             hit = q in code or q in name.upper()
             if not hit and idx.get(code):
                 full, abbr = idx[code]
-                hit = full.startswith(ql) or abbr.startswith(ql) or ql in abbr
+                hit = mk == "A" and (full.startswith(ql) or abbr.startswith(ql) or ql in abbr)
             if hit:
-                results.append({"code": code, "name": name})
-                if len(results) >= limit:
+                row = {"code": code, "name": name, "market": mk}
+                (a_rows if mk == "A" else other_rows).append(row)
+                if len(a_rows) >= limit:
                     break
-        return results
+        return a_rows + other_rows[:max(0, limit - len(a_rows))]
 
     @staticmethod
     def _tx_pct_batch(codes: List[str]) -> Dict[str, Any]:
