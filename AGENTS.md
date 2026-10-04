@@ -112,6 +112,14 @@ git push origin main --tags
 | 0.4.1 | **投资建议具体化+自动进化闭环+真实日历**：建议接入东财实时板块/龙头（SECTOR_BRIDGE桥接+148词库）、百度股市通真实日历（前值/预期/公布值，替换mock）、FOMC官方日期修正（原编造8错5）、事件→板块映射、进化循环（回填/学习/验证/日历，每日盘后自动） |
 | 未发版 | **🚀 开盘啦登录协议逆向完成并实现**（详见下方「开盘啦登录协议」小节）：短信验证码登录+账号密码登录+自动重登，前端三模式登录卡 |
 
+### ⭐ 推荐菜单+文章详情（2026-10-04 复刻完成，H5 JS 同源逆向）
+
+- **文章详情协议**（决定性突破口：App 文章=webview H5 `apppage.longhuvip.com/w45/community/PContent2.html?AID=xxx`，**读 H5 页面 JS 源码** PContent2.js 直接解出数据接口——比抓包/字节码都快）：`ForumsMsgJX/GetInfo {MsgID, Tag:1}` @**ART** → `Msg{ID, Title, Content(HTML 正文), CreateTime, Account, MsgType, ZhaiYao, Stock[相关股票], Column{栏目}, VoteCount, ShareCount, SpecType, Pay(付费墙)}`。同文件还有：快讯详情 `PCNewsFlash/GetTopInfo {ID}`、阅读计数 `ForumsMsgJX/AddReadCount`、关注栏目 `ForumsMsgColumn/AddFocusUser`、付费扩读（同 GetInfo）
+- **推荐流** = `UserInfo/AppNews {st, Index}` @LHB（j00.r1 字节码参数；首页推荐文章同源；Type=39 大盘解读剔除）。证伪：GetArticle/GetOneArticle（j00.l1 **无业务参数**，取最新一篇）；GlobalIndex/GetSearchList=全球指数
+- **DiscoveryRecommendFragment（底部推荐 tab）结构**（字节码）：顶部分类 tab=ArticleTagBean 列表（首 tab"栏目详情列表"=ForumsMsgColumn/GetInfo，ColumnID 写死 8,11,4,3），feed=ox0.d0（c/a **来自 Tag 对象动态下发**+ColumnID/st/Index/Select/PreIndex @ART），精选=ox0.u3（ForumsMsgJX/GetSelList）。**插件推荐页落地为 AppNews 文章流推断版**（数据同源；App 顶部分类 tab 实拍待模拟器恢复后补对拍）
+- **端点**：/api/kpl/article/{aid}（详情）、/api/kpl/recommend?st=&index=（流）。前端：KplArticleDetail（正文 HTML 渲染+相关股票 chip+风险提示，kpl-art-*）、KplRecommendPage 整页重写（feed+加载更多）、首页推荐块点击→go({page:"article"})（原 window.open 外跳废弃）、"更多›"→artCenter
+- **坑**：模拟器装 mitm CA 的 tmpfs overlay 法会把 Android framework 搞挂（System UI ANR 循环，需整机重启恢复）——该镜像只能 remount 法；remount 失败时 H5 JS 源码逆向（静态资源直接 curl）常常更快
+
 ### ⭐ 搜索页（App 搜索 1:1，2026-10-04 复刻完成）
 
 - **UI 结构**（实拍 s2/s5-s12）：顶部红条（返回+搜索框+搜索按钮）；5 子 tab 综合/龙虎榜/基金/营业部/涨停原因（placeholder 随 tab 变化）；默认态综合=搜索历史(localStorage)+🔥热搜股票(名次方块 1红2橙3黄+名称+代码+涨幅%+⊕加自选)；龙虎榜/基金/营业部/涨停原因=各自"热门搜索"（龙虎榜两列、营业部带订阅、涨停原因热词两列）；输入中=本地联想列表+底部"搜索：xxx 查看资讯、互动易、机构纪要等更多结果 ›"入口（点击展开 CombineSearch 分组）
