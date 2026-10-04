@@ -112,7 +112,20 @@ git push origin main --tags
 | 0.4.1 | **投资建议具体化+自动进化闭环+真实日历**：建议接入东财实时板块/龙头（SECTOR_BRIDGE桥接+148词库）、百度股市通真实日历（前值/预期/公布值，替换mock）、FOMC官方日期修正（原编造8错5）、事件→板块映射、进化循环（回填/学习/验证/日历，每日盘后自动） |
 | 未发版 | **🚀 开盘啦登录协议逆向完成并实现**（详见下方「开盘啦登录协议」小节）：短信验证码登录+账号密码登录+自动重登，前端三模式登录卡 |
 
-### ⭐ 纯 Python 签名（算法级白盒逆向，2026-10-02 全部完成，逐位对拍验证）
+### ⭐ 搜索页（App 搜索 1:1，2026-10-04 复刻完成）
+
+- **UI 结构**（实拍 s2/s5-s12）：顶部红条（返回+搜索框+搜索按钮）；5 子 tab 综合/龙虎榜/基金/营业部/涨停原因（placeholder 随 tab 变化）；默认态综合=搜索历史(localStorage)+🔥热搜股票(名次方块 1红2橙3黄+名称+代码+涨幅%+⊕加自选)；龙虎榜/基金/营业部/涨停原因=各自"热门搜索"（龙虎榜两列、营业部带订阅、涨停原因热词两列）；输入中=本地联想列表+底部"搜索：xxx 查看资讯、互动易、机构纪要等更多结果 ›"入口（点击展开 CombineSearch 分组）
+- **接口协议**（全部实测，SOP 穷举+字节码双验证）：
+  - 综合热搜股票 = `Search/ZongHeHotList` @LHB（StockList:[{ID,IsDY,Reason}]，**Name 空→本地名称表补**；第 1 名闽东电力 4.98% 与 App 逐位一致）
+  - 涨停原因热词 = `HisLimitResumption/GetHotSearch` @HIS（word 数组，已有 get_hot_words 复用）
+  - 龙虎榜 tab 热门 = `DaZongJiaoYi/GetHotSearch` @LHB（StockID/Name；与 App 龙虎榜 tab 热搜列表的差异待盘中对拍）
+  - 基金 tab 搜索 = `Search/JiJinQuery` @LHB {keyword, Index, st}（ox0.H3 字节码解参数；list:[{ID,Name,NETNAV}]）
+  - 综合"更多结果" = `APPComplexData/GetCombineSearch` @ART {search}（ox0.q2 解参数；Combines:{Article,Flash,Interact,Theme,Manage}）
+  - **股票联想 = App 本地库过滤**（KPL_CACHE STOCK 表）——插件用打包 kpl_stock_names.json + pypinyin 首字母/全拼前缀匹配（gzmt→贵州茅台），非服务端接口
+  - 证伪：GlobalIndex/GetSearchList=全球指数专用（HKTime/USTime 参数），非通用搜索
+- **端点**：/api/kpl/search/{suggest,hot,combine,fund}；前端 KplSearch 整页重写（kpl-sp-* 显式白底），底部导航新增"🔍 搜索"入口，历史 localStorage key kpl_sp_hist
+- **坑**：模拟器装 mitm CA 的 tmpfs overlay 法（mount tmpfs 到 cacerts 目录）会导致 Android framework 起不来（黑屏 activity 服务丢失）——该镜像只能 writable-system/remount 法，remount 失败时**别硬来**，改走协议穷举+字节码（本次即穷举破案，抓包非必需）
+
 
 **目标达成**：`sign(challenge, device_id, conn_type, server_time)` 为后端纯 Python 函数（`backend/kpl_sign_whitebox.py`），无 JVM/unicorn/子进程，**单次签名 6.9ms**（Java 暖进程 0.14s、冷 1.8s）。两组不同输入（golden + 随机第二组）与 unicorn 金标整签逐位一致。
 
@@ -128,6 +141,9 @@ git push origin main --tags
 **✅ 阶段三/四已完成（2026-10-02）**：kpl_socket.py 的 sign_local 改调 white_box_sign（返回 hex，线程安全无锁）、socket_signer_available 恒 True、Java 全家（_find_java/_WarmSigner/_sign_lock/SIGNER_DIR）删除；package.json files 剔除 `backend/signer/**`（26MB）改收 5 个常量文件（**包体 26MB→837KB**）；热改部署+重启后端实测：/api/kpl/tika（socket 3009+610 鉴权）与 /api/kpl/poprank（3008）均正常出数据，日志无签名报错。signer/ 目录仅开发机保留（kpl_signer_py.py 探针链在 git 历史 probe27-42），不进发布包。
 
 **App 升级再提取 SOP**：新版 APK 出包后→重跑 unicorn 探针链（probe 流程见 git 历史 probe27-40）→重新 dump wb_ctx_dump.bin（表会变）→tbl_seq 反查→TAB_A/ghash_matrix 重观测→golden 对拍→换常量。骨架代码全部可复用。
+
+### ⭐ 纯 Python 签名（算法级白盒逆向，2026-10-02 全部完成，逐位对拍验证）
+
 
 
 
