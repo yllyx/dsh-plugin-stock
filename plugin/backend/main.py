@@ -1855,6 +1855,19 @@ async def kpl_search_fund(kw: str = Query(...), index: int = 0, st: int = 10):
     return await asyncio.to_thread(kpl_api.search_fund, kw, index, st)
 
 
+# ============= 推荐菜单/文章详情（2026-10-04） =============
+@app.get("/api/kpl/article/{aid}")
+async def kpl_article(aid: str):
+    """文章详情（ForumsMsgJX/GetInfo，App 文章 H5 页同源协议）"""
+    return await asyncio.to_thread(kpl_api.get_article, aid)
+
+
+@app.get("/api/kpl/recommend")
+async def kpl_recommend(st: int = 20, index: int = 0):
+    """推荐页文章流（UserInfo/AppNews 分页）"""
+    return await asyncio.to_thread(kpl_api.get_recommend_articles, st, index)
+
+
 # ============= WebSocket =============
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

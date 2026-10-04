@@ -826,6 +826,46 @@ class KplClient:
                       {"keyword": kw, "Index": str(index), "st": str(st)}, authed=False)
         return (d or {}).get("list") or []
 
+    # ---------- 推荐菜单/文章详情（App PContent2.html 同源协议，2026-10-04 H5 JS 逆向） ----------
+
+    def get_article(self, aid: str) -> Dict[str, Any]:
+        """文章详情：ForumsMsgJX/GetInfo {MsgID, Tag:1} @ART（App 文章 H5 页 PContent2.js 同源）。
+        Content 为 HTML 正文；Stock 为相关股票数组。"""
+        d = self.call(HOST_ART, "ForumsMsgJX", "GetInfo",
+                      {"MsgID": str(aid), "Tag": "1"}, authed=False)
+        msg = (d or {}).get("Msg") or {}
+        return {
+            "id": msg.get("ID") or aid,
+            "title": msg.get("Title") or "",
+            "content": msg.get("Content") or "",
+            "time": msg.get("CreateTime"),
+            "account": msg.get("Account") or "",
+            "msg_type": msg.get("MsgType"),
+            "zhaiyao": msg.get("ZhaiYao") or "",
+            "stocks": msg.get("Stock") or [],
+            "column": (msg.get("Column") or {}).get("Name") or "",
+            "vote_count": msg.get("VoteCount") or 0,
+            "share_count": msg.get("ShareCount") or 0,
+        }
+
+    def get_recommend_articles(self, st: int = 20, index: int = 0) -> List[Dict[str, Any]]:
+        """推荐页文章流（UserInfo/AppNews @LHB，st 条数/Index 页码——j00.r1 字节码参数）。
+        Type=39 为大盘解读文案，剔除。"""
+        d = self.call(HOST_LHB, "UserInfo", "AppNews",
+                      {"st": str(st), "Index": str(index)}, authed=True)
+        out = []
+        for x in (d or {}).get("List") or []:
+            if str(x.get("Type")) == "39":
+                continue
+            out.append({
+                "id": x.get("ID"), "title": (x.get("Title") or "").strip(),
+                "content": (x.get("Content") or "").strip(),
+                "time": x.get("Time"), "type": x.get("Type"),
+                "url": x.get("URL") or "",
+                "stock_name": x.get("StockName") or "", "stock_id": x.get("StockID") or "",
+            })
+        return out
+
 
     # ---------- 首页聚合（复刻 App 首页信息流，模块接口均为 2026-09-22 实测） ----------
 

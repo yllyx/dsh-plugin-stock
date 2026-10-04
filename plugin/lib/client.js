@@ -2115,10 +2115,10 @@ window.__ModuleLoader__.load({
                 ((home && home.articles) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "推荐文章"),
-                        React.createElement("span", { className: "more" }, "更多 ›")),
+                        React.createElement("span", { className: "more", onClick: () => go({ page: "artCenter" }) }, "更多 ›")),
                     home.articles.slice(0, 5).map(a =>
                         React.createElement("div", { key: a.id, className: "kpl-article-row",
-                            onClick: () => a.url && window.open(a.url, "_blank") },
+                            onClick: () => go({ page: "article", aid: a.id, title: (a.content || "").slice(0, 30) }) },
                             React.createElement("div", { className: "kpl-article-main" },
                                 React.createElement("div", { className: "kpl-article-title" },
                                     (a.content || "").slice(0, 42) + ((a.content || "").length > 42 ? "…" : "")),
@@ -4794,9 +4794,84 @@ window.__ModuleLoader__.load({
                         }))));
         }
 
-        function KplRecommendPage() {
+        /* ---- 推荐菜单（App 底部导航推荐：文章流+文章详情，AppNews 分页） ---- */
+
+        function KplRecommendPage({ go }) {
+            const [arts, setArts] = useState(null);
+            const [error, setError] = useState(null);
+            const [index, setIndex] = useState(0);
+            const [more, setMore] = useState(true);
+            const [loading, setLoading] = useState(false);
+            const load = useCallback(async (idx) => {
+                setLoading(true);
+                try {
+                    const d = await api(`/api/kpl/recommend?st=20&index=${idx}`);
+                    setError(null);
+                    setArts((prev) => (idx === 0 ? d : (prev || []).concat(d)));
+                    setMore((d || []).length >= 10);
+                } catch (e) { setError(e.message); }
+                finally { setLoading(false); }
+            }, []);
+            useEffect(() => { load(0); }, []);
+            const fmtT = (t) => t ? new Date(t * 1000).toLocaleString("zh-CN",
+                { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
             return React.createElement("div", { className: "kpl-page" },
-                React.createElement("div", { className: "kpl-placeholder" }, "👍 推荐功能二期提供"));
+                React.createElement("div", { className: "kpl-rcm-head" },
+                    React.createElement("span", { className: "t" }, "推荐"),
+                    React.createElement("span", { className: "d" }, "要闻 · 教程 · 专栏文章")),
+                React.createElement(ErrorBox, { error }),
+                React.createElement(LoadingBar, { show: arts === null && !error }),
+                (arts || []).map((a) => React.createElement("div", { key: a.id, className: "kpl-rcm-row",
+                    onClick: () => go({ page: "article", aid: a.id, title: (a.title || a.content || "").slice(0, 30) }) },
+                    React.createElement("div", { className: "main" },
+                        React.createElement("div", { className: "tt" },
+                            (a.title || a.content || "--").slice(0, 50) + ((a.title || a.content || "").length > 50 ? "…" : "")),
+                        React.createElement("div", { className: "meta" },
+                            fmtT(a.time),
+                            a.stock_name ? React.createElement("span", { className: "stk" }, " " + a.stock_name) : null,
+                            a.type === 13 ? React.createElement("span", { className: "tag" }, "教程") : null)),
+                    React.createElement("div", { className: "thumb" }, "📄"))),
+                React.createElement("div", { className: "kpl-rcm-more" },
+                    loading ? React.createElement("span", { className: "ld" }, "加载中…")
+                        : more ? React.createElement("button", { onClick: () => { const ni = index + 1; setIndex(ni); load(ni); } }, "加载更多")
+                            : React.createElement("span", { className: "ld" }, "已显示全部")));
+        }
+
+        /* ---- 文章详情（ForumsMsgJX/GetInfo，App PContent2.html 同源） ---- */
+
+        function KplArticleDetail({ aid, title, go }) {
+            const [art, setArt] = useState(null);
+            const [error, setError] = useState(null);
+            const load = useCallback(async () => {
+                try { setArt(await api("/api/kpl/article/" + aid)); setError(null); }
+                catch (e) { setError(e.message); }
+            }, [aid]);
+            useEffect(() => { load(); }, [aid]);
+            const openStk = (code, name) => {
+                if (code && /^\d{6}$/.test(String(code))) go({ page: "stock", stock: { code, name: name || code } });
+            };
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: title || "文章详情", onBack: () => go({ page: "back" }) }),
+                React.createElement(LoadingBar, { show: !art && !error }),
+                React.createElement(ErrorBox, { error }),
+                art && React.createElement("div", { className: "kpl-art" },
+                    React.createElement("div", { className: "kpl-art-card" },
+                        React.createElement("h1", { className: "kpl-art-title" }, art.title || title || "--"),
+                        React.createElement("div", { className: "kpl-art-meta" },
+                            React.createElement("span", null, art.account ? "来源：" + art.account : ""),
+                            art.time ? React.createElement("span", null,
+                                new Date(art.time * 1000).toLocaleString("zh-CN",
+                                    { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })) : null)),
+                    art.zhaiyao ? React.createElement("div", { className: "kpl-art-zy" }, art.zhaiyao) : null,
+                    React.createElement("div", { className: "kpl-art-body",
+                        dangerouslySetInnerHTML: { __html: art.content || "" } }),
+                    (art.stocks || []).length > 0 && React.createElement("div", { className: "kpl-art-stks" },
+                        React.createElement("div", { className: "t" }, "相关股票"),
+                        art.stocks.map((s, i) => React.createElement("span", { key: i, className: "stk",
+                            onClick: () => openStk(s.StockID || s.ID || s.code, s.StockName || s.Name || s.name) },
+                            (s.StockName || s.Name || s.name || "") + " " + (s.StockID || s.ID || s.code || "")))),
+                    React.createElement("div", { className: "kpl-art-tip" },
+                        "本文不构成投资建议，据此操作风险自担")));
         }
 
         /* ---- 板块详情（下钻 1:1） ---- */
@@ -5561,6 +5636,8 @@ window.__ModuleLoader__.load({
             let content;
             if (drill) {
                 if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
+                else if (drill.page === "article") content = React.createElement(KplArticleDetail, { aid: drill.aid, title: drill.title, go });
+                else if (drill.page === "artCenter") content = React.createElement(KplRecommendPage, { go });
                 else if (drill.page === "stock") content = React.createElement(KPL_STOCK_DETAIL_G, { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
                 else if (drill.page === "lhb") content = React.createElement(KplLhbPage, { go });
@@ -6742,6 +6819,33 @@ window.__ModuleLoader__.load({
                 .kpl-sp-grp .grp-it:last-child { border-bottom: none; }
                 .kpl-sp-grp .grp-it .tt { font-size: 13px; color: #222; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
                 .kpl-sp-grp .grp-it .dd { font-size: 11px; color: #999; margin-top: 3px; }
+                /* ==== 推荐菜单/文章详情 kpl-rcm-*/ /*kpl-art-*（App 文章 H5 同源，显式白底） ==== */
+                .kpl-rcm-head { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+                .kpl-rcm-head .t { font-size: 16px; font-weight: 700; color: #111; margin-right: 8px; }
+                .kpl-rcm-head .d { font-size: 11px; color: #999; }
+                .kpl-rcm-row { display: flex; gap: 10px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 11px 12px; margin-bottom: 8px; cursor: pointer; }
+                .kpl-rcm-row .main { flex: 1; min-width: 0; }
+                .kpl-rcm-row .tt { font-size: 14px; color: #111; line-height: 1.5; }
+                .kpl-rcm-row .meta { font-size: 11px; color: #999; margin-top: 5px; }
+                .kpl-rcm-row .meta .stk { color: #1c5fbb; }
+                .kpl-rcm-row .meta .tag { font-style: normal; color: #e03131; border: 1px solid #e03131; border-radius: 3px; padding: 0 4px; margin-left: 6px; font-size: 10px; }
+                .kpl-rcm-row .thumb { width: 34px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+                .kpl-rcm-more { text-align: center; padding: 12px 0 20px; }
+                .kpl-rcm-more button { border: 1px solid #ddd; background: #fff; color: #333; border-radius: 15px; padding: 6px 22px; font-size: 13px; cursor: pointer; }
+                .kpl-rcm-more .ld { color: #999; font-size: 12px; }
+                .kpl-art-card { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 14px 14px 10px; margin-bottom: 8px; }
+                .kpl-art-title { font-size: 19px; color: #111; line-height: 1.45; margin: 0 0 8px; }
+                .kpl-art-meta { display: flex; gap: 12px; font-size: 12px; color: #999; padding-bottom: 10px; border-bottom: 1px solid #f5f5f5; }
+                .kpl-art-zy { background: #f7f9fc; border-left: 3px solid #1c6ef2; border-radius: 6px; padding: 9px 11px; font-size: 13px; color: #444; line-height: 1.7; margin-bottom: 8px; }
+                .kpl-art-body { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px 14px; font-size: 15px; color: #222; line-height: 1.85; word-break: break-word; }
+                .kpl-art-body p { margin: 0 0 12px; }
+                .kpl-art-body img { max-width: 100% !important; height: auto !important; border-radius: 6px; }
+                .kpl-art-body iframe { width: 100% !important; max-width: 100%; border: none; border-radius: 8px; min-height: 200px; }
+                .kpl-art-body strong { color: #111; }
+                .kpl-art-stks { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; margin-top: 8px; }
+                .kpl-art-stks .t { font-size: 13px; font-weight: 700; color: #111; margin-bottom: 7px; }
+                .kpl-art-stks .stk { display: inline-block; font-size: 12px; color: #1c5fbb; background: #eef4fb; border-radius: 6px; padding: 4px 10px; margin: 0 8px 6px 0; cursor: pointer; }
+                .kpl-art-tip { text-align: center; font-size: 11px; color: #bbb; padding: 14px 0 20px; }
                 /* ==== 情绪页 kpl-mood-*（App MarketMoodFragment 1:1，显式白底） ==== */
                 .kpl-mood { display: flex; flex-direction: column; gap: 10px; padding-bottom: 46px; position: relative; }
                 .kpl-mood-sec { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 10px 12px; }
