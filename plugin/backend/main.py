@@ -237,12 +237,12 @@ _STATIC_MIME = {
 @app.get("/api/static/{filename}")
 async def serve_static(filename: str):
     """本地静态资源服务（K线库等，避免依赖外部CDN）"""
-    if filename not in _STATIC_MIME:
+    if filename not in _STATIC_MIME and filename != "rcm_test.html":
         raise HTTPException(status_code=404, detail="资源不存在")
     p = STATIC_DIR / filename
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"文件未打包: {filename}")
-    return Response(content=p.read_bytes(), media_type=_STATIC_MIME[filename])
+    return Response(content=p.read_bytes(), media_type=_STATIC_MIME.get(filename, "text/html; charset=utf-8"))
 
 
 @app.get("/api/system/kline-library")
