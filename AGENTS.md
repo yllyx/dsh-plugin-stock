@@ -299,6 +299,15 @@ git push origin main --tags
 - **关键实测定案**：①socket pb.Empty 族"盘后照推"**仅限当日盘后**（09-30 18:4x 实测），**跨天休市零推送**（10-03 marketfeed 全空实测）——行情 7 tab 休市全空的根因；②App 非交易日有数据=进程内存快照+HTTP HIS 域任意时刻可拉，非本地快照库。
 - **插件落地（非交易日与 App 同款展示）**：①**marketfeed 磁盘快照层**（kpl_marketfeed_cache.json，有推送 30s 防抖落盘 7 天有效；零推送时磁盘补槽 source=disk → HTTP 合成补槽 source=http）+**`_http_fallback_slots` 合成器**（复用 get_mood_page 缓存链，与 parse_cmd 输出严格同构：dabanhead←HisDaBanHeadInfo/zdstat+zddist←MarketZDTJ(±11 桶)/windvane←HisWeatherVane/weights←WeightPerformance/ladder←DailyLimitIndex/energy←MarketSCLN trends/overview←strong+cap/zdtip←ChangeStatistics.tip/ztseries←GetLiveNews 播报/north←NorthboundFundsB）——**休市实测 11/18 槽有数据，marketfeed 4.2s 返回**；radar/ztsitu/ztlist/stockrank/platerank/dabancount/dabanlist=订阅增量类无 HTTP 同源保持空（前端空态，盘中自动恢复）；②题材库列表磁盘层 kpl_tika_cache.json；③mood 磁盘缓存 v2 结构校验（zdtj.raw 键，旧缓存弃用重拉）。至此磁盘层覆盖：首页/人气榜/题材详情/题材列表/情绪页/行情订阅面/港股/名称库/交易日历。
 
+### ⭐ 首页严重异动提醒块+下钻页（2026-10-05 实拍对齐，App 首页"严重异动提醒"模块）
+
+- **App 实拍结构**（yd8/yd15，模拟器已重建并登录）：信息块=标题"严重异动提醒"+"次日评估"日期徽标+"更多 ›"；表格 4 列（股票名称+代码+规则简称橙标 | 次日涨幅% + 现价 | 触发异动股票价格%(橙) + 触发价 | 次日触发异动偏离空间% + 规则简称）；下方"查看多次异动个股（16）"行（橙字）+"重点监控"行（带 › 箭头）
+- **下钻 1：更多 → 高凌信息等个股详情**（列表行点击进个股，非独立列表页）
+- **下钻 2：查看多次异动个股（16）→ "多次异动个股"页**：双 tab（沪深主板/创业科创板）+ 分组（"10日内3次异动个股"/"10日内2次异动个股"）表格 4 列（名称+代码+第N板标 | 3日内偏离值% | 预计N次异动价格红两行 | 当前价格）
+- **下钻 3：重点监控 → "异动提醒"页（?帮助图标）**：顶部大盘概览（指数+全市场量能+涨跌家数+大盘直播）固定头 + 3 tab（严重异动/热门偏离值/重点监控）。重点监控 tab=「监管期证券」（名称/监控开始日期(9:00)/监控结束日期(15:00)）+「历史监管期证券」两组；严重异动/热门偏离值 tab=列表（未逐屏实拍，数据同 GetPianLiZhi_Index 系）
+- **插件现状**：信息块 kpl-yd2 已对齐 App 4 列结构；下钻三页待落地（多次异动个股页/异动提醒页重点监控 tab）
+- **模拟器重建记录**：kpl_analysis 数据盘重置+普通模式重启成功；App 6.3.20.0 重装+账号密码登录成功（18607157160）；mitm CA 的 writable-system/remount 路线在该镜像上失败（overlayfs 不可用），tmpfs hot-mount 会搞挂 framework——**抓包路线不可用，协议实测走插件直发穷举**
+
 ### ⭐ 权威交易日历（2026-09-30 接入，深交所官方口径，法定节假日/调休全覆盖）
 
 - **数据源**：`https://www.szse.cn/api/report/exchange/onepersistenthour/monthList?month=YYYY-MM`（深交所官方月历，`jybz=1` 交易日/`0` 休市；10-01~10-07 国庆全休、10-08 复市这类安排直接以交易所数据为准，**插件不做任何自己的节假日推断**）。模块 `backend/trade_calendar.py`（TradeCalendar：按月拉取+磁盘缓存 `trade_calendar.json` 7 天过期+过期后网络失败仍用旧缓存；完全无数据才退化周末规则）。`GET /api/trade-calendar` 返回今日状态摘要（is_trading_day/in_trading_hours/prev/next_trading_day）
