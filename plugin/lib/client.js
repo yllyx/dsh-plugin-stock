@@ -2056,28 +2056,19 @@ window.__ModuleLoader__.load({
                         React.createElement("span", { className: "t" }, "严重异动提醒"),
                         React.createElement("span", { className: "date" }, home.yidong_day || "")),
                     React.createElement("div", { className: "kpl-yd2" },
-                        React.createElement("div", { className: "hd" },
-                            React.createElement("span", { className: "c1" }, "股票名称"),
-                            React.createElement("span", { className: "c2" }, "次日涨幅"),
-                            React.createElement("span", { className: "c3" }, "触发异动股票价格"),
-                            React.createElement("span", { className: "c4" }, "次日触发异动偏离空间")),
                         home.yidong.slice(0, 5).map(s =>
                             React.createElement("div", {
                                 key: s.code, className: "kpl-yd2-row",
                                 onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
                             },
-                                React.createElement("div", { className: "c1" },
-                                    React.createElement("div", { className: "nm" }, s.name),
-                                    React.createElement("div", { className: "cd" },
-                                        s.code,
-                                        s.rule_short && React.createElement("i", null, s.rule_short))),
-                                React.createElement("div", { className: "c2" },
+                                React.createElement("div", { className: "c nm" }, s.name),
+                                React.createElement("div", { className: "c v" },
                                     React.createElement("b", null, fmtRate(s.day_pct)),
                                     React.createElement("span", null, s.price)),
-                                React.createElement("div", { className: "c3 orgc" },
+                                React.createElement("div", { className: "c v org" },
                                     React.createElement("b", null, fmtRate(s.need)),
                                     React.createElement("span", null, s.trigger_price)),
-                                React.createElement("div", { className: "c4" },
+                                React.createElement("div", { className: "c v" },
                                     React.createElement("b", null, fmtRate(s.space)),
                                     React.createElement("span", { className: "rl" }, s.rule_short || "")))))),
 
@@ -7725,15 +7716,17 @@ window.__ModuleLoader__.load({
                 .kpl-qd2-row .pl .pl-item { display: block; color: #e0333a; line-height: 1.5; }
                 .kpl-qd2-row:hover { background: #f7f9ff; }
                 /* ---- 严重异动提醒（App 同款 4 列表格，显式白底） ---- */
-                .kpl-yd2 { background: #fff; border-radius: 6px; padding: 2px 10px; }
-                .kpl-yd2-row .c2 b, .kpl-yd2-row .c3 b, .kpl-yd2-row .c4 b { font-size: 15px; }
-                .kpl-yd2-row .c3 .org, .kpl-yd2-row .orgc b { color: #f08c00; }
-                .kpl-yd2-row .orgc span, .kpl-yd2-row .c2 span { color: #999; font-size: 11px; }
-                .kpl-yd2-row .c4 .rl { color: #999; font-size: 11px; }
-                .kpl-yd2 .hd { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; padding: 8px 0 6px; font-size: 11px; color: #999; border-bottom: 1px solid #f0f0f0; }
-                .kpl-yd2 .hd .c2 { text-align: right; } .kpl-yd2 .hd .c3 { text-align: right; } .kpl-yd2 .hd .c4 { text-align: right; }
-                .kpl-yd2-row { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
-                .kpl-yd2-row:hover { background: #f7f9ff; }
+                .kpl-yd2 { background: #fff; padding: 0 12px; }
+                .kpl-yd2-row { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1.2fr; align-items: center; padding: 9px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+                .kpl-yd2-row:last-child { border-bottom: none; }
+                .kpl-yd2-row .c { text-align: center; }
+                .kpl-yd2-row .c.nm { text-align: left; font-size: 15px; color: #111; font-weight: 600; }
+                .kpl-yd2-row .c.v b { display: block; font-size: 16px; color: #111; font-weight: 700; }
+                .kpl-yd2-row .c.v span { display: block; font-size: 12px; color: #999; margin-top: 2px; }
+                .kpl-yd2-row .c.v.org b { color: #f08c00; }
+                .kpl-yd2-row .c.v .rl { color: #999; }
+                .kpl-yd2-links { background: #fff; padding: 0 12px; }
+                .kpl-yd2-links .ln { padding: 13px 0; font-size: 15px; color: #111; cursor: pointer; }
                 .kpl-yd2-row .nm { font-size: 14px; font-weight: 800; color: #111; }
                 .kpl-yd2-row .cd { font-size: 11px; color: #8a8a8a; margin-top: 2px; display: flex; gap: 5px; align-items: center; }
                 .kpl-yd2-row .cd i { font-style: normal; background: rgba(245,158,11,.14); color: #b45309; border-radius: 3px; padding: 0 4px; }
