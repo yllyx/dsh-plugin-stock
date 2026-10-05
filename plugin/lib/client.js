@@ -5829,7 +5829,7 @@ window.__ModuleLoader__.load({
             } else if (activeNav === "lhb") {
                 content = React.createElement(KplLhbPage, { go });
             } else {
-                content = React.createElement(KplRecommendPage);
+                content = React.createElement(KplRecommendPage, { go });
             }
 
             return React.createElement("div", { className: "kpl-app" },
