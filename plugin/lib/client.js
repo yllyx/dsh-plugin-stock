@@ -2116,15 +2116,22 @@ window.__ModuleLoader__.load({
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "推荐文章"),
                         React.createElement("span", { className: "more", onClick: () => go({ page: "artCenter" }) }, "更多 ›")),
-                    home.articles.slice(0, 5).map(a =>
-                        React.createElement("div", { key: a.id, className: "kpl-article-row",
-                            onClick: () => go({ page: "article", aid: a.id, title: (a.content || "").slice(0, 30) }) },
+                    home.articles.slice(0, 5).map(a => {
+                        // App 同链路：PContent2.html?AID=xxx → GetInfo{MsgID:AID}；
+                        // 无 AID 的条目（活动页等）按 App 行为外开 H5
+                        const mAID = /AID=(\d+)/.exec(a.url || "");
+                        const aid = mAID ? mAID[1] : null;
+                        return React.createElement("div", { key: a.id, className: "kpl-article-row",
+                            onClick: () => aid
+                                ? go({ page: "article", aid, title: (a.content || "").slice(0, 30) })
+                                : (a.url && window.open(a.url, "_blank")) },
                             React.createElement("div", { className: "kpl-article-main" },
                                 React.createElement("div", { className: "kpl-article-title" },
                                     (a.content || "").slice(0, 42) + ((a.content || "").length > 42 ? "…" : "")),
                                 React.createElement("div", { className: "kpl-article-time" },
                                     a.time ? new Date(a.time * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "")),
-                            React.createElement("div", { className: "kpl-article-thumb" }, "📄")))),
+                            React.createElement("div", { className: "kpl-article-thumb" }, aid ? "📄" : "🔗"));
+                    })),
 
                 // ===== 大盘解读弹窗 =====
                 explainOpen && home && home.explain && React.createElement("div", { className: "kpl-explain-mask", onClick: () => setExplainOpen(false) },
