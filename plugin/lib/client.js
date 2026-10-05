@@ -2081,6 +2081,12 @@ window.__ModuleLoader__.load({
                                     React.createElement("b", { className: Number(s.space) >= 0 ? "up" : "down" }, fmtRate(s.space)),
                                     React.createElement("span", null, s.rule_short || "")))))),
 
+
+                React.createElement("div", { className: "kpl-yd2-links" },
+                    React.createElement("div", { className: "ln", onClick: () => go({ page: "yidongMany" }) },
+                        "查看多次异动个股（16）"),
+                    React.createElement("div", { className: "ln", onClick: () => go({ page: "zdjk" }) },
+                        "重点监控")),
                 // ===== 近期活跃板块（App 同源 BaceFaceList 4 条；点击进板块详情） =====
                 ((home && home.active_plates) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
@@ -2116,22 +2122,15 @@ window.__ModuleLoader__.load({
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "推荐文章"),
                         React.createElement("span", { className: "more", onClick: () => go({ page: "artCenter" }) }, "更多 ›")),
-                    home.articles.slice(0, 5).map(a => {
-                        // App 同链路：PContent2.html?AID=xxx → GetInfo{MsgID:AID}；
-                        // 无 AID 的条目（活动页等）按 App 行为外开 H5
-                        const mAID = /AID=(\d+)/.exec(a.url || "");
-                        const aid = mAID ? mAID[1] : null;
-                        return React.createElement("div", { key: a.id, className: "kpl-article-row",
-                            onClick: () => aid
-                                ? go({ page: "article", aid, title: (a.content || "").slice(0, 30) })
-                                : (a.url && window.open(a.url, "_blank")) },
+                    home.articles.slice(0, 5).map(a =>
+                        React.createElement("div", { key: a.id, className: "kpl-article-row",
+                            onClick: () => go({ page: "article", aid: a.id, title: (a.content || "").slice(0, 30) }) },
                             React.createElement("div", { className: "kpl-article-main" },
                                 React.createElement("div", { className: "kpl-article-title" },
                                     (a.content || "").slice(0, 42) + ((a.content || "").length > 42 ? "…" : "")),
                                 React.createElement("div", { className: "kpl-article-time" },
                                     a.time ? new Date(a.time * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "")),
-                            React.createElement("div", { className: "kpl-article-thumb" }, aid ? "📄" : "🔗"));
-                    })),
+                            React.createElement("div", { className: "kpl-article-thumb" }, "📄")))),
 
                 // ===== 大盘解读弹窗 =====
                 explainOpen && home && home.explain && React.createElement("div", { className: "kpl-explain-mask", onClick: () => setExplainOpen(false) },
@@ -4854,12 +4853,10 @@ window.__ModuleLoader__.load({
                 return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${hm}`;
             };
             const stockChips = (stocks) => (stocks || []).slice(0, 3).map((s, i) => {
-                const nm = s[1], pct = s[2];
+                const code = s[0], nm = s[1], pct = s[2];
                 const up = String(pct).indexOf("-") !== 0;
-                return React.createElement("span", { key: i, className: "chip" },
-                    nm + " ",
-                    React.createElement("b", { style: { color: up ? "#e03131" : "#2f9e44" } },
-                        pct != null ? pct + "%" : ""));
+                return React.createElement("span", { key: i, className: "chip " + (up ? "up" : "down") },
+                    nm + " " + (pct != null ? pct + "%" : ""));
             });
             const cards = (list) => (list || []).map((a) => React.createElement("div", { key: a.id,
                 className: "kpl-rcm-card",
@@ -4992,7 +4989,7 @@ window.__ModuleLoader__.load({
             const [art, setArt] = useState(null);
             const [error, setError] = useState(null);
             const load = useCallback(async () => {
-                try { setArt(await api("/api/kpl/article/" + encodeURIComponent(aid))); setError(null); }
+                try { setArt(await api("/api/kpl/article/" + aid)); setError(null); }
                 catch (e) { setError(e.message); }
             }, [aid]);
             useEffect(() => { load(); }, [aid]);
@@ -5836,7 +5833,7 @@ window.__ModuleLoader__.load({
             } else if (activeNav === "lhb") {
                 content = React.createElement(KplLhbPage, { go });
             } else {
-                content = React.createElement(KplRecommendPage, { go });
+                content = React.createElement(KplRecommendPage);
             }
 
             return React.createElement("div", { className: "kpl-app" },
@@ -6983,7 +6980,7 @@ window.__ModuleLoader__.load({
                 .kpl-rcm-top .bt.on { color: #111; font-weight: 800; }
                 .kpl-rcm-top .tools { margin-left: auto; }
                 .kpl-rcm-top .tools .tl { font-style: normal; font-size: 15px; cursor: pointer; }
-                .kpl-rcm-cols { display: flex; gap: 4px; overflow-x: auto; background: #fff; border-bottom: 1px solid #f0f0f0; padding: 6px 4px; scrollbar-width: none; }
+                .kpl-rcm-cols { display: flex; gap: 4px; overflow-x: auto; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 4px 6px; margin-bottom: 8px; scrollbar-width: none; }
                 .kpl-rcm-cols .c { position: relative; flex-shrink: 0; font-size: 13px; color: #444; padding: 6px 12px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
                 .kpl-rcm-cols .c.on { background: #e03131; color: #fff; font-weight: 700; }
                 .kpl-rcm-cols .c .hot { font-style: normal; position: absolute; top: -4px; right: -2px; font-size: 8px; color: #fff; background: #e03131; border-radius: 5px 5px 5px 0; padding: 0 3px; font-weight: 700; }
@@ -7003,17 +7000,13 @@ window.__ModuleLoader__.load({
                 .kpl-rcm-cols::-webkit-scrollbar { display: none; }
                 .kpl-rcm-cols .c { flex-shrink: 0; font-size: 13px; color: #444; padding: 6px 12px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
                 .kpl-rcm-cols .c.on { background: #e03131; color: #fff; font-weight: 700; }
-                .kpl-rcm-card { display: flex; gap: 12px; background: #fff; padding: 14px 12px 14px; border-bottom: 1px solid #f0f0f0; cursor: pointer; }
+                .kpl-rcm-card { display: flex; gap: 10px; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 11px 12px; margin-bottom: 8px; cursor: pointer; }
                 .kpl-rcm-card .main { flex: 1; min-width: 0; }
-                .kpl-rcm-card .tt { font-size: 16px; color: #555; font-weight: 500; line-height: 1.5; }
+                .kpl-rcm-card .tt { font-size: 15px; color: #111; font-weight: 600; line-height: 1.5; }
                 .kpl-rcm-card .zy { font-size: 12px; color: #666; line-height: 1.6; margin-top: 4px; }
-                .kpl-rcm-card .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-                .kpl-rcm-card .chips .chip { font-size: 13px; color: #111; background: #f5f6f8; border-radius: 4px; padding: 4px 8px; }
-                .kpl-rcm-card .chips .chip.up { color: #111; }
-                .kpl-rcm-card .chips .chip.up b, .kpl-rcm-card .chips .chip.down b { font-weight: 500; }
-                .kpl-rcm-card .meta { font-size: 12px; color: #999; margin-top: 10px; display: flex; gap: 14px; }
+                .kpl-rcm-card .meta { font-size: 11px; color: #999; margin-top: 6px; display: flex; gap: 12px; }
                 .kpl-rcm-card .meta .pay { font-style: normal; color: #f08c00; border: 1px solid #f08c00; border-radius: 3px; padding: 0 4px; font-size: 10px; }
-                .kpl-rcm-card .thumb { width: 118px; height: 84px; object-fit: cover; border-radius: 6px; flex-shrink: 0; background: #f5f6f8; }
+                .kpl-rcm-card .thumb { width: 96px; height: 68px; object-fit: cover; border-radius: 8px; flex-shrink: 0; background: #f5f6f8; }
                 .kpl-rcm-cols .c.more { color: #999; background: #f5f6f8; }
                 .kpl-rcm-allmask { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 30; display: flex; align-items: flex-start; justify-content: center; }
                 .kpl-rcm-all { background: #fff; border-radius: 12px; margin-top: 80px; padding: 14px; width: 86%; max-width: 420px; max-height: 70vh; overflow-y: auto; }

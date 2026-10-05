@@ -1879,6 +1879,18 @@ async def kpl_arttab():
     return await asyncio.to_thread(kpl_api.get_art_tab_feed)
 
 
+@app.get("/api/kpl/yidong/many")
+async def kpl_yidong_many():
+    """多次异动个股下钻（GetPianLiZhi_Many，App 同源）"""
+    return await asyncio.to_thread(kpl_api.get_yidong_many)
+
+
+@app.get("/api/kpl/yidong/zdjk")
+async def kpl_yidong_zdjk(his: bool = False):
+    """重点监控/监管期证券（GetYDTP_ZDJK_Today/His）"""
+    return await asyncio.to_thread(kpl_api.get_zdjk, his)
+
+
 @app.get("/api/kpl/recommend_articles")
 async def kpl_recommend_articles(st: int = 20, index: int = 0):
     """推荐 tab 文章流（UserInfo/AppNews 分页）"""

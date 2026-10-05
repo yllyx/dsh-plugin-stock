@@ -900,6 +900,84 @@ class KplClient:
             })
         return out
 
+    def get_yidong_many(self) -> Dict[str, Any]:
+        """多次异动个股（StockBidYiDong/GetPianLiZhi_Many @HQ，App"查看多次异动个股"下钻同源）。
+        List 条目: [code, name, kind, 分组名, ?, days, 3日内偏离值, 预计价格, 当前价格, ?, 0]。
+        App 按分组名分节（10日内2次异动个股/10日内偏离值临近100%/...）。"""
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Many", {}, authed=False)
+            lst = []
+            for row in (d or {}).get("List") or []:
+                if not isinstance(row, list) or len(row) < 10:
+                    continue
+                lst.append({
+                    "code": str(row[0]), "name": row[1], "group": row[3],
+                    "days": row[5], "dev3": row[6], "est_price": row[7],
+                    "price": row[8], "is_pay": row[10] if len(row) > 10 else 0,
+                })
+            # 保持服务端顺序（即 App 分组展示顺序），提取分组序列
+            groups = []
+            for it in lst:
+                if it["group"] not in groups:
+                    groups.append(it["group"])
+            return {"day": (d or {}).get("Day"), "groups": groups, "list": lst}
+        return self._cached_swr("yd_many", 60, _fetch)
+
+    def get_zdjk(self, his: bool = False) -> Dict[str, Any]:
+        """重点监控/监管期证券（StockBidYiDong/GetYDTP_ZDJK_Today/His @HQ）。
+        List 条目: [code, name, 监控开始日期, 监控结束日期, 2]。"""
+        key = "zdjk_his" if his else "zdjk_today"
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong",
+                          "GetYDTP_ZDJK_His" if his else "GetYDTP_ZDJK_Today", {}, authed=False)
+            lst = []
+            for row in (d or {}).get("List") or []:
+                if not isinstance(row, list) or len(row) < 4:
+                    continue
+                lst.append({"code": str(row[0]), "name": row[1],
+                            "start": row[2], "end": row[3]})
+            return lst
+        return self._cached_swr(key, 120, _fetch)
+
+    def get_yidong_many(self) -> Dict[str, Any]:
+        """多次异动个股（StockBidYiDong/GetPianLiZhi_Many @HQ，App"查看多次异动个股"下钻同源）。
+        List 条目: [code, name, kind, 分组名, ?, days, 3日内偏离值, 预计价格, 当前价格, ?, 0]。
+        App 按分组名分节（10日内2次异动个股/10日内偏离值临近100%/...）。"""
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Many", {}, authed=False)
+            lst = []
+            for row in (d or {}).get("List") or []:
+                if not isinstance(row, list) or len(row) < 10:
+                    continue
+                lst.append({
+                    "code": str(row[0]), "name": row[1], "group": row[3],
+                    "days": row[5], "dev3": row[6], "est_price": row[7],
+                    "price": row[8], "is_pay": row[10] if len(row) > 10 else 0,
+                })
+            groups = []
+            for it in lst:
+                if it["group"] not in groups:
+                    groups.append(it["group"])
+            return {"day": (d or {}).get("Day"), "groups": groups, "list": lst}
+        return self._cached_swr("yd_many", 60, _fetch)
+
+    def get_zdjk(self, his: bool = False) -> Dict[str, Any]:
+        """重点监控/监管期证券（StockBidYiDong/GetYDTP_ZDJK_Today/His @HQ）。
+        List 条目: [code, name, 监控开始日期, 监控结束日期, 2]。"""
+        key = "zdjk_his" if his else "zdjk_today"
+
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong",
+                          "GetYDTP_ZDJK_His" if his else "GetYDTP_ZDJK_Today", {}, authed=False)
+            lst = []
+            for row in (d or {}).get("List") or []:
+                if not isinstance(row, list) or len(row) < 4:
+                    continue
+                lst.append({"code": str(row[0]), "name": row[1],
+                            "start": row[2], "end": row[3]})
+            return lst
+        return self._cached_swr(key, 120, _fetch)
+
     def get_recommend_columns(self) -> List[Dict[str, Any]]:
         """推荐页栏目 tab（ForumsMsgColumn/GetList @ART，App 推荐页顶部分类）。
         顺序=服务端 Orders 序（GetList 返回序，与 App 一致），不过滤不重排。"""
