@@ -5028,9 +5028,81 @@ window.__ModuleLoader__.load({
                         "本文不构成投资建议，据此操作风险自担")));
         }
 
-        /* ---- 板块详情（下钻 1:1） ---- */
+                /* ---- 多次异动个股下钻（GetPianLiZhi_Many，App 同源分组表） ---- */
 
-        function KplSectorDetail({ plate, list, go }) {
+        function KplYidongManyPage({ go }) {
+            const [d, setData] = useState(null);
+            const [error, setError] = useState(null);
+            useEffect(() => {
+                api("/api/kpl/yidong/many").then(setData).catch((e) => setError(e.message));
+            }, []);
+            const groups = [];
+            (d && d.list || []).forEach((it) => {
+                const g = groups.find((x) => x.name === it.group);
+                if (g) g.items.push(it); else groups.push({ name: it.group, items: [it] });
+            });
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "多次异动个股",
+                    onBack: () => go({ page: "back" }) }),
+                React.createElement(ErrorBox, { error }),
+                React.createElement(LoadingBar, { show: !d && !error }),
+                groups.map((g) => React.createElement("div", { key: g.name, className: "kpl-ydm" },
+                    React.createElement("div", { className: "sec-t" },
+                        React.createElement("i", { className: "bar" }), g.name.replace("10日内", "").replace("个股", "") + "｜10日内"),
+                    React.createElement("div", { className: "hd" },
+                        React.createElement("span", { className: "c1" }, "名称"),
+                        React.createElement("span", { className: "c2" }, "3日内偏离值"),
+                        React.createElement("span", { className: "c3" }, "预计严重异动价格"),
+                        React.createElement("span", { className: "c4" }, "当前价格")),
+                    g.items.map((a) => React.createElement("div", { key: a.code, className: "row",
+                        onClick: () => go({ page: "stock", stock: { code: a.code, name: a.name } }) },
+                        React.createElement("div", { className: "c1" },
+                            React.createElement("b", null, a.name),
+                            React.createElement("span", { className: "cd" }, a.code)),
+                        React.createElement("div", { className: "c2" },
+                            React.createElement("b", { className: Number(a.dev3) >= 0 ? "up" : "down" },
+                                a.dev3 != null ? a.dev3 + "%" : "--")),
+                        React.createElement("div", { className: "c3" },
+                            React.createElement("b", { className: "org" }, a.est_price != null ? a.est_price : "--"),
+                            React.createElement("span", null, "0.00%")),
+                        React.createElement("div", { className: "c4" },
+                            React.createElement("b", null, a.price != null ? a.price : "--")))))));
+        }
+
+        /* ---- 异动提醒页（重点监控/监管期证券，GetYDTP_ZDJK_Today/His） ---- */
+
+        function KplZdjkPage({ go }) {
+            const [today, setToday] = useState(null);
+            const [his, setHis] = useState(null);
+            const [error, setError] = useState(null);
+            useEffect(() => {
+                Promise.all([
+                    api("/api/kpl/yidong/zdjk").then(setToday).catch(() => setToday([])),
+                    api("/api/kpl/yidong/zdjk?his=1").then(setHis).catch(() => setHis([])),
+                ]).catch((e) => setError(e.message));
+            }, []);
+            const grp = (label, rows) => React.createElement("div", { className: "kpl-zdjk-grp" },
+                React.createElement("div", { className: "sec-t" },
+                    React.createElement("i", { className: "bar" }), label),
+                React.createElement("div", { className: "hd" },
+                    React.createElement("span", { className: "c1" }, "股票名称"),
+                    React.createElement("span", { className: "c2" }, "监控开始日期"),
+                    React.createElement("span", { className: "c3" }, "监控结束日期")),
+                (rows || []).map((r) => React.createElement("div", { key: r.code, className: "row",
+                    onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }) },
+                    React.createElement("div", { className: "c1 nm" }, r.name),
+                    React.createElement("div", { className: "c2 dt" }, r.start),
+                    React.createElement("div", { className: "c3 dt" }, r.end))));
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: "异动提醒",
+                    onBack: () => go({ page: "back" }) }),
+                React.createElement(ErrorBox, { error }),
+                React.createElement(LoadingBar, { show: (today === null || his === null) && !error }),
+                grp("监管期证券", today),
+                grp("历史监管期证券", his));
+        }
+
+        /* ---- 板块详情（下钻 1:1） ---- */  function KplSectorDetail({ plate, list, go }) {
             const [data, setData] = useState(null);
             const [error, setError] = useState(null);
             const load = useCallback(async () => {
@@ -5792,6 +5864,8 @@ window.__ModuleLoader__.load({
                 if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
                 else if (drill.page === "article") content = React.createElement(KplArticleDetail, { aid: drill.aid, title: drill.title, go });
                 else if (drill.page === "colPage") content = React.createElement(KplColumnPage, { cid: drill.cid, name: drill.name, go });
+                else if (drill.page === "yidongMany") content = React.createElement(KplYidongManyPage, { go });
+                else if (drill.page === "zdjk") content = React.createElement(KplZdjkPage, { go });
                 else if (drill.page === "artCenter") content = React.createElement(KplRecommendPage, { go });
                 else if (drill.page === "stock") content = React.createElement(KPL_STOCK_DETAIL_G, { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
