@@ -4980,7 +4980,7 @@ window.__ModuleLoader__.load({
             const [art, setArt] = useState(null);
             const [error, setError] = useState(null);
             const load = useCallback(async () => {
-                try { setArt(await api("/api/kpl/article/" + aid)); setError(null); }
+                try { setArt(await api("/api/kpl/article/" + encodeURIComponent(aid))); setError(null); }
                 catch (e) { setError(e.message); }
             }, [aid]);
             useEffect(() => { load(); }, [aid]);

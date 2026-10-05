@@ -1,0 +1,63 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>严重异动块实测</title>
+<style>
+body{margin:0;background:#f5f6f8;font-family:-apple-system,'Segoe UI',sans-serif}
+.kpl-sec { background:#fff; border:1px solid #f0f0f0; border-radius:10px; padding:10px 12px; margin-bottom:8px; max-width:520px; margin-left:auto; margin-right:auto }
+.kpl-sec-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px }
+.kpl-sec-head .t { font-size:15px; font-weight:700; color:#111 }
+.kpl-sec-head .date { font-size:11px; color:#e03131; background:#fdecec; border-radius:3px; padding:1px 6px }
+.kpl-sec-head .date { color: #1c5fbb; font-size: 13px; font-weight: 600; }
+.kpl-sector-table { display: flex; flex-direction: column; gap: 4px; }
+.kpl-sector-row { display: grid; grid-template-columns: 1.2fr 1fr 1fr .8fr; gap: 4px; background: var(--dsw-alias-button-elevated-fill); border-radius: 6px; padding: 10px 10px; cursor: pointer; align-items: center; }
+.kpl-sector-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.kpl-sector-name .n { font-weight: 600; font-size: 13px; }
+.kpl-sector-name .c { color: var(--dsw-alias-label-secondary); font-size: 10px; }
+.kpl-sector-num { text-align: right; }
+.kpl-sector-num .strong { font-size: 15px; font-weight: 700; }
+.kpl-sector-num .pct { font-size: 12px; display: block; }
+.kpl-sector-num .up { color: #ef4444; }
+.kpl-sector-num .down { color: #22c55e; }
+.kpl-sector-zt { font-size: 10px; color: #ef4444; text-align: center; }
+.kpl-sec { background: var(--dsw-alias-button-elevated-fill); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.kpl-sec-head { display: flex; justify-content: space-between; align-items: baseline; }
+.kpl-sec-head .t { font-weight: 800; font-size: 15px; }
+.kpl-sec-head .more { font-size: 11px; color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.kpl-sec-head .more:hover { color: #ef4444; }
+.kpl-sec-head .date { font-size: 11px; color: #3b82f6; }
+.kpl-yd2 { background: #fff; padding: 0 12px; }
+.kpl-yd2-row { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1.2fr; align-items: center; padding: 9px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+.kpl-yd2-row:last-child { border-bottom: none; }
+.kpl-yd2-row .c { text-align: center; }
+.kpl-yd2-row .c.nm { text-align: left; font-size: 15px; color: #111; font-weight: 600; }
+.kpl-yd2-row .c.v b { display: block; font-size: 16px; color: #111; font-weight: 700; }
+.kpl-yd2-row .c.v span { display: block; font-size: 12px; color: #999; margin-top: 2px; }
+.kpl-yd2-row .c.v.org b { color: #f08c00; }
+.kpl-yd2-row .c.v .rl { color: #999; }
+.kpl-yd2-links { background: #fff; padding: 0 12px; }
+.kpl-yd2-links .ln { padding: 13px 0; font-size: 15px; color: #111; cursor: pointer; }
+.kpl-yd2-row .nm { font-size: 14px; font-weight: 800; color: #111; }
+.kpl-yd2-row .cd { font-size: 11px; color: #8a8a8a; margin-top: 2px; display: flex; gap: 5px; align-items: center; }
+.kpl-yd2-row .cd i { font-style: normal; background: rgba(245,158,11,.14); color: #b45309; border-radius: 3px; padding: 0 4px; }
+.kpl-yd2-row .c2, .kpl-yd2-row .c3, .kpl-yd2-row .c4 { text-align: right; line-height: 1.4; }
+.kpl-yd2-row .c2 b, .kpl-yd2-row .c3 b, .kpl-yd2-row .c4 b { display: block; font-size: 14px; }
+.kpl-yd2-row .c2 span, .kpl-yd2-row .c3 span, .kpl-yd2-row .c4 span { display: block; font-size: 11px; color: #999; }
+.kpl-yd2-row b.up { color: #e0333a; } .kpl-yd2-row b.down { color: #0aa858; }
+.kpl-yd2-row .org { color: #f59e0b; }
+</style></head><body><div class="kpl-sec" id="blk"></div>
+<script>
+const yd = [{"code": "688137", "name": "近岸蛋白", "kind": 1, "rule": "连续30个交易日内涨幅偏离值累计达到 200%", "day_pct": 0, "days": 29, "dev": 193.43, "tip": "涨幅达到2.3%将触发严重异动", "need": 2.3, "price": 164.08, "status": "未达到严重异动条件", "prev_close": 164.08, "trigger_price": 167.85, "space": 2.3, "rule_short": "30日200%"}, {"code": "301190", "name": "善水科技", "kind": 1, "rule": "连续10个交易日内涨幅偏离值累计达到 100%", "day_pct": 0, "days": 10, "dev": 98.11, "tip": "涨幅达到1%将触发严重异动", "need": 1, "price": 36.29, "status": "未达到严重异动条件", "prev_close": 36.29, "trigger_price": 36.65, "space": 1.0, "rule_short": "10日100%"}, {"code": "600825", "name": "新华传媒", "kind": 1, "rule": "连续10个交易日内涨幅偏离值累计达到 100%", "day_pct": 0, "days": 7, "dev": 96.7, "tip": "涨幅达到1.74%将触发严重异动", "need": 1.74, "price": 10.53, "status": "未达到严重异动条件", "prev_close": 10.53, "trigger_price": 10.71, "space": 1.74, "rule_short": "10日100%"}, {"code": "688175", "name": "高凌信息", "kind": 1, "rule": "连续10个交易日内涨幅偏离值累计达到 100%", "day_pct": 0, "days": 10, "dev": 71.85, "tip": "涨幅达到16.94%将触发严重异动", "need": 16.94, "price": 33.9, "status": "未达到严重异动条件", "prev_close": 33.9, "trigger_price": 39.64, "space": 16.94, "rule_short": "10日100%"}, {"code": "301560", "name": "众捷股份", "kind": 1, "rule": "连续10个交易日内涨幅偏离值累计达到 100%", "day_pct": 0, "days": 9, "dev": 71.41, "tip": "涨幅达到17.01%将触发严重异动", "need": 17.01, "price": 44.3, "status": "未达到严重异动条件", "prev_close": 44.3, "trigger_price": 51.84, "space": 17.01, "rule_short": "10日100%"}, {"code": "688265", "name": "南模生物", "kind": 1, "rule": "连续10个交易日内涨幅偏离值累计达到 100%", "day_pct": 0, "days": 9, "dev": 68.8, "tip": "涨幅达到19.08%将触发严重异动", "need": 19.08, "price": 77.38, "status": "未达到严重异动条件", "prev_close": 77.38, "trigger_price": 92.14, "space": 19.08, "rule_short": "10日100%"}];
+const day = "2026-09-30";
+const blk = document.getElementById("blk");
+blk.innerHTML = '<div class="hd"><span class="c1">股票名称</span><span class="c2">次日涨幅</span><span class="c3">触发异动股票价格</span><span class="c4">次日触发异动偏离空间</span></div>';
+yd.slice(0, 5).forEach(s => {
+  const row = document.createElement("div");
+  row.className = "kpl-yd2-row";
+  const up = String(s.day_pct).indexOf("-") !== 0 && Number(s.day_pct) > 0;
+  row.innerHTML =
+    '<div class="c c1"><div class="nm">' + s.name + '</div><div class="cd">' + s.code +
+      (s.rule_short ? '<i>' + s.rule_short + '</i>' : '') + '</div></div>' +
+    '<div class="c c2"><b class="' + (Number(s.day_pct) > 0 ? 'up' : '') + '">' + (s.day_pct != null ? Number(s.day_pct).toFixed(2) + '%' : '--') + '</b><span>' + (s.price != null ? s.price : '--') + '</span></div>' +
+    '<div class="c c3"><b class="org">' + (s.need != null ? Number(s.need).toFixed(2) + '%' : '--') + '</b><span>' + (s.trigger_price != null ? s.trigger_price : '--') + '</span></div>' +
+    '<div class="c c4"><b>' + (s.space != null ? Number(s.space).toFixed(2) + '%' : '--') + '</b><span class="rl">' + (s.rule_short || '') + '</span></div>';
+  blk.appendChild(row);
+});
+</script></body></html>
