@@ -887,7 +887,8 @@ class KplClient:
             stocks = x.get("Stock") or []
             out.append({
                 "id": x.get("ID"),
-                "aid": str(x.get("TopicID") or x.get("ID")),   # TopicID 优先（App 点击用它）
+                # ⭐ App 详情链路用 AID（文章体系 ID）：GetInfo {MsgID: AID}
+                "aid": str(x.get("AID") or x.get("ID")),
                 "title": x.get("Title") or "",
                 "zhaiyao": x.get("ZhaiYao") or "",
                 "time": x.get("CreateTime"),
