@@ -2058,9 +2058,9 @@ window.__ModuleLoader__.load({
                     React.createElement("div", { className: "kpl-yd2" },
                         React.createElement("div", { className: "hd" },
                             React.createElement("span", { className: "c1" }, "股票名称"),
-                            React.createElement("span", { className: "c2" }, "涨幅"),
-                            React.createElement("span", { className: "c3" }, "触发异动涨幅/股价"),
-                            React.createElement("span", { className: "c4" }, "当日偏离空间")),
+                            React.createElement("span", { className: "c2" }, "次日涨幅"),
+                            React.createElement("span", { className: "c3" }, "触发异动股票价格"),
+                            React.createElement("span", { className: "c4" }, "次日触发异动偏离空间")),
                         home.yidong.slice(0, 5).map(s =>
                             React.createElement("div", {
                                 key: s.code, className: "kpl-yd2-row",
@@ -2072,14 +2072,14 @@ window.__ModuleLoader__.load({
                                         s.code,
                                         s.rule_short && React.createElement("i", null, s.rule_short))),
                                 React.createElement("div", { className: "c2" },
-                                    React.createElement("b", { className: rateCls(s.day_pct) }, fmtRate(s.day_pct)),
+                                    React.createElement("b", null, fmtRate(s.day_pct)),
                                     React.createElement("span", null, s.price)),
-                                React.createElement("div", { className: "c3" },
-                                    React.createElement("b", { className: "org" }, fmtRate(s.need)),
+                                React.createElement("div", { className: "c3 orgc" },
+                                    React.createElement("b", null, fmtRate(s.need)),
                                     React.createElement("span", null, s.trigger_price)),
                                 React.createElement("div", { className: "c4" },
-                                    React.createElement("b", { className: Number(s.space) >= 0 ? "up" : "down" }, fmtRate(s.space)),
-                                    React.createElement("span", null, s.rule_short || "")))))),
+                                    React.createElement("b", null, fmtRate(s.space)),
+                                    React.createElement("span", { className: "rl" }, s.rule_short || "")))))),
 
 
                 React.createElement("div", { className: "kpl-yd2-links" },
@@ -7726,6 +7726,10 @@ window.__ModuleLoader__.load({
                 .kpl-qd2-row:hover { background: #f7f9ff; }
                 /* ---- 严重异动提醒（App 同款 4 列表格，显式白底） ---- */
                 .kpl-yd2 { background: #fff; border-radius: 6px; padding: 2px 10px; }
+                .kpl-yd2-row .c2 b, .kpl-yd2-row .c3 b, .kpl-yd2-row .c4 b { font-size: 15px; }
+                .kpl-yd2-row .c3 .org, .kpl-yd2-row .orgc b { color: #f08c00; }
+                .kpl-yd2-row .orgc span, .kpl-yd2-row .c2 span { color: #999; font-size: 11px; }
+                .kpl-yd2-row .c4 .rl { color: #999; font-size: 11px; }
                 .kpl-yd2 .hd { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; padding: 8px 0 6px; font-size: 11px; color: #999; border-bottom: 1px solid #f0f0f0; }
                 .kpl-yd2 .hd .c2 { text-align: right; } .kpl-yd2 .hd .c3 { text-align: right; } .kpl-yd2 .hd .c4 { text-align: right; }
                 .kpl-yd2-row { display: grid; grid-template-columns: 1.3fr 68px 92px 88px; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
