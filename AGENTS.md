@@ -122,7 +122,8 @@ git push origin main --tags
 - **✅ 栏目文章详情已通（2026-10-04 晚二度实锤，推翻"原生专用通道"误判）**：栏目 feed 条目是**双重 ID**——`ID`=ForumsMsgColumn 表系（1254244）、`AID`=文章体系（3504）。**详情=ForumsMsgJX/GetInfo {MsgID: AID, Tag:1}**（PC 站 www.kaipanhong.com/article/{AID} 的 Nuxt chunk pcjs_CKnecJjc.js 同款参数佐证：`MsgID=m.params.id`）。实测医药栏目 8 篇：5 篇有正文（872~4824B），3 篇 1130 为服务端已清理的 2016/2020 老文章（App 同样无正文）。**此前"原生专用通道"是误判**——真因是详情传了 feed ID 而非 AID。修复：get_column_feed 增 aid 字段，前端卡片点击 `aid: a.aid || a.id`
 ：栏目 feed 条目 ID 属 ForumsMsgColumn 表，`ForumsMsgJX/GetInfo` 对其一律 1130（穷举 MsgID/AID/ID/ArticleID×Tag{0,1,2,13}×longhuvip/kaipanhong 双域全 1130/1020）；字节码链：DiscoveryRecommendAdapter 列表卡内**直接内嵌正文 webview**（`ArticleBean.getConts()`→loadDataWithBaseURL+JS 桥 returnAndroid，getContent()→ExpandTextView 展开正文）——**App 列表卡自带正文**，正文数据在 qg.N 解析器的响应里（字段名 `Conts`，伴随 IsJX/IsTop）；qg.N 的上游请求经 DataRepository 消息分发（n6/m6/p6），混淆层数过深未定位到 c/a。**kpl_analysis 模拟器镜像已报废**（tmpfs CA 搞挂 framework→系统 ANR 循环→冷启动 boot 卡死 40min+ offline），重建 AVD+mitm 抓包后可定位
 - **列表卡与详情的当前形态**：卡片=标题+摘要(ZhaiYao 有则显，医药栏目服务端本就不带)+缩略图+时间+赞+订阅角标（与 App 同字段同源）；点卡片→文章详情（AppNews 类=全文；栏目类=降级卡：标题+摘要+图+"正文请在 App 查看"，点卡片时 zhaiyao/img/time 经路由传入）
-- **坑**：模拟器装 mitm CA 的 tmpfs overlay 法会把 Android framework 搞挂（System UI ANR 循环，需整机重启恢复）——该镜像只能 remount 法；remount 失败时 H5 JS 源码逆向（静态资源直接 curl）常常更快
+- **✅ 坑（组件重写后分发处未同步）：重写 KplRecommendPage({ go }) 后，主分发 else 分支仍是旧占位时代的无参调用 `React.createElement(KplRecommendPage)`** → 底部导航进推荐页点文章报 `go is not a function`（console 实锤 client.js:4859）。用户报的"点击不跳详情"即此。教训：重写组件签名（新增 props）时，必须 grep 全部 createElement 调用点同步传参
+- **坑**：模拟器装 mitm CA 的 tmpfs overlay 法- **坑**：模拟器装 mitm CA 的 tmpfs overlay 法会把 Android framework 搞挂（System UI ANR 循环，需整机重启恢复）——该镜像只能 remount 法；remount 失败时 H5 JS 源码逆向（静态资源直接 curl）常常更快
 
 ### ⭐ 搜索页（App 搜索 1:1，2026-10-04 复刻完成）
 
