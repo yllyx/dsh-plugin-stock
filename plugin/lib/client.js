@@ -2050,34 +2050,42 @@ window.__ModuleLoader__.load({
                                     (s.tags || []).slice(0, 1).map(t => React.createElement("i", { key: t.value, className: "tg" }, t.value)))),
                             s.desc && React.createElement("div", { className: "desc" }, s.desc)))),
 
-                // ===== 严重异动提醒（偏离值监控，App 同款表格 UI） =====
+                // ===== 严重异动提醒（App 首页块 1:1：W46「明日评估」节，yd8 实拍——列头+蓝色「次日评估」副标+右上「更多 ›」） =====
                 ((home && home.yidong) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
                         React.createElement("span", { className: "t" }, "严重异动提醒"),
-                        React.createElement("span", { className: "date" }, home.yidong_day || "")),
+                        React.createElement("span", { className: "kpl-yd2-eval" }, "次日评估"),
+                        React.createElement("span", { className: "more", onClick: () => go({ page: "ydAlert" }) }, "更多 ›")),
+                    React.createElement("div", { className: "kpl-yd2-hd" },
+                        React.createElement("span", null, "股票名称"),
+                        React.createElement("span", null, "次日涨幅"),
+                        React.createElement("span", null, "触发异动涨幅股票价格"),
+                        React.createElement("span", null, "次日触发异动偏离值空间")),
                     React.createElement("div", { className: "kpl-yd2" },
                         home.yidong.slice(0, 5).map(s =>
                             React.createElement("div", {
                                 key: s.code, className: "kpl-yd2-row",
                                 onClick: () => go({ page: "stock", stock: { code: s.code, name: s.name } }),
                             },
-                                React.createElement("div", { className: "c nm" }, s.name),
+                                React.createElement("div", { className: "c nm" },
+                                    React.createElement("div", { className: "nm2" }, s.name),
+                                    React.createElement("div", { className: "cd" }, s.code,
+                                        s.concept ? React.createElement("i", null, s.concept) : null)),
                                 React.createElement("div", { className: "c v" },
-                                    React.createElement("b", null, fmtRate(s.day_pct)),
-                                    React.createElement("span", null, s.price)),
+                                    React.createElement("b", { className: rateCls(s.day_pct) }, ydPct(s.day_pct)),
+                                    React.createElement("span", null, s.price != null ? s.price : "--")),
                                 React.createElement("div", { className: "c v org" },
-                                    React.createElement("b", null, fmtRate(s.need)),
-                                    React.createElement("span", null, s.trigger_price)),
+                                    React.createElement("b", null, ydPct(s.need)),
+                                    React.createElement("span", null, s.trigger_price != null ? s.trigger_price : "--")),
                                 React.createElement("div", { className: "c v" },
-                                    React.createElement("b", null, fmtRate(s.space)),
+                                    React.createElement("b", null, ydPct(s.space_next)),
                                     React.createElement("span", { className: "rl" }, s.rule_short || "")))))),
-
 
                 React.createElement("div", { className: "kpl-yd2-links" },
                     React.createElement("div", { className: "ln", onClick: () => go({ page: "yidongMany" }) },
-                        "查看多次异动个股（16）"),
-                    React.createElement("div", { className: "ln", onClick: () => go({ page: "zdjk" }) },
-                        "重点监控")),
+                        "查看多次异动个股" + (home && home.yidong_many_count ? `（${home.yidong_many_count}）` : "")),
+                    React.createElement("div", { className: "ln has-arr", onClick: () => go({ page: "ydAlert", tab: "zdjk" }) },
+                        "重点监控", React.createElement("i", { className: "ar" }, "›"))),
                 // ===== 近期活跃板块（App 同源 BaceFaceList 4 条；点击进板块详情） =====
                 ((home && home.active_plates) || []).length > 0 && React.createElement("div", { className: "kpl-sec" },
                     React.createElement("div", { className: "kpl-sec-head" },
@@ -3192,6 +3200,31 @@ window.__ModuleLoader__.load({
 
         /* ---- 行情·港股子页（HKFragment/HKStockListFragment 协议逆向中）---- */
 
+        /* ---- 严重异动提醒家族（App deviation 包同源；块与下钻页共用格式化） ---- */
+        // App 块内数值格式（yd8 实拍）：0 → "0%"，其余两位小数、不带 +
+        function ydPct(v) {
+            if (v == null || isNaN(Number(v))) return "--";
+            const n = Number(v);
+            return n === 0 ? "0%" : n.toFixed(2) + "%";
+        }
+        // 异动提醒页表格数值（yd30 实拍）：一律两位小数、不带 +
+        function ydPct2(v) {
+            if (v == null || isNaN(Number(v))) return "--";
+            return Number(v).toFixed(2) + "%";
+        }
+        // 上/下一交易日步进（自然日 ±1，跳过周末；法定节假日以 trade-cal 修正，无数据时如实展示空列表）
+        function ydStepDay(day, dir) {
+            const d = day ? new Date(day + "T00:00:00") : new Date();
+            let t = d.getTime();
+            for (let i = 0; i < 10; i++) {
+                t += dir * 86400000;
+                const wd = new Date(t).getDay();
+                if (wd !== 0 && wd !== 6) break;
+            }
+            const y = new Date(t), p = (x) => (x < 10 ? "0" + x : "" + x);
+            return y.getFullYear() + "-" + p(y.getMonth() + 1) + "-" + p(y.getDate());
+        }
+
         // 渲染异常守卫（纯函数）：子页渲染抛错时显示原因而非白屏，下次轮询自动重试。
         // 勿用 class ErrorBoundary：模块执行期求值 React.Component 在 DSH 打包环境失败曾致整模块白屏。
         function kplGuard(Comp, name) {
@@ -3210,6 +3243,10 @@ window.__ModuleLoader__.load({
         // （10s 报价轮询等）都产生新组件类型 → React 把详情页整页卸载重建 →
         // 横移页码/tab/滚动位置全丢，表现为"过几秒刷新一次、tab 无法停留"（#27⑤ 同案）。
         const KPL_STOCK_DETAIL_G = kplGuard(KplStockDetail, "个股详情");
+
+        // 严重异动家族两页同样模块级守卫（#27）
+        const KPL_YD_ALERT_G = kplGuard(KplYdAlertPage, "异动提醒");
+        const KPL_YD_MANY_G = kplGuard(KplYidongManyPage, "多次异动个股");
 
         // 守卫包装必须在模块层做一次：放进渲染体内的话，父级每次重渲染（3s 状态轮询等）
         // 都会产生新组件类型，React 按不同组件整页卸载重建子页——表现为每隔几秒"闪一下"+丢状态重拉数据。
@@ -5019,78 +5056,286 @@ window.__ModuleLoader__.load({
                         "本文不构成投资建议，据此操作风险自担")));
         }
 
-                /* ---- 多次异动个股下钻（GetPianLiZhi_Many，App 同源分组表） ---- */
+                /* ---- 多次异动个股下钻（DeviationManyChangeActivity 1:1：沪深主板/创业科创板双 tab
+                        + 分组分节表格，yd16 实拍；行字段 yidong_family_20261005.json 锚定） ---- */
 
         function KplYidongManyPage({ go }) {
             const [d, setData] = useState(null);
             const [error, setError] = useState(null);
+            const [tab, setTab] = useState("1"); // board: 1=沪深主板 2=创业/科创板（服务端字段）
             useEffect(() => {
                 api("/api/kpl/yidong/many").then(setData).catch((e) => setError(e.message));
             }, []);
+            const rows = (d && d.list || []).filter((r) => String(r.board) === tab);
             const groups = [];
-            (d && d.list || []).forEach((it) => {
+            rows.forEach((it) => {
                 const g = groups.find((x) => x.name === it.group);
                 if (g) g.items.push(it); else groups.push({ name: it.group, items: [it] });
             });
+            // 列头随分组变（yd16 实拍：3次异动→预计严重异动价格；2次异动→预计3次异动价格；
+            // 异动停牌后复牌→预计停牌价格；偏离值临近→预计严重异动价格）
+            const estHead = (name) => name.indexOf("停牌") >= 0 ? "预计停牌价格"
+                : name.indexOf("2次") >= 0 ? "预计3次异动价格" : "预计严重异动价格";
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement(KplPageHeader, { title: "多次异动个股",
                     onBack: () => go({ page: "back" }) }),
+                React.createElement("div", { className: "kpl-ydm-tabs" },
+                    React.createElement("div", {
+                        className: "kpl-ydm-tab" + (tab === "1" ? " on" : ""),
+                        onClick: () => setTab("1"),
+                    }, "沪深主板"),
+                    React.createElement("div", {
+                        className: "kpl-ydm-tab" + (tab === "2" ? " on" : ""),
+                        onClick: () => setTab("2"),
+                    }, "创业/科创板")),
                 React.createElement(ErrorBox, { error }),
                 React.createElement(LoadingBar, { show: !d && !error }),
+                d && !rows.length ? React.createElement("div", { className: "kpl-mdd-empty" }, "该板块暂无多次异动个股") : null,
                 groups.map((g) => React.createElement("div", { key: g.name, className: "kpl-ydm" },
                     React.createElement("div", { className: "sec-t" },
-                        React.createElement("i", { className: "bar" }), g.name.replace("10日内", "").replace("个股", "") + "｜10日内"),
+                        React.createElement("i", { className: "bar" }), g.name),
                     React.createElement("div", { className: "hd" },
                         React.createElement("span", { className: "c1" }, "名称"),
                         React.createElement("span", { className: "c2" }, "3日内偏离值"),
-                        React.createElement("span", { className: "c3" }, "预计严重异动价格"),
+                        React.createElement("span", { className: "c3" }, estHead(g.name)),
                         React.createElement("span", { className: "c4" }, "当前价格")),
-                    g.items.map((a) => React.createElement("div", { key: a.code, className: "row",
+                    g.items.map((a) => React.createElement("div", { key: a.code + g.name, className: "row",
                         onClick: () => go({ page: "stock", stock: { code: a.code, name: a.name } }) },
                         React.createElement("div", { className: "c1" },
                             React.createElement("b", null, a.name),
-                            React.createElement("span", { className: "cd" }, a.code)),
+                            React.createElement("span", { className: "cd" }, a.code,
+                                a.day_n ? React.createElement("i", { className: "dn" }, "第" + a.day_n + "日") : null)),
                         React.createElement("div", { className: "c2" },
                             React.createElement("b", { className: Number(a.dev3) >= 0 ? "up" : "down" },
-                                a.dev3 != null ? a.dev3 + "%" : "--")),
+                                ydPct2(a.dev3))),
                         React.createElement("div", { className: "c3" },
-                            React.createElement("b", { className: "org" }, a.est_price != null ? a.est_price : "--"),
-                            React.createElement("span", null, "0.00%")),
+                            React.createElement("b", { className: "up" }, a.est_price != null ? a.est_price : "--"),
+                            React.createElement("span", { className: "up" }, ydPct2(a.est_pct))),
                         React.createElement("div", { className: "c4" },
-                            React.createElement("b", null, a.price != null ? a.price : "--")))))));
+                            React.createElement("b", null, a.price != null ? a.price : "--"),
+                            React.createElement("span", { className: Number(a.day_pct) >= 0 ? "up" : "down" },
+                                a.day_pct != null ? ydPct2(a.day_pct) : "")))))));
         }
 
-        /* ---- 异动提醒页（重点监控/监管期证券，GetYDTP_ZDJK_Today/His） ---- */
+        /* ---- 异动提醒页（AbnormalAlertActivity 1:1：概览头（指数卡+全市场量能+涨跌家数+大盘直播）
+                + 日期导航/预警开关 + 三 tab 严重异动/热门股偏离值/重点监控；yd17/yd30/31/32 实拍） ---- */
 
-        function KplZdjkPage({ go }) {
-            const [today, setToday] = useState(null);
-            const [his, setHis] = useState(null);
+        function KplYdAlertPage({ go, initTab }) {
+            const [tab, setTab] = useState(initTab === "zdjk" ? "zdjk" : "severe");
+            const [day, setDay] = useState(""); // ""=最新交易日；历史=YYYY-MM-DD
+            const [warn, setWarn] = useState(() => localStorage.getItem("kpl_yd_warn") !== "0");
+            const [trend, setTrend] = useState(null);
+            const feed = useMarketFeed(30000);
+            const zdstat = feedData(feed, "zdstat").data || {};
+            const energy = feedData(feed, "energy").data || {};
+            const [sev, setSev] = useState(null);
+            const [hot, setHot] = useState(null);
+            const [hisFilter, setHisFilter] = useState("all");
+            const [zdjk, setZdjk] = useState(null);
+            const [zdjkHis, setZdjkHis] = useState(null);
             const [error, setError] = useState(null);
             useEffect(() => {
-                Promise.all([
-                    api("/api/kpl/yidong/zdjk").then(setToday).catch(() => setToday([])),
-                    api("/api/kpl/yidong/zdjk?his=1").then(setHis).catch(() => setHis([])),
-                ]).catch((e) => setError(e.message));
+                api("/api/kpl/mkttrend").then(setTrend).catch(() => { /* */ });
             }, []);
-            const grp = (label, rows) => React.createElement("div", { className: "kpl-zdjk-grp" },
-                React.createElement("div", { className: "sec-t" },
-                    React.createElement("i", { className: "bar" }), label),
-                React.createElement("div", { className: "hd" },
-                    React.createElement("span", { className: "c1" }, "股票名称"),
-                    React.createElement("span", { className: "c2" }, "监控开始日期"),
-                    React.createElement("span", { className: "c3" }, "监控结束日期")),
-                (rows || []).map((r) => React.createElement("div", { key: r.code, className: "row",
-                    onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }) },
-                    React.createElement("div", { className: "c1 nm" }, r.name),
-                    React.createElement("div", { className: "c2 dt" }, r.start),
-                    React.createElement("div", { className: "c3 dt" }, r.end))));
-            return React.createElement("div", { className: "kpl-page" },
-                React.createElement(KplPageHeader, { title: "异动提醒",
-                    onBack: () => go({ page: "back" }) }),
+            useEffect(() => {
+                if (tab !== "severe") return undefined;
+                setSev(null);
+                api("/api/kpl/yidong/severe" + (day ? `?day=${day}` : ""))
+                    .then(setSev).catch((e) => setError(e.message));
+                return undefined;
+            }, [tab, day]);
+            useEffect(() => {
+                if (tab !== "hot") return undefined;
+                setHot(null);
+                api("/api/kpl/yidong/hot" + (day ? `?day=${day}` : ""))
+                    .then(setHot).catch((e) => setError(e.message));
+                return undefined;
+            }, [tab, day]);
+            useEffect(() => {
+                if (tab !== "zdjk") return undefined;
+                Promise.all([
+                    api("/api/kpl/yidong/zdjk").then(setZdjk).catch(() => setZdjk([])),
+                    day
+                        ? api(`/api/kpl/yidong/zdjk?his=1&day=${day}`).then(setZdjkHis).catch(() => setZdjkHis([]))
+                        : api("/api/kpl/yidong/zdjk?his=1").then(setZdjkHis).catch(() => setZdjkHis([])),
+                ]).catch((e) => setError(e.message));
+                return undefined;
+            }, [tab, day]);
+            const idxes = (trend && trend.indexes) || [];
+            const cur = idxes[0] || null;
+            // 导航展示日：未选历史时=数据实际日（sev.day 服务端返回），无数据再退日历今天
+            const shownDay = day || (sev && sev.day) || (window.__kplTradeCal && window.__kplTradeCal.today) || "";
+            // 近期严重异动三档筛选（App pill：全部/触发严重异动/被停牌；行内状态+停牌标本地过滤）
+            const hisRows = ((sev && sev.his && sev.his.list) || []).filter((r) =>
+                hisFilter === "all" ? true
+                    : hisFilter === "trigger" ? r.status_today === "触发严重异动"
+                        : !!r.suspended);
+            const sevRow = (r) => React.createElement("div", { key: r.code + r.action_date,
+                className: "kpl-yda-row" + (r.status_today === "触发严重异动" ? " trig" : ""),
+                onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }) },
+                React.createElement("div", { className: "c nm" },
+                    React.createElement("div", { className: "nm2" }, r.name),
+                    React.createElement("div", { className: "cd" }, r.code,
+                        r.concept ? React.createElement("i", { className: "otag" }, r.concept) : null)),
+                React.createElement("div", { className: "c v" },
+                    React.createElement("b", { className: "org" }, ydPct2(r.need)),
+                    React.createElement("span", null, r.trigger_price != null ? r.trigger_price : "--")),
+                React.createElement("div", { className: "c v" },
+                    r.status_today === "触发严重异动"
+                        ? React.createElement("b", { className: "red" }, "触发严重异动")
+                        : React.createElement("b", null, ydPct2(r.space_today)),
+                    React.createElement("span", { className: "rl" }, r.rule_short || "")),
+                React.createElement("div", { className: "c v" },
+                    React.createElement("b", null,
+                        r.status_today === "触发严重异动" ? "--" : ydPct2(r.space_next)),
+                    React.createElement("span", { className: "rl" }, "\u00A0")));
+            const tabBtn = (id, label) => React.createElement("div", {
+                className: "kpl-yda-tab" + (tab === id ? " on" : ""),
+                onClick: () => setTab(id),
+            }, label);
+            return React.createElement("div", { className: "kpl-page kpl-yda" },
+                React.createElement(KplPageHeader, {
+                    title: "异动提醒",
+                    onBack: () => go({ page: "back" }),
+                    extra: React.createElement("span", { className: "kpl-yda-q",
+                        title: "涨幅偏离值累计达到阈值触发交易所严重异动；本页数据与开盘啦 App 同源" }, "?"),
+                }),
+                // 日期导航 + 预警开关（App：◀ 日期 📅 ▶ | 预警 ⓘ 开关；预警=分时/K线严重异动预警线，插件本地记忆）
+                React.createElement("div", { className: "kpl-yda-datenav" },
+                    React.createElement("div", { className: "idx" },
+                        cur ? React.createElement(React.Fragment, null,
+                            React.createElement("b", { className: cur.points && cur.points.length && cur.points[cur.points.length - 1].v >= cur.preClose ? "up" : "down" },
+                                cur.points && cur.points.length ? cur.points[cur.points.length - 1].v.toFixed(2) : "--"),
+                            React.createElement("span", null, shownDay)) : null),
+                    React.createElement("div", { className: "nav" },
+                        React.createElement("i", { className: "ar", onClick: () => setDay(ydStepDay(shownDay, -1)) }, "◀"),
+                        React.createElement("span", { className: "dt" }, shownDay || "--"),
+                        React.createElement("i", {
+                            className: "ar" + (day ? "" : " dis"),
+                            onClick: () => { if (day) setDay(""); },
+                        }, "▶")),
+                    React.createElement("div", { className: "warn" },
+                        React.createElement("span", null, "预警"),
+                        React.createElement("i", {
+                            className: "tg" + (warn ? " on" : ""),
+                            onClick: () => { setWarn(!warn); localStorage.setItem("kpl_yd_warn", warn ? "0" : "1"); },
+                        })),
+                ),
+                // 三 tab
+                React.createElement("div", { className: "kpl-yda-tabs" },
+                    tabBtn("severe", "严重异动"),
+                    tabBtn("hot", "热门股偏离值"),
+                    tabBtn("zdjk", "重点监控")),
                 React.createElement(ErrorBox, { error }),
-                React.createElement(LoadingBar, { show: (today === null || his === null) && !error }),
-                grp("监管期证券", today),
-                grp("历史监管期证券", his));
+                // ===== 严重异动 tab（W46：明日/今日两节 + 近期严重异动） =====
+                tab === "severe" && React.createElement("div", null,
+                    React.createElement(LoadingBar, { show: !sev }),
+                    sev && React.createElement("div", { className: "kpl-yda-sec" },
+                        React.createElement("div", { className: "sec-t blue" },
+                            React.createElement("i", { className: "bar" }),
+                            "明日涨幅至涨停，能触发严重异动的个股"),
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", { className: "c1" }, "股票名称"),
+                            React.createElement("span", { className: "c2" }, "次日涨幅"),
+                            React.createElement("span", { className: "c3" }, "触发异动涨幅股票价格"),
+                            React.createElement("span", { className: "c4" }, "次日触发异动偏离值空间")),
+                        (sev.tomorrow || []).map(sevRow)),
+                    sev && React.createElement("div", { className: "kpl-yda-sec" },
+                        React.createElement("div", { className: "sec-t blue" },
+                            React.createElement("i", { className: "bar" }),
+                            "今日涨幅至涨停，能触发严重异动的个股"),
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", { className: "c1" }, "股票名称"),
+                            React.createElement("span", { className: "c2" }, "触发异动涨幅股票价格"),
+                            React.createElement("span", { className: "c3" }, "当日触发异动偏离值空间"),
+                            React.createElement("span", { className: "c4" }, "次日触发异动偏离值空间")),
+                        (sev.today || []).map(sevRow)),
+                    sev && React.createElement("div", { className: "kpl-yda-sec" },
+                        React.createElement("div", { className: "sec-t blue" },
+                            React.createElement("i", { className: "bar" }), "近期严重异动"),
+                        React.createElement("div", { className: "kpl-yda-pills" },
+                            [["all", "全部"], ["trigger", "触发严重异动"], ["susp", "被停牌"]].map(([k, label]) =>
+                                React.createElement("span", {
+                                    key: k, className: "pill" + (hisFilter === k ? " on" : ""),
+                                    onClick: () => setHisFilter(k),
+                                }, label))),
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", { className: "c1" }, "股票名称"),
+                            React.createElement("span", { className: "c2" }, "异动日期"),
+                            React.createElement("span", { className: "c3" }, "异动状态"),
+                            React.createElement("span", { className: "c4" }, "次日涨幅")),
+                        hisRows.map((r) => React.createElement("div", { key: r.code + r.action_date, className: "kpl-yda-row",
+                            onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }) },
+                            React.createElement("div", { className: "c nm" },
+                                React.createElement("div", { className: "nm2" }, r.name),
+                                React.createElement("div", { className: "cd" }, r.code,
+                                    r.concept ? React.createElement("i", { className: "otag" }, r.concept) : null)),
+                            React.createElement("div", { className: "c v dt" },
+                                React.createElement("b", null, (r.action_date || "").replace(/^\d{2}/, ""))),
+                            React.createElement("div", { className: "c v" },
+                                r.status_today === "触发严重异动"
+                                    ? React.createElement("b", { className: "red" }, "触发严重异动")
+                                    : React.createElement("b", null, r.status_today || "--"),
+                                React.createElement("span", { className: "rl" }, r.rule_short || "")),
+                            React.createElement("div", { className: "c v" },
+                                React.createElement("b", { className: Number(r.next_day_pct) >= 0 ? "up" : "down" },
+                                    ydPct2(r.next_day_pct)),
+                                React.createElement("span", null, "\u00A0")))))),
+                // ===== 热门股偏离值 tab（GetPianLiZhi_Hot，涨幅偏离值降序） =====
+                tab === "hot" && React.createElement("div", null,
+                    React.createElement(LoadingBar, { show: !hot }),
+                    hot && React.createElement("div", { className: "kpl-yda-sec" },
+                        React.createElement("div", { className: "hd" },
+                            React.createElement("span", { className: "c1" }, "股票名称"),
+                            React.createElement("span", { className: "c2" }, "涨幅"),
+                            React.createElement("span", { className: "c3" }, "涨幅偏离值"),
+                            React.createElement("span", { className: "c4" }, "当日触发异动偏离值空间")),
+                        (hot.list || []).map((r) => React.createElement("div", { key: r.code, className: "kpl-yda-row",
+                            onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }) },
+                            React.createElement("div", { className: "c nm" },
+                                React.createElement("div", { className: "nm2" }, r.name),
+                                React.createElement("div", { className: "cd" }, r.code,
+                                    r.concept ? React.createElement("i", { className: "otag" }, r.concept) : null)),
+                            React.createElement("div", { className: "c v" },
+                                React.createElement("b", { className: Number(r.pct) >= 0 ? "up" : "down" }, ydPct2(r.pct)),
+                                React.createElement("span", { className: "blue" }, r.zt_text || "\u00A0")),
+                            React.createElement("div", { className: "c v" },
+                                React.createElement("b", { className: "up" }, ydPct2(r.dev)),
+                                React.createElement("span", { className: "rl" }, r.days || "")),
+                            React.createElement("div", { className: "c v" },
+                                React.createElement("b", null, ydPct2(r.space)),
+                                React.createElement("span", { className: "rl" }, r.tag || "\u00A0")))))),
+                // ===== 重点监控 tab（监管期证券/历史监管期证券，yd17 实拍） =====
+                tab === "zdjk" && React.createElement("div", null,
+                    React.createElement(LoadingBar, { show: zdjk === null || zdjkHis === null }),
+                    [["监管期证券", zdjk], ["历史监管期证券", zdjkHis]].map(([label, rows]) =>
+                        React.createElement("div", { key: label, className: "kpl-yda-sec" },
+                            React.createElement("div", { className: "sec-t blue" },
+                                React.createElement("i", { className: "bar" }), label),
+                            React.createElement("div", { className: "hd" },
+                                React.createElement("span", { className: "c1" }, "股票名称"),
+                                React.createElement("span", { className: "c2 dt2" }, "监控开始日期(9:00)"),
+                                React.createElement("span", { className: "c3 dt2" }, "监控结束日期(15:00)")),
+                            (rows || []).map((r) => React.createElement("div", { key: r.code, className: "kpl-yda-row",
+                                onClick: () => go({ page: "stock", stock: { code: r.code, name: r.name } }) },
+                                React.createElement("div", { className: "c nm" },
+                                    React.createElement("div", { className: "nm2" }, r.name),
+                                    React.createElement("div", { className: "cd" }, r.code)),
+                                React.createElement("div", { className: "c v dt" },
+                                    React.createElement("b", null, r.start)),
+                                React.createElement("div", { className: "c v dt" },
+                                    React.createElement("b", null, r.end))))))),
+                // ===== 概览尾块：指数分时卡 + 全市场量能 + 涨跌家数 + 大盘直播（App 概览头 1:1，插件置底避免挤压列表） =====
+                React.createElement("div", { className: "kpl-yda-ov" },
+                    energy && energy.text ? React.createElement("div", { className: "kpl-yda-energy" },
+                        React.createElement("span", { className: "lb" }, "全市场量能"),
+                        React.createElement("b", { className: "org" }, energy.text)) : null,
+                    zdstat && (zdstat.rise != null) ? React.createElement("div", { className: "kpl-yda-zd" },
+                        [["上涨家数", zdstat.rise, "up"], ["涨停家数", zdstat.zt, "up"],
+                            ["下跌家数", zdstat.down, "down"], ["跌停家数", zdstat.dt, "down"]].map(([lb, v, cls]) =>
+                            React.createElement("div", { key: lb, className: "cell" },
+                                React.createElement("span", null, lb),
+                                React.createElement("b", { className: cls }, v != null ? v : "--")))) : null));
         }
 
         /* ---- 板块详情（下钻 1:1） ---- */  function KplSectorDetail({ plate, list, go }) {
@@ -5855,8 +6100,9 @@ window.__ModuleLoader__.load({
                 if (drill.page === "sector") content = React.createElement(KplSectorDetail, { plate: drill.plate, list: drill.list || KPL_SECTORS, go });
                 else if (drill.page === "article") content = React.createElement(KplArticleDetail, { aid: drill.aid, title: drill.title, go });
                 else if (drill.page === "colPage") content = React.createElement(KplColumnPage, { cid: drill.cid, name: drill.name, go });
-                else if (drill.page === "yidongMany") content = React.createElement(KplYidongManyPage, { go });
-                else if (drill.page === "zdjk") content = React.createElement(KplZdjkPage, { go });
+                else if (drill.page === "yidongMany") content = React.createElement(KPL_YD_MANY_G, { go });
+                else if (drill.page === "zdjk") content = React.createElement(KPL_YD_ALERT_G, { go, initTab: "zdjk" });
+                else if (drill.page === "ydAlert") content = React.createElement(KPL_YD_ALERT_G, { go });
                 else if (drill.page === "artCenter") content = React.createElement(KplRecommendPage, { go });
                 else if (drill.page === "stock") content = React.createElement(KPL_STOCK_DETAIL_G, { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
@@ -5913,6 +6159,65 @@ window.__ModuleLoader__.load({
 
         // ============= 主面板 =============
         // ============= 主面板 =============
+        /* ---- 通达信 Tab：PC 客户端自选分组直读（T0002/blocknew = 云同步状态）+ 实盘持仓（二期 trade.dll 桥） ---- */
+
+        function TdxTab({ openStock }) {
+            const [data, setData] = useState(null);
+            const [err, setErr] = useState(null);
+            const [gid, setGid] = useState("");   // 交互 state 只存 id 字符串，派生对象 find 按值查
+
+            const load = useCallback(async () => {
+                try {
+                    const d = await api(`/api/tdx/watchlist?quotes=1&t=${Date.now()}`);
+                    setData(d);
+                    setErr(null);
+                } catch (e) { setErr(e.message); }
+            }, []);
+            usePolling(() => load(), 10000, []);
+
+            if (!data) {
+                return React.createElement("div", { className: "kpl-tdx-empty" },
+                    err ? "⚠️ 加载失败：" + err + "（下轮轮询自动重试）" : "加载通达信分组…");
+            }
+            if (!data.available) {
+                return React.createElement("div", { className: "kpl-tdx-empty" },
+                    "⚠️ " + (data.message || "未找到通达信 blocknew 目录"),
+                    React.createElement("div", { className: "kpl-tdx-note" },
+                        "本页直读 PC 通达信 T0002/blocknew 自选分组；请在 ⚙️ 系统 Tab 的配置里填写通达信安装目录（如 D:\\app\\tdx）"));
+            }
+            const groups = data.groups || [];
+            const cur = groups.find((g) => g.id === gid) || groups[0] || null;
+            const rows = (cur && data.stocks && data.stocks[cur.id]) || [];
+            return React.createElement("div", { className: "kpl-tdx-wrap" },
+                React.createElement("div", { className: "kpl-tdx-head" },
+                    React.createElement("b", null, "🎯 自选分组"),
+                    React.createElement("span", { className: "sync" },
+                        data.synced_at ? "云同步于 " + data.synced_at : "")),
+                groups.length ? React.createElement("div", { className: "kpl-tdx-chips" },
+                    groups.map((g) => React.createElement("span", {
+                        key: g.id,
+                        className: "kpl-tdx-chip" + (cur && cur.id === g.id ? " on" : ""),
+                        onClick: () => setGid(g.id),
+                    }, g.name + " " + g.count))) : null,
+                cur && rows.length ? React.createElement("div", { className: "kpl-tdx-rows" },
+                    rows.map((s) => React.createElement("div", {
+                        key: s.market + "_" + s.code,
+                        className: "kpl-tdx-row",
+                        onClick: () => openStock && s.market !== 2 && openStock({ code: s.code, name: s.name || s.code }),
+                    },
+                        React.createElement("span", { className: "nm" }, s.name || "--"),
+                        React.createElement("span", { className: "cd" }, s.code),
+                        React.createElement("span", { className: "px" }, s.price != null ? Number(s.price).toFixed(2) : "--"),
+                        React.createElement("span", {
+                            className: "pc " + (s.change_pct == null ? "" : s.change_pct < 0 ? "down" : s.change_pct > 0 ? "up" : ""),
+                        }, s.change_pct != null ? (s.change_pct > 0 ? "+" : "") + Number(s.change_pct).toFixed(2) + "%" : "--"))))
+                    : React.createElement("div", { className: "kpl-tdx-empty" }, cur ? "分组「" + cur.name + "」为空" : "暂无分组"),
+                React.createElement("div", { className: "kpl-tdx-note" },
+                    "数据 = PC 通达信最后一次「云同步」的分组（T0002/blocknew 直读）。手机 App 改动分组后，在 PC 通达信登录同一账号同步一次即可更新；点击个股看K线；仅监控不交易。"));
+        }
+
+        const TDX_TAB_G = kplGuard(TdxTab, "通达信");
+
         const TABS = [
             { id: "timing", label: "⏱ 择时" },
             { id: "sentiment", label: "🔥 情绪风格" },
@@ -5922,6 +6227,7 @@ window.__ModuleLoader__.load({
             { id: "screen", label: "🔍 选股" },
             { id: "news", label: "🌐 舆情联动" },
             { id: "kpl", label: "🚀 开盘啦" },
+            { id: "tdx", label: "🎯 通达信" },
             { id: "system", label: "⚙️ 系统" },
         ];
 
@@ -6137,6 +6443,7 @@ window.__ModuleLoader__.load({
                 screen: React.createElement(ScreenTab, { openStock }),
                 news: React.createElement(NewsTab, { openStock }),
                 kpl: React.createElement(KplTab, null),
+                tdx: React.createElement(TDX_TAB_G, { openStock }),
                 system: React.createElement(SystemTab),
             }[tab];
 
@@ -7735,6 +8042,110 @@ window.__ModuleLoader__.load({
                 .kpl-yd2-row .c2 span, .kpl-yd2-row .c3 span, .kpl-yd2-row .c4 span { display: block; font-size: 11px; color: #999; }
                 .kpl-yd2-row b.up { color: #e0333a; } .kpl-yd2-row b.down { color: #0aa858; }
                 .kpl-yd2-row .org { color: #f59e0b; }
+                /* ===== 通达信 Tab（自选分组直读；显式色值，勿用 dsw 变量） ===== */
+                .kpl-tdx-wrap { display: flex; flex-direction: column; gap: 8px; }
+                .kpl-tdx-head { display: flex; justify-content: space-between; align-items: baseline; }
+                .kpl-tdx-head b { font-size: 13px; color: #111; }
+                .kpl-tdx-head .sync { font-size: 10px; color: #999; }
+                .kpl-tdx-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+                .kpl-tdx-chip { padding: 3px 10px; border-radius: 12px; background: #f0f0f0; color: #666; font-size: 11px; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
+                .kpl-tdx-chip:hover { background: #e5e5e5; }
+                .kpl-tdx-chip.on { background: #e0333a; color: #fff; font-weight: 600; }
+                .kpl-tdx-rows { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; overflow: hidden; }
+                .kpl-tdx-row { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
+                .kpl-tdx-row:last-child { border-bottom: none; }
+                .kpl-tdx-row:hover { background: #fafafa; }
+                .kpl-tdx-row .nm { flex: 1; font-weight: 600; color: #111; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-tdx-row .cd { color: #999; font-size: 11px; margin-right: 10px; font-variant-numeric: tabular-nums; }
+                .kpl-tdx-row .px { width: 72px; text-align: right; color: #111; font-size: 13px; font-variant-numeric: tabular-nums; }
+                .kpl-tdx-row .pc { width: 78px; text-align: right; font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; }
+                .kpl-tdx-row .pc.up { color: #e0333a; }
+                .kpl-tdx-row .pc.down { color: #0aa858; }
+                .kpl-tdx-note { font-size: 10px; color: #999; line-height: 1.6; }
+                .kpl-tdx-empty { padding: 24px 16px; text-align: center; color: #999; background: #fff; border: 1px dashed #e0e0e0; border-radius: 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+                /* ---- 严重异动提醒块补齐（yd8 实拍：列头行 + 蓝色「次日评估」+ 概念 tag 橙底白字） ---- */
+                .kpl-yd2-eval { font-size: 14px; color: #3b82f6; font-weight: 600; margin-left: 2px; }
+                .kpl-yd2-hd { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1.2fr; background: #fff; padding: 10px 12px 2px; }
+                .kpl-yd2-hd span { font-size: 11px; color: #999; text-align: center; line-height: 1.3; }
+                .kpl-yd2-hd span:first-child { text-align: left; }
+                .kpl-yd2 .nm2 { font-size: 15px; font-weight: 700; color: #111; }
+                .kpl-yd2 .cd i { font-style: normal; background: #f59e0b; color: #fff; border-radius: 3px; padding: 0 4px; font-size: 10px; }
+                .kpl-yd2-links .ln.has-arr { display: flex; align-items: center; justify-content: space-between; }
+                .kpl-yd2-links .ln .ar { font-style: normal; color: #bbb; font-size: 16px; }
+                /* ---- 多次异动个股页（yd16 实拍：双 tab + 分组分节表） ---- */
+                .kpl-ydm-tabs { display: flex; background: #fff; border-bottom: 1px solid #f0f0f0; }
+                .kpl-ydm-tab { flex: 1; text-align: center; font-size: 16px; color: #333; padding: 13px 0 11px; cursor: pointer; position: relative; }
+                .kpl-ydm-tab.on { color: #e0333a; font-weight: 700; }
+                .kpl-ydm-tab.on::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; width: 56px; height: 3px; background: #e0333a; border-radius: 2px; }
+                .kpl-ydm { background: #fff; margin-top: 8px; }
+                .kpl-ydm .sec-t { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; color: #111; padding: 12px 12px 4px; }
+                .kpl-ydm .sec-t .bar { width: 4px; height: 16px; background: #3b82f6; border-radius: 2px; }
+                .kpl-ydm .hd { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; }
+                .kpl-ydm .hd span { font-size: 12px; color: #999; text-align: center; line-height: 1.3; }
+                .kpl-ydm .hd span.c1 { text-align: left; }
+                .kpl-ydm .row { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; align-items: center; padding: 10px 12px; border-bottom: 1px solid #f7f7f7; cursor: pointer; }
+                .kpl-ydm .row:last-child { border-bottom: none; }
+                .kpl-ydm .row .c1 b { display: block; font-size: 16px; color: #111; }
+                .kpl-ydm .row .c1 .cd { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #999; margin-top: 3px; }
+                .kpl-ydm .row .c1 .cd .dn { font-style: normal; background: #f59e0b; color: #fff; border-radius: 3px; padding: 0 4px; font-size: 10px; }
+                .kpl-ydm .row .c2, .kpl-ydm .row .c3, .kpl-ydm .row .c4 { text-align: center; line-height: 1.4; }
+                .kpl-ydm .row .c2 b, .kpl-ydm .row .c3 b, .kpl-ydm .row .c4 b { display: block; font-size: 17px; font-weight: 700; }
+                .kpl-ydm .row .c2 span, .kpl-ydm .row .c3 span, .kpl-ydm .row .c4 span { display: block; font-size: 12px; margin-top: 2px; }
+                .kpl-ydm .row b.up, .kpl-ydm .row span.up { color: #e0333a; }
+                .kpl-ydm .row b.down, .kpl-ydm .row span.down { color: #0aa858; }
+                /* ---- 异动提醒页（AbnormalAlertActivity 1:1） ---- */
+                .kpl-yda-q { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 1.5px solid rgba(255,255,255,.9); border-radius: 50%; color: #fff; font-size: 12px; margin-right: 8px; cursor: help; }
+                .kpl-yda-datenav { display: flex; align-items: center; justify-content: space-between; background: #fff; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; }
+                .kpl-yda-datenav .idx b { display: block; font-size: 17px; }
+                .kpl-yda-datenav .idx span { font-size: 11px; color: #999; }
+                .kpl-yda-datenav .nav { display: flex; align-items: center; gap: 8px; }
+                .kpl-yda-datenav .nav .ar { font-style: normal; color: #e0333a; font-size: 13px; cursor: pointer; padding: 4px 6px; }
+                .kpl-yda-datenav .nav .ar.dis { color: #ccc; cursor: default; }
+                .kpl-yda-datenav .nav .dt { font-size: 16px; color: #2f6bff; border: 1px solid #e5e5e5; border-radius: 6px; padding: 4px 12px; font-weight: 600; }
+                .kpl-yda-datenav .warn { display: flex; align-items: center; gap: 6px; font-size: 15px; color: #111; }
+                .kpl-yda-datenav .warn .tg { width: 40px; height: 22px; border-radius: 999px; background: #ddd; position: relative; cursor: pointer; transition: background .15s; }
+                .kpl-yda-datenav .warn .tg.on { background: #e0333a; }
+                .kpl-yda-datenav .warn .tg::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+                .kpl-yda-datenav .warn .tg.on::after { left: 20px; }
+                .kpl-yda-tabs { display: flex; background: #fff; border-bottom: 1px solid #f0f0f0; position: sticky; top: 0; z-index: 5; }
+                .kpl-yda-tab { flex: 1; text-align: center; font-size: 16px; color: #666; padding: 13px 0 11px; cursor: pointer; position: relative; }
+                .kpl-yda-tab.on { color: #111; font-weight: 700; }
+                .kpl-yda-tab.on::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); bottom: 0; width: 40px; height: 3px; background: #e0333a; border-radius: 2px; }
+                .kpl-yda-sec { background: #fff; margin-top: 8px; padding-bottom: 4px; }
+                .kpl-yda-sec .sec-t { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; color: #111; padding: 12px 12px 4px; }
+                .kpl-yda-sec .sec-t .bar { width: 4px; height: 16px; background: #3b82f6; border-radius: 2px; }
+                .kpl-yda-pills { display: flex; gap: 8px; padding: 8px 12px; }
+                .kpl-yda-pills .pill { font-size: 14px; color: #333; border: 1px solid #e5e5e5; border-radius: 6px; padding: 6px 18px; cursor: pointer; }
+                .kpl-yda-pills .pill.on { color: #e0333a; border-color: #e0333a; }
+                .kpl-yda-sec .hd { display: grid; grid-template-columns: 1.5fr 1fr 1.2fr 1.1fr; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; }
+                .kpl-yda-sec .hd span { font-size: 12px; color: #999; text-align: center; line-height: 1.3; }
+                .kpl-yda-sec .hd span.c1 { text-align: left; }
+                .kpl-yda-sec .hd span.dt2 { font-size: 11px; }
+                .kpl-yda-row { display: grid; grid-template-columns: 1.5fr 1fr 1.2fr 1.1fr; align-items: center; padding: 10px 12px; border-bottom: 1px solid #f7f7f7; cursor: pointer; }
+                .kpl-yda-row:last-child { border-bottom: none; }
+                .kpl-yda-row.trig { background: #fdf4f4; }
+                .kpl-yda-row .nm2 { font-size: 16px; font-weight: 700; color: #111; }
+                .kpl-yda-row .cd { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #999; margin-top: 3px; }
+                .kpl-yda-row .cd .otag { font-style: normal; background: #fff; color: #f59e0b; border: 1px solid #f59e0b; border-radius: 3px; padding: 0 4px; font-size: 10px; }
+                .kpl-yda-row .c.v { text-align: center; line-height: 1.4; }
+                .kpl-yda-row .c.v.dt b { font-size: 15px; }
+                .kpl-yda-row .c.v b { display: block; font-size: 16px; font-weight: 700; color: #111; }
+                .kpl-yda-row .c.v span { display: block; font-size: 11px; color: #999; margin-top: 2px; }
+                .kpl-yda-row .c.v b.org { color: #f59e0b; }
+                .kpl-yda-row .c.v b.red { color: #e0333a; }
+                .kpl-yda-row .c.v b.up, .kpl-yda-row .c.v span.up { color: #e0333a; }
+                .kpl-yda-row .c.v b.down, .kpl-yda-row .c.v span.down { color: #0aa858; }
+                .kpl-yda-row .c.v span.blue { color: #2f6bff; }
+                .kpl-yda-ov { background: #fff; margin-top: 10px; padding: 10px 12px 14px; }
+                .kpl-yda-energy { display: flex; align-items: center; gap: 10px; padding: 12px 0 4px; font-size: 15px; }
+                .kpl-yda-energy .lb { color: #999; }
+                .kpl-yda-energy b { color: #e0333a; font-weight: 700; }
+                .kpl-yda-zd { display: grid; grid-template-columns: repeat(4, 1fr); background: #f7f7f7; border-radius: 8px; padding: 10px 0; margin-top: 8px; }
+                .kpl-yda-zd .cell { text-align: center; }
+                .kpl-yda-zd .cell span { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+                .kpl-yda-zd .cell b { font-size: 17px; font-weight: 700; }
+                .kpl-yda-zd .cell b.up { color: #e0333a; }
+                .kpl-yda-zd .cell b.down { color: #0aa858; }
                 .kpl-tika2-child { padding: 6px 12px 6px 44px; font-size: 13px; color: #3b82f6; border-left: 2px solid var(--dsw-alias-border-l2); margin: 2px 0 2px 26px; cursor: pointer; }
                 .kpl-fx-cards { display: flex; gap: 8px; padding: 2px 8px 8px; }
                 .kpl-fx-card { flex: 1; background: #fff; border: 1px solid #f0f0f0; border-radius: 8px; padding: 12px 8px; text-align: center; cursor: pointer; }

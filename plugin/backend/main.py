@@ -31,6 +31,7 @@ from position_manager import position_manager
 from storage import storage
 from config import config
 import system_api
+import tdx_watch
 import kpl as kpl_api
 from sentiment_monitor import get_sentiment_monitor
 from sentiment_db import get_sentiment_db
@@ -512,6 +513,17 @@ async def refresh_holdings():
         "total_profit": total_value - total_cost,
         "total_profit_pct": ((total_value - total_cost) / total_cost * 100) if total_cost else 0,
     }
+
+
+# ============= 通达信自选分组 API =============
+@app.get("/api/tdx/watchlist")
+async def tdx_watchlist(
+    group: Optional[str] = Query(None, description="分组id（cfg短文件名），缺省返回全部"),
+    quotes: int = Query(0, description="1=附实时行情（pytdx，仅沪深市场码）"),
+):
+    """通达信PC客户端自选分组（T0002/blocknew 直读 = 最近一次云同步的分组状态）"""
+    return await asyncio.to_thread(
+        tdx_watch.get_watchlist, config.tdx_install_dir, group, bool(quotes))
 
 
 # ============= 预警 API =============
@@ -1752,8 +1764,33 @@ async def kpl_lhb_stock_detail(code: str, day: str = Query("")):
 
 @app.get("/api/kpl/yidong")
 async def kpl_yidong():
-    """严重异动提醒（App 同源 StockBidYiDong/GetPianLiZhi_Index，涨幅偏离值监控）"""
-    return await asyncio.to_thread(kpl_api.get_kpl().get_yidong_alert)
+    """首页严重异动提醒块（App 同源 GetPianLiZhi_W46「明日评估」节前5行 + 多次异动角标）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_yidong_home)
+
+
+@app.get("/api/kpl/yidong/severe")
+async def kpl_yidong_severe(day: str = "", status: int = -1, his_index: int = 0, his_st: int = 20):
+    """异动提醒页·严重异动 tab（今日=W46 明日/今日双节；day=历史 ZFPL_W46；
+    近期严重异动节=HisAll，status: -1全部/1触发严重异动/2被停牌）"""
+    def _run():
+        cli = kpl_api.get_kpl()
+        sev = cli.get_yidong_severe(day)
+        his = cli.get_yidong_severe_his(sev.get("day") or day, status, his_index, his_st)
+        sev["his"] = his
+        return sev
+    return await asyncio.to_thread(_run)
+
+
+@app.get("/api/kpl/yidong/hot")
+async def kpl_yidong_hot(day: str = ""):
+    """异动提醒页·热门股偏离值 tab（GetPianLiZhi_Hot/_His）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_yidong_hot, day)
+
+
+@app.get("/api/kpl/yidong/wxhj")
+async def kpl_yidong_wxhj(index: int = 0, st: int = 30):
+    """问询函件（GetYDTP_WXHJ_His，含 PDF 链接）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_yidong_wxhj, index, st)
 
 
 @app.get("/api/kpl/watchlist")
@@ -1881,14 +1918,14 @@ async def kpl_arttab():
 
 @app.get("/api/kpl/yidong/many")
 async def kpl_yidong_many():
-    """多次异动个股下钻（GetPianLiZhi_Many，App 同源）"""
-    return await asyncio.to_thread(kpl_api.get_yidong_many)
+    """多次异动个股下钻（GetPianLiZhi_Many，App 同源；board 1=沪深主板/2=创业科创板）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_yidong_many)
 
 
 @app.get("/api/kpl/yidong/zdjk")
-async def kpl_yidong_zdjk(his: bool = False):
-    """重点监控/监管期证券（GetYDTP_ZDJK_Today/His）"""
-    return await asyncio.to_thread(kpl_api.get_zdjk, his)
+async def kpl_yidong_zdjk(his: bool = False, day: str = ""):
+    """重点监控/监管期证券（GetYDTP_ZDJK_Today/His{Day}）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_zdjk, his, day)
 
 
 @app.get("/api/kpl/recommend_articles")

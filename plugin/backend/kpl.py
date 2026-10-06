@@ -900,10 +900,129 @@ class KplClient:
             })
         return out
 
+    # ============= 严重异动提醒家族（2026-10-05 全套逆向：newindex/deviation 包字节码 +
+    #               yd8/yd16/yd17/yd30~32 实拍锚定；响应样本 captures/yidong_family_20261005.json）=============
+    # 页面结构（App）：首页块「严重异动提醒 次日评估 更多›」→ 更多/重点监控 → AbnormalAlertActivity
+    # （异动提醒页：概览头+日期导航+预警开关 + 3 tab 严重异动/热门股偏离值/重点监控）；
+    # 「查看多次异动个股(N)」→ DeviationManyChangeActivity（沪深主板/创业科创板双 tab）。
+    # 接口族（c=StockBidYiDong）：
+    #   GetPianLiZhi_W46 @HQ 今日 / GetYDTPZFPL_W46 {Day} @HIS 历史 —— 严重异动 tab（明日/今日双节，行 20 字段）
+    #   GetYDTPZFPL_W46_HisAll {Day,IsZT,Index,st[,Status]} @HIS —— 近期严重异动节（分页历史）
+    #   GetPianLiZhi_Hot @HQ / GetPianLiZhi_Hot_His {Day} @HIS —— 热门股偏离值 tab
+    #   GetPianLiZhi_Index {ZDJK_Type:1} @HQ / _W32 {Day,IsZT} @HIS —— 严重异动提醒独立页（13 字段，[11]=预计触发价）
+    #   GetPianLiZhi_Many @HQ —— 多次异动个股页（行 11 字段，[2]=板块族 1主板/2创业科创）
+    #   GetYDTP_ZDJK_Today/His @HQ —— 重点监控 tab（监管期证券）
+    #   GetYDTP_WXHJ_His @HQ 无参 / {Index,st} @HIS —— 问询函件（PDF）
+
+    @staticmethod
+    def _yd_num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _parse_w46_row(cls, r) -> Dict[str, Any]:
+        """严重异动 tab 行（20 字段，语义经 yd30/yd31 实拍逐位锚定）：
+        [0]code [1]name [2]规则简称(10日100%/30日200%/...停牌核查) [3]当日涨幅(明日节=0基数)
+        [4]连板文字(3连板/昨日首板) [5]触发所需涨幅% [6]预计触发价 [7]当日偏离值空间%
+        [8]当日状态(触发严重异动/未触发异动) [9]次日偏离值空间% [10]概念串 [11]0 [12]规则简称2
+        [13]触发价2 [14]次日涨幅(仅历史行有值) [15][16]停牌标 [17]停牌日期 [18]异动日期 [19]现价"""
+        g = cls._yd_num
+        concept = str(r[10] or "")
+        return {
+            "code": str(r[0]), "name": r[1], "rule_short": r[2],
+            "day_pct": g(r[3]), "zt_text": r[4] or "",
+            "need": g(r[5]), "trigger_price": g(r[6]),
+            "space_today": g(r[7]), "status_today": r[8] or "",
+            "space_next": g(r[9]),
+            "concept": concept.split("、")[0] if concept else "",
+            "concept_full": concept,
+            "next_day_pct": g(r[14]) if len(r) > 14 else None,
+            "suspended": bool((len(r) > 16 and r[16]) or "停牌" in str(r[2])),
+            "action_date": (r[18] or "") if len(r) > 18 else "",
+            "price": g(r[19]) if len(r) > 19 else None,
+        }
+
+    def get_yidong_severe(self, day: str = "") -> Dict[str, Any]:
+        """严重异动 tab（App 异动提醒页同源）。今日=GetPianLiZhi_W46@HQ（List_Tormorow 明日评估节
+        + List_Today 今日盘面节，服务端拼写就是 Tormorow）；历史=GetYDTPZFPL_W46{Day}@HIS。"""
+        def _fetch():
+            if day:
+                d = self.call(HOST_HIS, "StockBidYiDong", "GetYDTPZFPL_W46", {"Day": day}, False)
+            else:
+                d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_W46", {}, False)
+            d = d or {}
+            ok = lambda rows: [self._parse_w46_row(r) for r in rows or []
+                               if isinstance(r, list) and len(r) > 19]
+            return {"day": d.get("Day") or day or "",
+                    "tomorrow": ok(d.get("List_Tormorow")),
+                    "today": ok(d.get("List_Today"))}
+        return self._cached_swr("yd_severe" if not day else f"yd_severe_{day}", 60, _fetch)
+
+    def get_yidong_severe_his(self, day: str, status: int = -1,
+                              index: int = 0, st: int = 20) -> Dict[str, Any]:
+        """近期严重异动（GetYDTPZFPL_W46_HisAll {Day,IsZT,Index,st[,Status]} @HIS）。
+        App 三档筛选 pill：全部=不传 Status(-1)、触发严重异动=1、被停牌=2（字节码 Status>=0 才带上）。"""
+        def _fetch():
+            params = {"Day": day, "IsZT": "0", "Index": str(index), "st": str(st)}
+            if status is not None and status >= 0:
+                params["Status"] = str(status)
+            d = self.call(HOST_HIS, "StockBidYiDong", "GetYDTPZFPL_W46_HisAll", params, False) or {}
+            rows = [self._parse_w46_row(r) for r in d.get("List_His") or []
+                    if isinstance(r, list) and len(r) > 19]
+            return {"day": d.get("Day") or day, "total": d.get("List_His_Total"), "list": rows}
+        key = f"yd_severehis_{day}_{status}_{index}_{st}"
+        return self._cached_swr(key, 300, _fetch)
+
+    def get_yidong_hot(self, day: str = "") -> Dict[str, Any]:
+        """热门股偏离值 tab（GetPianLiZhi_Hot@HQ 今日 / GetPianLiZhi_Hot_His{Day}@HIS）。
+        行 12 字段（yd32 实拍锚定）：[0]code [1]name [2]规则简称 [3]当日涨幅% [4]涨幅偏离值%
+        [5]连板文字 [6]当日触发异动偏离值空间% [7]?未展示 [8]概念串 [9]0 [10]异动统计日数("10日")
+        [11]标签("10日100%"/"同向异动")。默认按 [4] 降序（App 列头红箭头同序，服务端序即此序）。"""
+        def _fetch():
+            if day:
+                d = self.call(HOST_HIS, "StockBidYiDong", "GetPianLiZhi_Hot_His", {"Day": day}, False)
+            else:
+                d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Hot", {}, False)
+            d = d or {}
+            lst = []
+            for r in d.get("List") or []:
+                if not isinstance(r, list) or len(r) < 11:
+                    continue
+                concept = str(r[8] or "")
+                lst.append({
+                    "code": str(r[0]), "name": r[1], "rule_short": r[2],
+                    "pct": self._yd_num(r[3]), "dev": self._yd_num(r[4]),
+                    "zt_text": r[5] or "", "space": self._yd_num(r[6]),
+                    "concept": concept.split("、")[0] if concept else "",
+                    "days": r[10] or "", "tag": r[11] or "",
+                })
+            return {"day": d.get("Day") or day or "", "list": lst}
+        return self._cached_swr("yd_hot" if not day else f"yd_hot_{day}", 60, _fetch)
+
+    def get_yidong_wxhj(self, index: int = 0, st: int = 30) -> Dict[str, Any]:
+        """问询函件（GetYDTP_WXHJ_His：首页@HQ 无参 / 翻页@HIS {Index,st}）。
+        行: [code, name, 日期, PDF链接(appdata.longhuvip.com/SupPDFs/..), 类型]"""
+        if index > 0:
+            d = self.call(HOST_HIS, "StockBidYiDong", "GetYDTP_WXHJ_His",
+                          {"Index": str(index), "st": str(st)}, False)
+        else:
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetYDTP_WXHJ_His", {}, False)
+        d = d or {}
+        lst = []
+        for r in d.get("List") or []:
+            if not isinstance(r, list) or len(r) < 4:
+                continue
+            lst.append({"code": str(r[0]), "name": r[1], "date": r[2], "pdf": r[3]})
+        return {"list": lst}
+
     def get_yidong_many(self) -> Dict[str, Any]:
-        """多次异动个股（StockBidYiDong/GetPianLiZhi_Many @HQ，App"查看多次异动个股"下钻同源）。
-        List 条目: [code, name, kind, 分组名, ?, days, 3日内偏离值, 预计价格, 当前价格, ?, 0]。
-        App 按分组名分节（10日内2次异动个股/10日内偏离值临近100%/...）。"""
+        """多次异动个股（GetPianLiZhi_Many@HQ，App「查看多次异动个股」下钻同源，yd16 实拍锚定）。
+        行 11 字段: [0]code [1]name [2]板块族(1=沪深主板/2=创业科创板，与 00·60/30·68 前缀完全相关)
+        [3]分组名 [4]下一触发次数 [5]第N日 [6]3日内偏离值% [7]预计价格 [8]预计价格对应涨幅%
+        [9]当前价格 [10]?(恒0)。day_pct=现价实时涨幅（App 经 RefreshStockList_price 刷新，插件用
+        GetStockPanKou 并发 6 补齐，60s 缓存）。"""
         def _fetch():
             d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Many", {}, authed=False)
             lst = []
@@ -911,25 +1030,38 @@ class KplClient:
                 if not isinstance(row, list) or len(row) < 10:
                     continue
                 lst.append({
-                    "code": str(row[0]), "name": row[1], "group": row[3],
-                    "days": row[5], "dev3": row[6], "est_price": row[7],
-                    "price": row[8], "is_pay": row[10] if len(row) > 10 else 0,
+                    "code": str(row[0]), "name": row[1], "board": row[2],
+                    "group": row[3], "next_cnt": row[4], "day_n": row[5],
+                    "dev3": self._yd_num(row[6]), "est_price": self._yd_num(row[7]),
+                    "est_pct": self._yd_num(row[8]), "price": self._yd_num(row[9]),
                 })
-            # 保持服务端顺序（即 App 分组展示顺序），提取分组序列
             groups = []
             for it in lst:
                 if it["group"] not in groups:
                     groups.append(it["group"])
-            return {"day": (d or {}).get("Day"), "groups": groups, "list": lst}
+            out = {"day": (d or {}).get("Day"), "groups": groups, "list": lst}
+            # 现价下副行=当日实时涨幅（App 经 UserSelectStock/RefreshStockList_price 刷新，接口已 9999；
+            # 插件用 GetStockPanKou 并发 6 补齐，App chips 同机制）
+            try:
+                codes = list({it["code"] for it in lst})
+                rates = self._pankou_batch(codes)
+                for it in lst:
+                    it["day_pct"] = rates.get(it["code"])
+            except Exception:
+                pass
+            return out
         return self._cached_swr("yd_many", 60, _fetch)
 
-    def get_zdjk(self, his: bool = False) -> Dict[str, Any]:
-        """重点监控/监管期证券（StockBidYiDong/GetYDTP_ZDJK_Today/His @HQ）。
+    def get_zdjk(self, his: bool = False, day: str = "") -> Dict[str, Any]:
+        """重点监控/监管期证券（GetYDTP_ZDJK_Today@HQ / GetYDTP_ZDJK_His@HIS）。
         List 条目: [code, name, 监控开始日期, 监控结束日期, 2]。"""
-        key = "zdjk_his" if his else "zdjk_today"
+        key = f"zdjk_his_{day}" if his else "zdjk_today"
+
         def _fetch():
+            params = {"Day": day} if (his and day) else {}
             d = self.call(HOST_HQ, "StockBidYiDong",
-                          "GetYDTP_ZDJK_His" if his else "GetYDTP_ZDJK_Today", {}, authed=False)
+                          "GetYDTP_ZDJK_His" if his else "GetYDTP_ZDJK_Today",
+                          params, authed=False)
             lst = []
             for row in (d or {}).get("List") or []:
                 if not isinstance(row, list) or len(row) < 4:
@@ -939,44 +1071,21 @@ class KplClient:
             return lst
         return self._cached_swr(key, 120, _fetch)
 
-    def get_yidong_many(self) -> Dict[str, Any]:
-        """多次异动个股（StockBidYiDong/GetPianLiZhi_Many @HQ，App"查看多次异动个股"下钻同源）。
-        List 条目: [code, name, kind, 分组名, ?, days, 3日内偏离值, 预计价格, 当前价格, ?, 0]。
-        App 按分组名分节（10日内2次异动个股/10日内偏离值临近100%/...）。"""
+    def get_yidong_home(self) -> Dict[str, Any]:
+        """首页严重异动提醒块（App 同源=GetPianLiZhi_W46「明日评估」节前 5 行，
+        yd8 实拍锚定：列头 次日涨幅/触发异动涨幅股票价格/次日触发异动偏离值空间，
+        概念 tag=行[10]概念串首项；副标题固定文案「次日评估」）。
+        many_count=「查看多次异动个股(N)」角标（GetPianLiZhi_Many 去重代码数，即服务端 Index.Many_Num）。"""
         def _fetch():
-            d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Many", {}, authed=False)
-            lst = []
-            for row in (d or {}).get("List") or []:
-                if not isinstance(row, list) or len(row) < 10:
-                    continue
-                lst.append({
-                    "code": str(row[0]), "name": row[1], "group": row[3],
-                    "days": row[5], "dev3": row[6], "est_price": row[7],
-                    "price": row[8], "is_pay": row[10] if len(row) > 10 else 0,
-                })
-            groups = []
-            for it in lst:
-                if it["group"] not in groups:
-                    groups.append(it["group"])
-            return {"day": (d or {}).get("Day"), "groups": groups, "list": lst}
-        return self._cached_swr("yd_many", 60, _fetch)
-
-    def get_zdjk(self, his: bool = False) -> Dict[str, Any]:
-        """重点监控/监管期证券（StockBidYiDong/GetYDTP_ZDJK_Today/His @HQ）。
-        List 条目: [code, name, 监控开始日期, 监控结束日期, 2]。"""
-        key = "zdjk_his" if his else "zdjk_today"
-
-        def _fetch():
-            d = self.call(HOST_HQ, "StockBidYiDong",
-                          "GetYDTP_ZDJK_His" if his else "GetYDTP_ZDJK_Today", {}, authed=False)
-            lst = []
-            for row in (d or {}).get("List") or []:
-                if not isinstance(row, list) or len(row) < 4:
-                    continue
-                lst.append({"code": str(row[0]), "name": row[1],
-                            "start": row[2], "end": row[3]})
-            return lst
-        return self._cached_swr(key, 120, _fetch)
+            sev = self.get_yidong_severe()
+            rows = (sev or {}).get("tomorrow") or []
+            try:
+                many = self.get_yidong_many()
+                cnt = len({r["code"] for r in many.get("list") or []}) or None
+            except Exception:
+                cnt = None
+            return {"day": (sev or {}).get("day") or "", "items": rows[:5], "many_count": cnt}
+        return self._cached_swr("yd_home", 60, _fetch)
 
     def get_recommend_columns(self) -> List[Dict[str, Any]]:
         """推荐页栏目 tab（ForumsMsgColumn/GetList @ART，App 推荐页顶部分类）。
@@ -1117,8 +1226,8 @@ class KplClient:
         from trade_calendar import get_cal
         _trading = get_cal().is_trading_now()
         futs["poprank"] = pool.submit(self.get_pop_rank, 1 if _trading else 13, 1, 0, 5)
-        # 3.7 严重异动提醒（StockBidYiDong/GetPianLiZhi_Index，偏离值监控）
-        futs["yidong"] = pool.submit(self.get_yidong_alert)
+        # 3.7 严重异动提醒块（StockBidYiDong/GetPianLiZhi_W46「明日评估」节，App 首页块同源）
+        futs["yidong"] = pool.submit(self.get_yidong_home)
         # 3.8 风向标（socket 2103 订阅式，盘中实时；盘后走快照，会话死时跳过不阻塞）
         futs["daban"] = pool.submit(self.get_daban)
         # 3.9 市场风口（StockFengKData/GetFengKList，服务端含历史）
@@ -1200,11 +1309,12 @@ class KplClient:
         except Exception:
             out["poprank"] = []
             out["poprank_hot"] = []
-        # 严重异动提醒（偏离值监控列表）
+        # 严重异动提醒块（W46 明日评估节 + 多次异动角标）
         try:
             yd = futs["yidong"].result() or {}
             out["yidong"] = yd.get("items") or []
             out["yidong_day"] = yd.get("day")
+            out["yidong_many_count"] = yd.get("many_count")
         except Exception:
             out["yidong"] = []
         try:
@@ -1979,63 +2089,57 @@ class KplClient:
         而漏掉 13-17 才对不上；捕获循环/当日缓存机制已删除。"""
         return self.get_pop_rank(13, 1, 0, 50)
 
-    def get_yidong_alert(self) -> Dict[str, Any]:
-        """严重异动提醒（App 同源 StockBidYiDong/GetPianLiZhi_Index）：
-        涨幅偏离值监控列表——距触发交易所"严重异动"的进度。
-        List 项字段：[0]code [1]name [2]口径(1盘中/0收盘) [3]规则 [4]当日涨幅 [5]已交易天数
-        [6]累计偏离值% [7]触发提示 [8]触发所需涨幅 [11]现价 [12]状态。同股盘中/收盘两种口径取盘中。"""
-        key = "yidong"
-        hit = self._cache.get(key)
-        if hit and time.time() - hit["ts"] < 60:
-            return hit["data"]
-
+    def get_yidong_index(self, day: str = "", is_zt: int = 0) -> Dict[str, Any]:
+        """严重异动提醒独立页列表（GetPianLiZhi_Index {ZDJK_Type:1}@HQ 今日 /
+        GetPianLiZhi_Index_W32 {Day,IsZT}@HIS 历史，IsZT=1 只看已触发）。
+        行 13 字段：[0]code [1]name [2]口径(1盘中/0收盘) [3]规则全文 [4]当日涨幅 [5]已统计交易日
+        [6]累计偏离值% [7]触发提示 [8]触发所需涨幅 [9]? [10]日期 [11]预计触发价 [12]状态文字。
+        ⭐ [11] 是预计触发价不是现价（yd8 实拍：善水科技 [11]=36.29=列头「触发异动涨幅股票价格」，
+        现价 35.93=[11]/(1+need%)×(1+day_pct%)，旧版把它当现价再乘 (1+need%) 是错的）。"""
         def _fetch():
-            d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Index", {}, False)
+            if day:
+                d = self.call(HOST_HIS, "StockBidYiDong", "GetPianLiZhi_Index_W32",
+                              {"Day": day, "IsZT": str(is_zt)}, False)
+            else:
+                d = self.call(HOST_HQ, "StockBidYiDong", "GetPianLiZhi_Index",
+                              {"ZDJK_Type": "1"}, False)
+            d = d or {}
             items: Dict[str, Dict[str, Any]] = {}
             order: list = []
-            for row in (d or {}).get("List") or []:
+            for row in d.get("List") or []:
                 if not isinstance(row, list) or len(row) < 13:
                     continue
                 code = str(row[0])
                 it = {"code": code, "name": row[1], "kind": row[2], "rule": row[3],
-                      "day_pct": row[4], "days": row[5], "dev": row[6], "tip": row[7],
-                      "need": row[8], "price": row[11], "status": row[12]}
-                if code not in items:            # 保持首次出现顺序
+                      "day_pct": self._yd_num(row[4]), "days": row[5],
+                      "dev": self._yd_num(row[6]), "tip": row[7],
+                      "need": self._yd_num(row[8]),
+                      "trigger_price": self._yd_num(row[11]), "status": row[12]}
+                if code not in items:
                     items[code] = it
                     order.append(code)
-                elif it["kind"] == 1:            # 盘中口径覆盖收盘口径
+                elif it["kind"] == 1:
                     items[code] = it
             lst = [items[c] for c in order]
             for it in lst:
                 fixed = self._remember_name("stocks", it["code"], it.get("name") or "")
                 if fixed and not it.get("name"):
                     it["name"] = fixed
-                # App 派生字段：触发价=昨收×(1+触发涨幅)；当日偏离值空间=触发涨幅-当日涨幅
+                # 现价=触发价/(1+need%)×(1+day_pct%)（yd8 实拍善水科技 36.29→35.93、近岸蛋白 164.08→160.39）
                 try:
-                    day_pct = float(it.get("day_pct") or 0)
                     need = float(it.get("need") or 0)
-                    price = float(it.get("price") or 0)
-                    prev_close = price / (1 + day_pct / 100) if day_pct > -100 else 0
-                    it["prev_close"] = round(prev_close, 2)
-                    it["trigger_price"] = round(prev_close * (1 + need / 100), 2)
-                    it["space"] = round(need - day_pct, 2)
-                except Exception:
-                    pass
-                # 规则简称（"连续10个交易日内涨幅偏离值累计达到 100%" -> "10日100%"）
-                try:
-                    import re as _re
-                    m = _re.match(r"连续(\d+)个交易日.*?达到\s*([\d.]+)%", it.get("rule") or "")
-                    if m:
-                        it["rule_short"] = f"{m.group(1)}日{m.group(2)}%"
+                    trig = float(it.get("trigger_price") or 0)
+                    dp = float(it.get("day_pct") or 0)
+                    if trig and need > -100:
+                        it["price"] = round(trig / (1 + need / 100) * (1 + dp / 100), 2)
                 except Exception:
                     pass
             self._flush_names()
-            return {"day": (d or {}).get("Day"), "items": lst}
-
-        data = _fetch()
-        if data.get("items"):
-            self._cache[key] = {"data": data, "ts": time.time()}
-        return data
+            return {"day": d.get("Day"), "many_num": d.get("Many_Num"),
+                    "zdjk_list": d.get("ZDJKList") or [], "wxhj_list": d.get("WXHJList") or [],
+                    "items": lst}
+        key = "yd_index" if not day else f"yd_index_{day}_{is_zt}"
+        return self._cached_swr(key, 60, _fetch)
 
     # ============= 龙虎榜（App 底部导航·龙虎榜菜单同源 LongHuBang 控制器 @applhb.kaipanla.com）=============
     # 2026-09-30 全套实测锚定（App 截图逐位比对）：

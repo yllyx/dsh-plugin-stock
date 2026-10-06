@@ -299,13 +299,20 @@ git push origin main --tags
 - **关键实测定案**：①socket pb.Empty 族"盘后照推"**仅限当日盘后**（09-30 18:4x 实测），**跨天休市零推送**（10-03 marketfeed 全空实测）——行情 7 tab 休市全空的根因；②App 非交易日有数据=进程内存快照+HTTP HIS 域任意时刻可拉，非本地快照库。
 - **插件落地（非交易日与 App 同款展示）**：①**marketfeed 磁盘快照层**（kpl_marketfeed_cache.json，有推送 30s 防抖落盘 7 天有效；零推送时磁盘补槽 source=disk → HTTP 合成补槽 source=http）+**`_http_fallback_slots` 合成器**（复用 get_mood_page 缓存链，与 parse_cmd 输出严格同构：dabanhead←HisDaBanHeadInfo/zdstat+zddist←MarketZDTJ(±11 桶)/windvane←HisWeatherVane/weights←WeightPerformance/ladder←DailyLimitIndex/energy←MarketSCLN trends/overview←strong+cap/zdtip←ChangeStatistics.tip/ztseries←GetLiveNews 播报/north←NorthboundFundsB）——**休市实测 11/18 槽有数据，marketfeed 4.2s 返回**；radar/ztsitu/ztlist/stockrank/platerank/dabancount/dabanlist=订阅增量类无 HTTP 同源保持空（前端空态，盘中自动恢复）；②题材库列表磁盘层 kpl_tika_cache.json；③mood 磁盘缓存 v2 结构校验（zdtj.raw 键，旧缓存弃用重拉）。至此磁盘层覆盖：首页/人气榜/题材详情/题材列表/情绪页/行情订阅面/港股/名称库/交易日历。
 
-### ⭐ 首页严重异动提醒块+下钻页（2026-10-05 实拍对齐，App 首页"严重异动提醒"模块）
+### ⭐ 首页严重异动提醒块+下钻页（2026-10-05 全套 1:1 复刻完成：协议逆向+协议实测+三页落地，App newindex/deviation 包）
 
-- **App 实拍结构**（yd8/yd15，模拟器已重建并登录）：信息块=标题"严重异动提醒"+"次日评估"日期徽标+"更多 ›"；表格 4 列（股票名称+代码+规则简称橙标 | 次日涨幅% + 现价 | 触发异动股票价格%(橙) + 触发价 | 次日触发异动偏离空间% + 规则简称）；下方"查看多次异动个股（16）"行（橙字）+"重点监控"行（带 › 箭头）
-- **下钻 1：更多 → 高凌信息等个股详情**（列表行点击进个股，非独立列表页）
-- **下钻 2：查看多次异动个股（16）→ "多次异动个股"页**：双 tab（沪深主板/创业科创板）+ 分组（"10日内3次异动个股"/"10日内2次异动个股"）表格 4 列（名称+代码+第N板标 | 3日内偏离值% | 预计N次异动价格红两行 | 当前价格）
-- **下钻 3：重点监控 → "异动提醒"页（?帮助图标）**：顶部大盘概览（指数+全市场量能+涨跌家数+大盘直播）固定头 + 3 tab（严重异动/热门偏离值/重点监控）。重点监控 tab=「监管期证券」（名称/监控开始日期(9:00)/监控结束日期(15:00)）+「历史监管期证券」两组；严重异动/热门偏离值 tab=列表（未逐屏实拍，数据同 GetPianLiZhi_Index 系）
-- **插件现状**：信息块 kpl-yd2 已对齐 App 4 列结构；下钻三页待落地（多次异动个股页/异动提醒页重点监控 tab）
+- **页面关系（字节码+实拍定案）**：首页块「严重异动提醒 次日评估 更多›」→ **更多/重点监控都进 AbnormalAlertActivity（异动提醒页）**=概览头（指数卡4chip+全市场量能+涨跌家数+大盘直播）+日期导航（◀ 2026-09-30 📅 ▶）+预警开关 + **3 tab：严重异动/热门股偏离值/重点监控**（N8(pos)：SevereAbnormalFragment/HotStockDeviationFragment/MonitorListFragment）；「查看多次异动个股(N)」→ DeviationManyChangeActivity（沪深主板/创业科创板双 tab）。问询函件（InquiryListFragment）在独立 MonitorAndInquiryActivity（"重点监控与问询函件"），插件本轮未做页面只留了接口
+- **接口族（c=StockBidYiDong，全部实测 errcode=0，样本 captures/yidong_family_20261005.json，字节码=tools/out_deviation*.txt）**：
+  - **GetPianLiZhi_W46 @HQ**（严重异动 tab 今日）/ **GetYDTPZFPL_W46 {Day}@HIS**（历史）：**List_Tormorow（明日评估节，服务端拼写就是 Tormorow）+ List_Today**。行 20 字段：[0]code [1]name [2]规则简称(10日100%/30日200%/停牌核查) [3]当日涨幅(明日节=0) [4]连板文字(3连板/昨日首板) [5]触发所需涨幅% [6]预计触发价 [7]当日偏离空间% [8]当日状态(触发严重异动/未触发异动) [9]次日偏离空间% [10]概念串(、分隔) [18]异动日期 [19]现价。**首页块=List_Tormorow 前5行**（yd8 实拍：块列头=次日涨幅/触发异动涨幅股票价格/次日触发异动偏离值空间；块 tag 橙底白字、异动页 tag 橙描边）
+  - **GetYDTPZFPL_W46_HisAll {Day,IsZT,Index,st[,Status]}@HIS**：近期严重异动节（List_His+List_His_Total 分页）。实测 Status=1→total 35（过滤生效）但 2/3 无效——**App 三档筛选 pill（全部/触发严重异动/被停牌）插件用行内 status_today+suspended 前端本地过滤**
+  - **GetPianLiZhi_Hot @HQ / _Hot_His {Day}@HIS**：热门股偏离值 tab（16条，涨幅偏离值降序）。行 12 字段：[3]当日涨幅 [4]涨幅偏离值% [5]连板文字 [6]当日触发偏离空间% [8]概念串 [10]统计日数("10日") [11]标签(10日100%/同向异动)
+  - **GetPianLiZhi_Index {ZDJK_Type:1}@HQ / _W32 {Day,IsZT}@HIS**：严重异动提醒独立页（DeviationValueActivity，筛选"全部/只看严重异动"=IsZT）。行 13 字段 [11]=**预计触发价不是现价**（yd8：善水 [11]=36.29=列头触发价，现价 35.93=[11]/(1+need%)×(1+day_pct%)——**旧 get_yidong_alert 把 [11] 当现价再乘 (1+need%) 是错的，已删**）。响应带 **Many_Num=16**（多次异动角标数）+ **ZDJKList/WXHJList**（新增重点监控/问询个股）
+  - **GetPianLiZhi_Many @HQ**：多次异动页。行 11 字段：[2]**板块族 1=沪深主板/2=创业科创（双 tab 数据源，与 00·60/30·68 前缀完全相关）** [4]下一触发次数 [5]第N日 [6]3日内偏离值% [7]预计价格 [8]预计价格对应涨幅% [9]当前价格。**旧映射把 [8] 当现价是错的**（yd16 南华生物 est=13.52/estpct=8.86/px=12.42 逐位锚定）。现价下副行=当日实时涨幅（App 走 RefreshStockList_price 已 9999，插件 _pankou_batch 并发补齐）
+  - **GetYDTP_ZDJK_Today/His{Day}@HQ**：重点监控 tab ✓（天普股份 09-24~10-15 与 yd17 逐位）。**GetYDTP_WXHJ_His @HQ 无参/{Index,st}@HIS**：问询函件 [code,name,日期,PDF链接]（appdata.longhuvip.com/SupPDFs/）
+- **分组列头随组变（yd16）**：组名含"2次"→预计3次异动价格；含"停牌"→预计停牌价格；其余（3次/偏离值临近）→预计严重异动价格
+- **插件落地（kpl.py 方法组重写，main.py 端点）**：get_yidong_home（首页块=W46明日节+many_count）/get_yidong_severe(day)（明日+今日+his 三节合一）/get_yidong_severe_his/get_yidong_hot(day)/get_yidong_wxhj/get_yidong_many（修正映射+day_pct 补齐）/get_zdjk(his,day)/get_yidong_index(day,is_zt)。端点 /api/kpl/yidong（块）/yidong/severe?day=&status=&his_index=&his_st=/yidong/hot?day=/yidong/wxhj/yidong/many/yidong/zdjk。**旧 main.py 调 kpl_api.get_yidong_many（模块函数不存在）的坏端点已修**
+- **前端**：首页块恢复列头+「次日评估」蓝副标+更多›（go ydAlert）+角标 many_count；KplYidongManyPage 重写（双 tab kpl-ydm-*+第N日橙标+红字两行）；KplYdAlertPage 新页（kpl-yda-*：日期导航+预警本地开关+三 tab；**用户口径：App 异动提醒页无大盘直播条、无底部走势图卡——两块均已删**，概览尾块只留全市场量能+涨跌家数，日期导航左端小指数值=mkttrend）；路由 zdjk→异动提醒页(重点监控 tab)，两页均模块级 kplGuard
+- **待办（非阻塞）**：①异动页三张表头的排序箭头交互（数据已按 App 默认序：偏离空间降序）②DeviationValueActivity（严重异动提醒独立页）未做页面（更多不进这里）③问询函件页面④历史日期节假日空列表如实展示
 - **模拟器重建记录**：kpl_analysis 数据盘重置+普通模式重启成功；App 6.3.20.0 重装+账号密码登录成功（18607157160）；mitm CA 的 writable-system/remount 路线在该镜像上失败（overlayfs 不可用），tmpfs hot-mount 会搞挂 framework——**抓包路线不可用，协议实测走插件直发穷举**
 
 ### ⭐ 权威交易日历（2026-09-30 接入，深交所官方口径，法定节假日/调休全覆盖）
@@ -313,6 +320,13 @@ git push origin main --tags
 - **数据源**：`https://www.szse.cn/api/report/exchange/onepersistenthour/monthList?month=YYYY-MM`（深交所官方月历，`jybz=1` 交易日/`0` 休市；10-01~10-07 国庆全休、10-08 复市这类安排直接以交易所数据为准，**插件不做任何自己的节假日推断**）。模块 `backend/trade_calendar.py`（TradeCalendar：按月拉取+磁盘缓存 `trade_calendar.json` 7 天过期+过期后网络失败仍用旧缓存；完全无数据才退化周末规则）。`GET /api/trade-calendar` 返回今日状态摘要（is_trading_day/in_trading_hours/prev/next_trading_day）
 - **接入点（此前全部只排周末、国庆等法定假工作日会误判"盘中"）**：① main.py pytdx keepalive"仅交易时段重试"② kpl.py home feed 人气榜 盘中 type1/复盘 type13 切换 ③ 前端首页人气榜徽标 ④ KplPopRankPage 默认 tab ⑤ 最强风口盘前提示。前端：WatchlistPanel 启动拉日历存 `window.__kplTradeCal`（10 分钟刷新+重渲染 tick），helper `isTradingNowCal()/isTradingDayToday()`（无数据退化周末规则）；个股 tab 空态显示"下一交易日: 2026-10-08"具体日期
 - **遗留**：alert_engine 时间止损"5 个交易日"仍是自然日近似（TRADING_DAY_HOURS=24，与日历无关的独立简化，待后续接日历）
+
+### ⭐ 通达信集成（2026-10-05 自选分组直读已落地；实盘持仓=trade.dll 桥规划中，⛔ 等用户门禁材料）
+
+- **需求背景**：用户实际操盘用通达信手机 App，要在插件里看 TDX 的自选分组与券商真实持仓。可行性调研定案：①**协议级逆向直连券商交易服务器【永久排除】**——全网零公开先例（pytdx/TdxTradeServer 全是调官方 trade.dll 的封装，无任何纯协议实现）+ 上海 TradeX 刑事判例（破解通达信模块搭交易接口牟利，刑法285条3款，主犯获刑3年9个月）；②手机 App 云同步接口零公开先例（社区2018年尝试失败，核心通信在 .so），不走；③PC blocknew 文件直读=公开成熟格式，已落地
+- **✅ 自选分组直读（已上线）**：`backend/tdx_watch.py` 解析 `tdx_install_dir/T0002/blocknew/`。**格式（本机 D:\app\tdx 实测 observed）**：`*.blk`=纯文本行"市场号+6位代码"+CRLF（'0'=深 '1'=沪 '2'=北交；旧版 7 字节二进制记录做兜底）；`blocknew.cfg`=分组索引，**实测非严格 120B 定长**（"条件预警"组名出现在 592 非 600 边界——勿用定长切片！）→ 用 GBK 解码+\0 分词+「含中文组名+相邻ASCII短名」配对法（6 组全对）；`zxg.blk`=自选股固定置顶（不在 cfg 内）；cfg 未收录的 .blk（云同步板块产物，如 JYC 267只）按文件短名补充。名称兜底=打包 kpl_stock_names.json→market_pool。**数据口径=PC 最后一次云同步**（目录最新 blk mtime 显示为"云同步于"）：手机改组后需 PC 客户端登录同账号同步一次。端点 `GET /api/tdx/watchlist?group=&quotes=1`（目录签名缓存，86ms；quotes 走 pytdx 分块60只，仅沪深市场码）。前端第 10 主 Tab「🎯 通达信」（TdxTab+TDX_TAB_G=kplGuard 模块层守卫，chips 切组+行情表+点股开 K 线弹窗，CSS kpl-tdx-* 显式色值）。实测 34 组全解析（自选股23/交易标的13/重点监控25/趋势龙头137/情绪龙头48/准龙头39/条件预警57+云同步板块）
+- **⏸ 实盘持仓（Phase 3，trade.dll 本地桥）**：路线=ctypes 调通达信官方交易模块 trade.dll（pytdx TdxTradeApi 同款，社区十年标准做法）查资金/股份/成交（**只读，代码层面不实现下单**）。⛔ 门禁未过不工程化：①本机 D:\app\tdx **无 trade.dll**（只有 TJyaid.dll/etrade.xmb 等客户端自用加密模块）需另行获取（优先从官方含交易模块客户端提取）②需 32 位 Python sidecar（tdxw.exe 是 PE32、64 位后端不能进程内调）③需用户提供券商交易服务器 ip:port+营业部+资金账号+交易密码+通讯密码（PC 客户端通讯设置）+手动登录验证持仓数值。更稳备选=券商 miniQMT/xtquant（约10万门槛）或通达信 TdxQuant（需金融终端）。通过门禁后：backend/trade_bridge/（127.0.0.1 sidecar 只读三接口）+backend/tdx_trade.py+config 增 tdx_trade_* 五项+前端实盘持仓区（与记账持仓并列）+可选镜像进 alert_engine.holdings（带 source 标记）让现有 6 类预警吃真实持仓
+- **坑（本轮实录）**：①`python -c`/`py` 启动器在部分沙箱被判非只读拒绝——只读勘察拆成 ls/find/od/grep 组合；②tdx_watch 里函数名与缓存全局变量同名（`_packaged_names`）导致 `'function' object has no attribute 'get'`——改名 `_packaged_tbl`；③Git Bash /tmp 与 Windows Python 的 /tmp 不互通，curl -o 落盘后 python 读不到——用 cd /tmp 后相对路径
 
 ### 题材库（Socket 通道已独立化：内置 unidbg 签名器，无模拟器/无网关/无 frida，2026-09-23 全链路实测）
 
