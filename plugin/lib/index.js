@@ -582,11 +582,14 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
             throw new Error("agents 服务不可用（宿主版本不支持）");
         }
         const sessionId = `stock-analyze-${randomUUID()}`;
-        // ⚠️ 新版宿主 dsh-session 头校验只允许 origin 为 "subagent"（且该值要求父会话地址，
-        // 子代理专用）——独立会话必须完全不传 origin（宿主自身会话头即无 origin 字段）；
-        // meta.cwd 不传时宿主自动补 defaultCwd，会话才能出现在会话列表
+        // ⚠️ 新版宿主两个硬约束（2026-10-07 实锤）：
+        // ① header 校验只允许 origin='subagent'（且那是带父地址的子代理专用）→ 独立会话不传 origin；
+        // ② header.cwd 为空的会话历史查找必抛 session/not-found（会话落 .dsh/sessions/_no-cwd 分片，
+        //    UI 打不开）→ 必须显式传 meta.cwd（绝对路径）。取值=用户的股票工作区，可用 STOCK_ANALYZE_CWD 覆盖
+        const analyzeCwd = process.env.STOCK_ANALYZE_CWD || "E:\\deepseek-proj\\stock-all";
         const handle = await agents.create({
             sessionId,
+            meta: { cwd: analyzeCwd },
             agentOptions: {},
         });
         const title = `股票分析：${name || "未知"}(${code})`;
