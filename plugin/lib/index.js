@@ -621,6 +621,7 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
             kind: "prefix",
             path: "/stock-plugin/analyze",
             handler: async (req, res) => {
+                ctx.logger?.info?.("[dsh-plugin-stock] analyze handler v2（无 origin 创建）");
                 if (req.method === "OPTIONS") {
                     res.writeHead(204, { "access-control-allow-origin": "*" });
                     res.end();
