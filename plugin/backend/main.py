@@ -10,6 +10,7 @@ DSH 股票插件 - Python 后端主入口
 import asyncio
 import sys
 import time
+import threading
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
 
@@ -32,6 +33,7 @@ from storage import storage
 from config import config
 import system_api
 import tdx_watch
+import tdx_positions_reader
 import kpl as kpl_api
 from sentiment_monitor import get_sentiment_monitor
 from sentiment_db import get_sentiment_db
@@ -524,6 +526,33 @@ async def tdx_watchlist(
     """通达信PC客户端自选分组（T0002/blocknew 直读 = 最近一次云同步的分组状态）"""
     return await asyncio.to_thread(
         tdx_watch.get_watchlist, config.tdx_install_dir, group, bool(quotes))
+
+
+# 实盘持仓内存直读：frida attach + 全内存扫描 ~5-15s，加 TTL 缓存防重复扫
+_tdx_pos_cache = {"ts": 0.0, "data": None}
+_tdx_pos_lock = threading.Lock()
+
+
+@app.get("/api/tdx/positions")
+async def tdx_positions(
+    refresh: int = Query(0, description="1=跳过缓存强制重扫"),
+):
+    """通达信实盘持仓（tdxw.exe 进程内存结构体直读，172B/条；只读不交易）
+
+    前置：PC 通达信已登录交易（持仓页加载过一次即可）。tdxw 未运行时返回 ok=false。
+    """
+    now = time.time()
+    if not refresh and _tdx_pos_cache["data"] and now - _tdx_pos_cache["ts"] < 30:
+        return _tdx_pos_cache["data"]
+    with _tdx_pos_lock:
+        now = time.time()
+        if not refresh and _tdx_pos_cache["data"] and now - _tdx_pos_cache["ts"] < 30:
+            return _tdx_pos_cache["data"]
+        data = await asyncio.to_thread(tdx_positions_reader.get_positions, 45)
+        if data.get("ok"):
+            _tdx_pos_cache["ts"] = time.time()
+            _tdx_pos_cache["data"] = data
+        return data
 
 
 # ============= 预警 API =============

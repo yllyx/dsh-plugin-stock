@@ -6165,6 +6165,8 @@ window.__ModuleLoader__.load({
             const [data, setData] = useState(null);
             const [err, setErr] = useState(null);
             const [gid, setGid] = useState("");   // 交互 state 只存 id 字符串，派生对象 find 按值查
+            const [pos, setPos] = useState(null);      // 实盘持仓（tdxw.exe 内存直读）
+            const [posBusy, setPosBusy] = useState(false);
 
             const load = useCallback(async () => {
                 try {
@@ -6173,27 +6175,100 @@ window.__ModuleLoader__.load({
                     setErr(null);
                 } catch (e) { setErr(e.message); }
             }, []);
+            const loadPos = useCallback(async (refresh) => {
+                setPosBusy(true);
+                try {
+                    const d = await api("/api/tdx/positions?t=" + Date.now() + (refresh ? "&refresh=1" : ""));
+                    setPos(d);
+                } catch (e) { /* 保留旧数据，下轮轮询重试 */ }
+                setPosBusy(false);
+            }, []);
             usePolling(() => load(), 10000, []);
+            usePolling(() => loadPos(false), 60000, []);
 
-            if (!data) {
-                return React.createElement("div", { className: "kpl-tdx-empty" },
-                    err ? "⚠️ 加载失败：" + err + "（下轮轮询自动重试）" : "加载通达信分组…");
-            }
-            if (!data.available) {
-                return React.createElement("div", { className: "kpl-tdx-empty" },
-                    "⚠️ " + (data.message || "未找到通达信 blocknew 目录"),
+            const f2 = (v) => (v == null ? "--" : Number(v).toFixed(2));
+            const fi = (v) => (v == null ? "--" : Math.round(Number(v)).toLocaleString("en-US"));
+            const fSign = (v) => (v > 0 ? "+" : "") + Number(v).toFixed(2);
+            const pctCls = (v) => (v == null || v === 0 ? "" : v < 0 ? "down" : "up");
+
+            // ---- 实盘持仓区 ----
+            const plist = (pos && pos.positions) || [];
+            const sumMv = plist.reduce((a, p) => a + (p.mv || 0), 0);
+            const sumPl = plist.reduce((a, p) => a + (p.pl || 0), 0);
+            const sumCost = plist.reduce((a, p) => a + (p.cost || 0) * (p.qty || 0), 0);
+            const sumPct = sumCost > 0 ? (sumPl / sumCost) * 100 : 0;
+
+            let posBody;
+            if (!pos) {
+                posBody = React.createElement("div", { className: "kpl-tdx-empty" },
+                    posBusy ? "⏳ 正在扫描通达信进程内存（首次约 5~15 秒）…" : "实盘持仓待加载…");
+            } else if (!pos.ok) {
+                posBody = React.createElement("div", { className: "kpl-tdx-empty" },
+                    "⚠️ " + (pos.error === "tdxw not running"
+                        ? "未检测到通达信客户端——请打开 PC 通达信并完成交易登录（委托登录），打开过一次「持仓」页后回来点「刷新」"
+                        : "内存读取失败：" + (pos.error || "未知")),
                     React.createElement("div", { className: "kpl-tdx-note" },
-                        "本页直读 PC 通达信 T0002/blocknew 自选分组；请在 ⚙️ 系统 Tab 的配置里填写通达信安装目录（如 D:\\app\\tdx）"));
+                        "只读直读 tdxw.exe 进程内存中的持仓结构体，不写任何数据、不下单"));
+            } else {
+                posBody = React.createElement("div", { className: "kpl-tdx-rows" },
+                    React.createElement("div", { className: "kpl-tdx-posrow h" },
+                        React.createElement("span", { className: "nm" }, "名称"),
+                        React.createElement("span", { className: "cd" }, "代码"),
+                        React.createElement("span", { className: "v" }, "持仓"),
+                        React.createElement("span", { className: "v" }, "可用"),
+                        React.createElement("span", { className: "v" }, "成本"),
+                        React.createElement("span", { className: "v" }, "现价"),
+                        React.createElement("span", { className: "v" }, "市值"),
+                        React.createElement("span", { className: "v" }, "盈亏"),
+                        React.createElement("span", { className: "v" }, "盈亏%")),
+                    plist.map((p) => React.createElement("div", {
+                        key: p.code_digits,
+                        className: "kpl-tdx-posrow",
+                        onClick: () => openStock && openStock({ code: p.code_digits, name: p.name || p.code_digits }),
+                    },
+                        React.createElement("span", { className: "nm" }, p.name || "--"),
+                        React.createElement("span", { className: "cd" }, p.code_digits),
+                        React.createElement("span", { className: "v" }, fi(p.qty)),
+                        React.createElement("span", { className: "v dim" }, fi(p.avail)),
+                        React.createElement("span", { className: "v" }, f2(p.cost)),
+                        React.createElement("span", { className: "v" }, f2(p.price)),
+                        React.createElement("span", { className: "v" }, fi(p.mv)),
+                        React.createElement("span", { className: "v " + pctCls(p.pl) }, fSign(p.pl)),
+                        React.createElement("span", { className: "v b " + pctCls(p.plpct) }, fSign(p.plpct) + "%"))),
+                    React.createElement("div", { className: "kpl-tdx-posrow sum" },
+                        React.createElement("span", { className: "nm" }, "合计"),
+                        React.createElement("span", { className: "cd" }, plist.length + " 只"),
+                        React.createElement("span", { className: "v" }),
+                        React.createElement("span", { className: "v" }),
+                        React.createElement("span", { className: "v" }),
+                        React.createElement("span", { className: "v" }),
+                        React.createElement("span", { className: "v" }, fi(sumMv)),
+                        React.createElement("span", { className: "v " + pctCls(sumPl) }, fSign(sumPl)),
+                        React.createElement("span", { className: "v b " + pctCls(sumPct) }, fSign(sumPct) + "%")));
             }
-            const groups = data.groups || [];
+
+            // ---- 自选分组区 ----
+            const groups = data ? (data.groups || []) : [];
             const cur = groups.find((g) => g.id === gid) || groups[0] || null;
-            const rows = (cur && data.stocks && data.stocks[cur.id]) || [];
+            const rows = (cur && data && data.stocks && data.stocks[cur.id]) || [];
+
             return React.createElement("div", { className: "kpl-tdx-wrap" },
+                React.createElement("div", { className: "kpl-tdx-head" },
+                    React.createElement("b", null, "💼 实盘持仓"),
+                    React.createElement("span", { className: "kpl-tdx-head-r" },
+                        React.createElement("span", { className: "kpl-tdx-tag" }, "内存直读·只读"),
+                        pos && pos.ts ? React.createElement("span", { className: "sync" },
+                            " " + new Date(pos.ts * 1000).toLocaleTimeString("zh-CN", { hour12: false })) : null,
+                        React.createElement("button", {
+                            className: "kpl-tdx-btn", disabled: posBusy,
+                            onClick: () => loadPos(true),
+                        }, posBusy ? "扫描中…" : "刷新"))),
+                posBody,
                 React.createElement("div", { className: "kpl-tdx-head" },
                     React.createElement("b", null, "🎯 自选分组"),
                     React.createElement("span", { className: "sync" },
-                        data.synced_at ? "云同步于 " + data.synced_at : "")),
-                groups.length ? React.createElement("div", { className: "kpl-tdx-chips" },
+                        err ? "⚠️ " + err : (data && data.synced_at ? "云同步于 " + data.synced_at : ""))),
+                data && groups.length ? React.createElement("div", { className: "kpl-tdx-chips" },
                     groups.map((g) => React.createElement("span", {
                         key: g.id,
                         className: "kpl-tdx-chip" + (cur && cur.id === g.id ? " on" : ""),
@@ -6211,9 +6286,12 @@ window.__ModuleLoader__.load({
                         React.createElement("span", {
                             className: "pc " + (s.change_pct == null ? "" : s.change_pct < 0 ? "down" : s.change_pct > 0 ? "up" : ""),
                         }, s.change_pct != null ? (s.change_pct > 0 ? "+" : "") + Number(s.change_pct).toFixed(2) + "%" : "--"))))
-                    : React.createElement("div", { className: "kpl-tdx-empty" }, cur ? "分组「" + cur.name + "」为空" : "暂无分组"),
+                    : React.createElement("div", { className: "kpl-tdx-empty" },
+                        data && data.available === false
+                            ? "⚠️ " + (data.message || "未找到通达信 blocknew 目录") + "——请在 ⚙️ 系统 Tab 配置通达信安装目录（如 D:\\app\\tdx）"
+                            : (cur ? "分组「" + cur.name + "」为空" : "暂无分组")),
                 React.createElement("div", { className: "kpl-tdx-note" },
-                    "数据 = PC 通达信最后一次「云同步」的分组（T0002/blocknew 直读）。手机 App 改动分组后，在 PC 通达信登录同一账号同步一次即可更新；点击个股看K线；仅监控不交易。"));
+                    "自选 = PC 通达信 T0002/blocknew 直读（最后一次云同步状态，手机改组后在 PC 登录同步一次即更新）；持仓 = 已登录交易的 tdxw.exe 进程内存直读。点击个股看K线；仅监控不交易。"));
         }
 
         const TDX_TAB_G = kplGuard(TdxTab, "通达信");
@@ -8063,6 +8141,25 @@ window.__ModuleLoader__.load({
                 .kpl-tdx-row .pc.down { color: #0aa858; }
                 .kpl-tdx-note { font-size: 10px; color: #999; line-height: 1.6; }
                 .kpl-tdx-empty { padding: 24px 16px; text-align: center; color: #999; background: #fff; border: 1px dashed #e0e0e0; border-radius: 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+                .kpl-tdx-head-r { display: flex; align-items: center; gap: 8px; }
+                .kpl-tdx-tag { font-size: 10px; color: #e0333a; background: #fdeeee; border-radius: 8px; padding: 1px 8px; white-space: nowrap; }
+                .kpl-tdx-btn { font-size: 10px; color: #e0333a; background: #fff; border: 1px solid #f0c8ca; border-radius: 10px; padding: 2px 10px; cursor: pointer; }
+                .kpl-tdx-btn:hover { background: #fdeeee; }
+                .kpl-tdx-btn:disabled { color: #bbb; border-color: #eee; background: #fafafa; cursor: default; }
+                .kpl-tdx-posrow { display: grid; grid-template-columns: minmax(0, 1fr) 54px 62px 62px 54px 54px 74px 76px 62px; gap: 4px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; cursor: pointer; font-size: 12px; }
+                .kpl-tdx-posrow:last-child { border-bottom: none; }
+                .kpl-tdx-posrow:hover { background: #fafafa; }
+                .kpl-tdx-posrow .nm { font-weight: 600; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .kpl-tdx-posrow .cd { color: #999; font-size: 11px; font-variant-numeric: tabular-nums; }
+                .kpl-tdx-posrow .v { text-align: right; color: #111; font-variant-numeric: tabular-nums; white-space: nowrap; }
+                .kpl-tdx-posrow .v.dim { color: #999; font-size: 11px; }
+                .kpl-tdx-posrow .v.b { font-weight: 600; }
+                .kpl-tdx-posrow .v.up { color: #e0333a; }
+                .kpl-tdx-posrow .v.down { color: #0aa858; }
+                .kpl-tdx-posrow.h { cursor: default; background: #fafafa; border-bottom: 1px solid #f0f0f0; }
+                .kpl-tdx-posrow.h .nm, .kpl-tdx-posrow.h .cd, .kpl-tdx-posrow.h .v { color: #999; font-weight: 400; font-size: 10px; }
+                .kpl-tdx-posrow.sum { cursor: default; background: #fffdf5; }
+                .kpl-tdx-posrow.sum .nm { color: #333; }
                 /* ---- 严重异动提醒块补齐（yd8 实拍：列头行 + 蓝色「次日评估」+ 概念 tag 橙底白字） ---- */
                 .kpl-yd2-eval { font-size: 14px; color: #3b82f6; font-weight: 600; margin-left: 2px; }
                 .kpl-yd2-hd { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1.2fr; background: #fff; padding: 10px 12px 2px; }
