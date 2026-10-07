@@ -13,6 +13,9 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { BackendManager, resolveBackendDir } from "./backend-manager.js";
 
@@ -47,6 +50,24 @@ function backendStatusError() {
     if (b.state === "running") return null;
     const detail = b.lastError || "正在启动...";
     return `后端不可用（${b.state}）：${detail}`;
+}
+
+/**
+ * 读 DSH 全局默认模型（~/.dsh/settings.yaml 的 agent-default-model 段）。
+ * ⚠️ 新版宿主 persona 前缀引用 {{model}}/{{provider}}，变量取自 agent.options——
+ * 插件建会话不传 model 时 prompt 组装直接抛
+ * `prompt variable "{{model}}" has no value for this assembly (section "deployment:persona-prefix")`。
+ * UI 建的会话由宿主自动应用默认模型选择，插件必须自己带上（与 settings.yaml 保持同步，
+ * 用户在 DSH 设置里换默认模型后无需改插件）。
+ */
+function readDefaultModel() {
+    const fallback = { provider: "deepseek-ccnu", model: "dsv4-0731" };
+    try {
+        const raw = readFileSync(join(homedir(), ".dsh", "settings.yaml"), "utf8");
+        const m = raw.match(/agent-default-model:[\s\S]{0,200}?provider:\s*([\w.-]+)[\s\S]{0,80}?model:\s*([\w.-]+)/);
+        if (m) return { provider: m[1], model: m[2] };
+    } catch (e) { /* 文件不存在/格式变化 → fallback */ }
+    return fallback;
 }
 
 // 宽松 output schema：与 dsh-mnemon 的 JSON_OBJECT_OUTPUT 同款
@@ -582,15 +603,17 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
             throw new Error("agents 服务不可用（宿主版本不支持）");
         }
         const sessionId = `stock-analyze-${randomUUID()}`;
-        // ⚠️ 新版宿主两个硬约束（2026-10-07 实锤）：
-        // ① header 校验只允许 origin='subagent'（且那是带父地址的子代理专用）→ 独立会话不传 origin；
-        // ② header.cwd 为空的会话历史查找必抛 session/not-found（会话落 .dsh/sessions/_no-cwd 分片，
-        //    UI 打不开）→ 必须显式传 meta.cwd（绝对路径）。取值=用户的股票工作区，可用 STOCK_ANALYZE_CWD 覆盖
+        // ⚠️ 新版宿主三条硬约束（2026-10-07/08 实锤，详见 AGENTS.md）：
+        // ① 不传 origin（头校验只允许 subagent=带父地址的子代理专用）；
+        // ② 必传 meta.cwd（无 cwd 会话历史加载抛 session/not-found，落 _no-cwd 分片 UI 打不开）；
+        // ③ agentOptions 必带 provider/model（persona 前缀 {{model}} 取自 agent.options，
+        //    缺失时 prompt 组装抛 "has no value for this assembly"）
         const analyzeCwd = process.env.STOCK_ANALYZE_CWD || "E:\\deepseek-proj\\stock-all";
+        const dm = readDefaultModel();
         const handle = await agents.create({
             sessionId,
             meta: { cwd: analyzeCwd },
-            agentOptions: {},
+            agentOptions: { provider: dm.provider, model: dm.model },
         });
         const title = `股票分析：${name || "未知"}(${code})`;
         try {
