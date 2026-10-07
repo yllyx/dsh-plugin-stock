@@ -35,6 +35,44 @@ def _symbol(code: str, market: int) -> str:
     return ("sh" if market == 1 else "sz") + code
 
 
+def get_realtime_quotes(codes: List[tuple]) -> List[Dict]:
+    """腾讯批量实时行情（pytdx 灾备；盘后返回最近收盘数据，稳定且快）
+
+    codes=[(market, code), ...] 单次≤60 只。响应 GBK 文本：
+    v_sz000066="51~中国长城~000066~14.10~15.70~14.20~...~"; 字段 [3]=现价 [4]=昨收，
+    涨跌%=[32]（部分品种 [32] 缺失时用现价/昨收现算）。
+    """
+    client = _get_client()
+    url = "https://qt.gtimg.cn/q=" + ",".join(_symbol(cd, mk) for mk, cd in codes)
+    r = client.get(url)
+    r.raise_for_status()
+    out: List[Dict] = []
+    for line in r.content.decode("gbk", errors="ignore").splitlines():
+        if '="' not in line:
+            continue
+        sym, _, body = line.partition('="')
+        body = body.rstrip('";').strip()
+        f = body.split("~")
+        if len(f) < 5:
+            continue
+        code = f[2]
+        try:
+            price = float(f[3])
+            prev = float(f[4])
+        except ValueError:
+            continue
+        pct = None
+        if len(f) > 32:
+            try:
+                pct = float(f[32])
+            except ValueError:
+                pct = None
+        if pct is None and prev:
+            pct = round((price - prev) / prev * 100, 2)
+        out.append({"code": code, "price": price, "prev_close": prev, "change_pct": pct})
+    return out
+
+
 # 东财 klt → 腾讯周期
 _KLT_MAP = {101: "day", 102: "week", 103: "month"}
 _MKLT_MAP = {5: "m5", 15: "m15", 30: "m30", 60: "m60"}

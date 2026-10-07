@@ -272,39 +272,150 @@ def _parse_all(d: Path) -> Dict[str, Any]:
     return {"groups": groups, "stocks": stocks, "latest_mtime": latest_mtime}
 
 
-# ============= 行情附加 =============
+# ============= 行情附加（性能关键：这里曾是端点慢的唯一大头） =============
+# 旧实现每次请求对全部组 ~1700 只重拉 pytdx（28 个分块），盘后撞僵尸服务器
+# 扫描时单请求 10-50s。现架构：条目级缓存 20s + 只拉当前显示组 + 后台单飞
+# 刷新（请求恒快）+ 磁盘缓存秒显（重启/冷启动有上一 session 的收盘价）。
 
-def _attach_quotes(result: Dict[str, Any], gids: List[str]) -> None:
-    """给已选分组填 price/change_pct（pytdx 单次上限内分块；北交市场码不支持，保持空）"""
+_QUOTES_FRESH = 20.0        # 条目新鲜期（秒），过期由后台刷新
+_QUOTES_BUDGET = 8.0        # 单轮后台刷新的时间预算（秒），防 pytdx 僵尸扫描无限烧
+_QUOTES_DISK_SAVE = 300.0   # 磁盘落盘防抖（秒，高频写盘触发杀软扫描的老坑）
+
+_quotes_cache: Dict[str, Dict[str, Any]] = {}   # code -> {price, change_pct, ts}
+_quotes_lock = threading.Lock()
+_quotes_fetching = False
+_quotes_disk_loaded = False
+_quotes_last_save = 0.0
+
+
+def _quotes_disk_path() -> Path:
+    from storage import resolve_data_dir
+    return resolve_data_dir() / "kpl_tdx_quotes_cache.json"
+
+
+def _quotes_load_disk() -> None:
+    """磁盘缓存只做秒显兜底：条目 ts=0（视为过期，首次后台刷新即替换）"""
+    global _quotes_disk_loaded, _quotes_last_save
+    _quotes_disk_loaded = True
+    try:
+        raw = json.loads(_quotes_disk_path().read_text(encoding="utf-8"))
+        now = time.time()
+        n = 0
+        for cd, v in (raw.get("quotes") or {}).items():
+            if isinstance(v, dict) and "price" in v:
+                _quotes_cache[str(cd)] = {"price": v.get("price"), "change_pct": v.get("change_pct"), "ts": 0}
+                n += 1
+        _quotes_last_save = now
+        logger.info(f"tdx_watch 行情磁盘缓存载入 {n} 条")
+    except Exception:
+        pass
+
+
+def _quotes_save_disk() -> None:
+    global _quotes_last_save
+    try:
+        p = _quotes_disk_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"quotes": _quotes_cache}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+        _quotes_last_save = time.time()
+    except Exception as e:
+        logger.debug(f"tdx_watch 行情磁盘缓存写盘失败: {e}")
+
+
+def _apply_quotes(result: Dict[str, Any], gids: List[str], only_gid: Optional[str],
+                  need: List[Tuple[int, str]]) -> None:
+    """缓存行情回填到全部组（换组立即有显示，价格允许 ≤20s 旧）；
+    过期/缺失清单只对 only_gid（当前显示组）收集，后台只刷新看得见的组"""
+    now = time.time()
+    for gid in gids:
+        for s in result["stocks"].get(gid, []):
+            e = _quotes_cache.get(s["code"])
+            if e is not None:
+                s["price"] = e.get("price")
+                s["change_pct"] = e.get("change_pct")
+            if only_gid and gid != only_gid:
+                continue
+            if s["market"] in (0, 1) and (e is None or now - e.get("ts", 0) >= _QUOTES_FRESH):
+                need.append((s["market"], s["code"]))
+
+
+def _quotes_bg_fetch(need: List[Tuple[int, str]]) -> None:
+    """后台单飞：分块拉取过期/缺失行情 + 到期落盘。
+    双源：腾讯批量（qt.gtimg，0.2s/块、盘后稳定）优先，空/失败回退 pytdx；
+    双源都不通才停（别把预算烧在 pytdx 僵尸服务器扫描上）。"""
+    global _quotes_fetching
     from data_source import data_source
-    pairs: List[Tuple[int, str]] = []
-    seen = set()
-    for gid in gids:
-        for s in result["stocks"].get(gid, []):
-            if s["market"] in (0, 1) and s["code"] not in seen:
-                seen.add(s["code"])
-                pairs.append((s["market"], s["code"]))
-    quotes: Dict[str, Dict[str, Any]] = {}
-    for i in range(0, len(pairs), 60):
-        try:
-            for q in data_source.get_security_quotes(pairs[i:i + 60]):
-                if q.get("code"):
-                    quotes[q["code"]] = q
-        except Exception as e:
-            logger.debug(f"tdx_watch 批量行情失败: {e}")
-    for gid in gids:
-        for s in result["stocks"].get(gid, []):
-            q = quotes.get(s["code"])
-            if q:
-                s["price"] = q.get("price") or None
-                s["change_pct"] = q.get("change_pct")
+    from tencent import get_realtime_quotes as _tx_quotes
+    try:
+        t0 = time.time()
+        got_any = False
+        for i in range(0, len(need), 60):
+            if time.time() - t0 > _QUOTES_BUDGET:
+                break
+            chunk = need[i:i + 60]
+            got: Dict[str, Dict[str, Any]] = {}
+            try:
+                for q in _tx_quotes(chunk):
+                    if q.get("code"):
+                        got[q["code"]] = q
+            except Exception as e:
+                logger.debug(f"tdx_watch 腾讯批量行情失败: {e}")
+            if not got:
+                try:
+                    for q in data_source.get_security_quotes(chunk):
+                        if q.get("code") and q.get("price") is not None:
+                            got[q["code"]] = q
+                except Exception as e:
+                    logger.debug(f"tdx_watch pytdx 批量行情失败: {e}")
+            if not got:
+                break
+            got_any = True
+            now = time.time()
+            for cd, q in got.items():
+                _quotes_cache[cd] = {"price": q.get("price"), "change_pct": q.get("change_pct"), "ts": now}
+        with _quotes_lock:
+            save_due = got_any and time.time() - _quotes_last_save > _QUOTES_DISK_SAVE
+        if save_due:
+            with _quotes_lock:
+                if time.time() - _quotes_last_save > _QUOTES_DISK_SAVE:
+                    _quotes_save_disk()
+    finally:
+        with _quotes_lock:
+            _quotes_fetching = False
+
+
+def _attach_quotes(result: Dict[str, Any], gids: List[str],
+                   only_gid: Optional[str] = None) -> None:
+    """给分组填 price/change_pct。恒快：先用缓存（含磁盘兜底）回填立即返回，
+    过期条目交后台单飞线程刷新（请求不等 pytdx）。only_gid=只刷新当前显示组。
+    北交（market=2）无 pytdx 行情，保持空。"""
+    global _quotes_fetching
+    with _quotes_lock:
+        if not _quotes_disk_loaded and not _quotes_cache:
+            _quotes_load_disk()
+    need: List[Tuple[int, str]] = []
+    with _quotes_lock:
+        _apply_quotes(result, gids, only_gid, need)
+    if not need:
+        return
+    with _quotes_lock:
+        if _quotes_fetching:
+            return  # 上一轮还在拉：本轮先返回缓存值，下轮轮询收新
+        _quotes_fetching = True
+    threading.Thread(target=_quotes_bg_fetch, args=(need,), daemon=True).start()
 
 
 # ============= 对外入口 =============
 
 def get_watchlist(install_dir: Optional[str] = None, group: Optional[str] = None,
-                  with_quotes: bool = False) -> Dict[str, Any]:
-    """自选分组全量：{available, dir, synced_at, groups:[{id,name,count}], stocks:{gid:[...]}}"""
+                  with_quotes: bool = False, quotes_group: Optional[str] = None) -> Dict[str, Any]:
+    """自选分组全量：{available, dir, synced_at, groups:[{id,name,count}], stocks:{gid:[...]}}
+
+    quotes_group：只对该组做行情刷新（前端传当前显示组，未传=全部——全量仅首屏兜底）。
+    行情走条目缓存+后台刷新，本函数任何路径都不阻塞在 pytdx 上。
+    """
     d = resolve_blocknew_dir(install_dir or config.tdx_install_dir)
     if not d:
         return {"available": False,
@@ -335,5 +446,5 @@ def get_watchlist(install_dir: Optional[str] = None, group: Optional[str] = None
         "stocks": {g["id"]: list(parsed["stocks"].get(g["id"], [])) for g in wanted},
     }
     if with_quotes:
-        _attach_quotes(result, [g["id"] for g in wanted])
+        _attach_quotes(result, [g["id"] for g in wanted], quotes_group or None)
     return result

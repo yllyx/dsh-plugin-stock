@@ -522,10 +522,11 @@ async def refresh_holdings():
 async def tdx_watchlist(
     group: Optional[str] = Query(None, description="分组id（cfg短文件名），缺省返回全部"),
     quotes: int = Query(0, description="1=附实时行情（pytdx，仅沪深市场码）"),
+    quotes_group: Optional[str] = Query(None, description="只刷新该组的行情（前端传当前显示组）"),
 ):
     """通达信PC客户端自选分组（T0002/blocknew 直读 = 最近一次云同步的分组状态）"""
     return await asyncio.to_thread(
-        tdx_watch.get_watchlist, config.tdx_install_dir, group, bool(quotes))
+        tdx_watch.get_watchlist, config.tdx_install_dir, group, bool(quotes), quotes_group)
 
 
 class TdxAliasRequest(BaseModel):
@@ -549,31 +550,97 @@ async def tdx_group_alias_set(req: TdxAliasRequest):
         raise HTTPException(400, str(e))
 
 
-# 实盘持仓内存直读：frida attach + 全内存扫描 ~5-15s，加 TTL 缓存防重复扫
+# 实盘持仓内存直读：frida attach + 全内存扫描 ~5-15s，加缓存防重复扫。
+# 秒显架构：内存 TTL 60s → 磁盘缓存（上次成功扫描，标 stale+后台重扫）→ 首次才阻塞扫描
 _tdx_pos_cache = {"ts": 0.0, "data": None}
 _tdx_pos_lock = threading.Lock()
+_tdx_pos_bg = False
+
+
+def _pos_disk_path():
+    from pathlib import Path
+    from storage import resolve_data_dir
+    return Path(resolve_data_dir()) / "kpl_tdx_positions_cache.json"
+
+
+def _pos_load_disk():
+    try:
+        import json as _json
+        d = _json.loads(_pos_disk_path().read_text(encoding="utf-8"))
+        if isinstance(d, dict) and d.get("ok"):
+            return d
+    except Exception:
+        pass
+    return None
+
+
+def _pos_save_disk(data):
+    try:
+        import json as _json
+        p = _pos_disk_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+    except Exception:
+        pass
 
 
 @app.get("/api/tdx/positions")
 async def tdx_positions(
-    refresh: int = Query(0, description="1=跳过缓存强制重扫"),
+    refresh: int = Query(0, description="1=跳过缓存强制重扫（阻塞）"),
 ):
     """通达信实盘持仓（tdxw.exe 进程内存结构体直读，172B/条；只读不交易）
 
     前置：PC 通达信已登录交易（持仓页加载过一次即可）。tdxw 未运行时返回 ok=false。
+    常规调用恒快：内存缓存(60s) → 磁盘缓存(标 stale，后台重扫) → 都没有才阻塞扫描。
     """
+    global _tdx_pos_bg
     now = time.time()
-    if not refresh and _tdx_pos_cache["data"] and now - _tdx_pos_cache["ts"] < 30:
-        return _tdx_pos_cache["data"]
     with _tdx_pos_lock:
-        now = time.time()
-        if not refresh and _tdx_pos_cache["data"] and now - _tdx_pos_cache["ts"] < 30:
+        if not refresh and _tdx_pos_cache["data"] and now - _tdx_pos_cache["ts"] < 60:
             return _tdx_pos_cache["data"]
+    if refresh:
         data = await asyncio.to_thread(tdx_positions_reader.get_positions, 45)
         if data.get("ok"):
+            with _tdx_pos_lock:
+                _tdx_pos_cache["ts"] = time.time()
+                _tdx_pos_cache["data"] = data
+            await asyncio.to_thread(_pos_save_disk, data)
+        return data
+    disk = await asyncio.to_thread(_pos_load_disk)
+    with _tdx_pos_lock:
+        kick = not _tdx_pos_bg
+        if kick:
+            _tdx_pos_bg = True
+    if disk:
+        if kick:
+            def _bg():
+                global _tdx_pos_bg
+                try:
+                    d2 = tdx_positions_reader.get_positions(45)
+                    if d2.get("ok"):
+                        with _tdx_pos_lock:
+                            _tdx_pos_cache["ts"] = time.time()
+                            _tdx_pos_cache["data"] = d2
+                        _pos_save_disk(d2)
+                except Exception:
+                    pass
+                finally:
+                    with _tdx_pos_lock:
+                        _tdx_pos_bg = False
+            threading.Thread(target=_bg, daemon=True).start()
+        out = dict(disk)
+        out["stale"] = True
+        return out
+    # 冷启动首次（无任何缓存）：阻塞扫一次，之后永远走缓存路径
+    data = await asyncio.to_thread(tdx_positions_reader.get_positions, 45)
+    if data.get("ok"):
+        with _tdx_pos_lock:
             _tdx_pos_cache["ts"] = time.time()
             _tdx_pos_cache["data"] = data
-        return data
+        await asyncio.to_thread(_pos_save_disk, data)
+    return data
 
 
 # ============= 预警 API =============

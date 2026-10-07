@@ -6162,19 +6162,24 @@ window.__ModuleLoader__.load({
         /* ---- 通达信 Tab：PC 客户端自选分组直读（T0002/blocknew = 云同步状态）+ 实盘持仓（二期 trade.dll 桥） ---- */
 
         function TdxTab({ openStock }) {
-            const [data, setData] = useState(null);
+            const W_LS = "kpl_tdx_watch_v1", P_LS = "kpl_tdx_pos_v1";
+            const lsJson = (k) => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch { return null; } };
+            const [data, setData] = useState(() => lsJson(W_LS));   // localStorage 秒显（SWR：旧数据立即显示，网络回来后覆盖）
             const [err, setErr] = useState(null);
             const [gid, setGid] = useState("");   // 交互 state 只存 id 字符串，派生对象 find 按值查
-            const [pos, setPos] = useState(null);      // 实盘持仓（tdxw.exe 内存直读）
+            const [pos, setPos] = useState(() => lsJson(P_LS));        // 实盘持仓（tdxw.exe 内存直读）
             const [posBusy, setPosBusy] = useState(false);
             const [aliasVal, setAliasVal] = useState("");
             const [aliasMsg, setAliasMsg] = useState("");
+            const gidRef = useRef(gid); gidRef.current = gid;   // 闭包读最新 gid（切组立即按新组刷行情）
 
             const load = useCallback(async () => {
                 try {
-                    const d = await api(`/api/tdx/watchlist?quotes=1&t=${Date.now()}`);
+                    const qg = gidRef.current || "zxg";   // 只刷当前显示组（后端只对该组收集行情，其余组用缓存价）
+                    const d = await api(`/api/tdx/watchlist?quotes=1&quotes_group=${encodeURIComponent(qg)}&t=${Date.now()}`);
                     setData(d);
                     setErr(null);
+                    try { localStorage.setItem(W_LS, JSON.stringify(d)); } catch { }
                 } catch (e) { setErr(e.message); }
             }, []);
             const loadPos = useCallback(async (refresh) => {
@@ -6182,11 +6187,13 @@ window.__ModuleLoader__.load({
                 try {
                     const d = await api("/api/tdx/positions?t=" + Date.now() + (refresh ? "&refresh=1" : ""));
                     setPos(d);
+                    try { localStorage.setItem(P_LS, JSON.stringify(d)); } catch { }
                 } catch (e) { /* 保留旧数据，下轮轮询重试 */ }
                 setPosBusy(false);
             }, []);
             usePolling(() => load(), 10000, []);
             usePolling(() => loadPos(false), 60000, []);
+            useEffect(() => { load(); }, [gid]);   // 切组立即拉一次（行情+该组股票秒级到位，不等下轮轮询）
 
             const f2 = (v) => (v == null ? "--" : Number(v).toFixed(2));
             const fi = (v) => (v == null ? "--" : Math.round(Number(v)).toLocaleString("en-US"));
@@ -6272,7 +6279,7 @@ window.__ModuleLoader__.load({
                     React.createElement("span", { className: "kpl-tdx-head-r" },
                         React.createElement("span", { className: "kpl-tdx-tag" }, "内存直读·只读"),
                         pos && pos.ts ? React.createElement("span", { className: "sync" },
-                            " " + new Date(pos.ts * 1000).toLocaleTimeString("zh-CN", { hour12: false })) : null,
+                            " " + new Date(pos.ts * 1000).toLocaleTimeString("zh-CN", { hour12: false }) + (pos.stale ? " (缓存·后台更新中)" : "")) : null,
                         React.createElement("button", {
                             className: "kpl-tdx-btn", disabled: posBusy,
                             onClick: () => loadPos(true),
