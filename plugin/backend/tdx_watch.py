@@ -118,14 +118,31 @@ def parse_blk(path: Path) -> List[Tuple[int, str]]:
 
 
 def parse_cfg(path: Path) -> List[Dict[str, str]]:
-    """blocknew.cfg → [{name, short}]；GBK \\0 分词配对法（适配实测的非定长记录）"""
+    """blocknew.cfg → [{name, short}]
+
+    主路径：严格 120B 定长记录（2026-10-07 实锤：云同步新版 1560B=13 条、
+    旧版 720B=6 条，均为 120 整数倍；布局 [0..49]=中文名GBK [50..99]=ASCII短码
+    其余 \0。旧笔记"非定长/592 边界"是 od 行偏移误读，已纠正）。
+    兜底：长度非 120 整数倍时退回 GBK \\0 分词配对法（兼容其它历史版本）。
+    """
     try:
         raw = path.read_bytes()
     except OSError:
         return []
+    if raw and len(raw) % 120 == 0:
+        groups: List[Dict[str, str]] = []
+        for i in range(0, len(raw), 120):
+            rec = raw[i:i + 120]
+            cn = rec[0:50].split(b"\x00")[0].strip()
+            sn = rec[50:100].split(b"\x00")[0].strip()
+            if not sn:
+                continue
+            name = cn.decode("gbk", errors="replace").strip() or sn.decode("ascii", errors="replace")
+            groups.append({"name": name, "short": sn.decode("ascii", errors="replace")})
+        return groups
     text = raw.decode("gbk", errors="ignore")
     tokens = [t.strip() for t in text.split("\x00") if t.strip()]
-    groups: List[Dict[str, str]] = []
+    groups = []
     i = 0
     while i < len(tokens):
         if (_CFG_HAS_CJK.search(tokens[i]) and i + 1 < len(tokens)
@@ -135,6 +152,62 @@ def parse_cfg(path: Path) -> List[Dict[str, str]]:
         else:
             i += 1
     return groups
+
+
+# ============= 分组别名（外部导入板块无中文名，只能靠用户在插件里起名） =============
+# 根因（2026-10-07 定案）：2025 年各批次 .blk 是外部工具批量导入的板块，从未在
+# blocknew.cfg 注册中文名，通达信客户端本身也只显示短码；云同步 cfg 又只含
+# 云端跟踪的 13+1 个板块。磁盘上不存在这些组的原名 → 本地别名层是唯一正解。
+
+_ALIAS_SEED = {
+    # gs_bak/20261007_blocknew.cfg 旧索引实锤的历史名（云同步后 cfg 换版丢失）
+    "QXLT": "情绪龙头",
+    "ZLT": "准龙头",
+}
+
+
+def aliases_file() -> Path:
+    from storage import resolve_data_dir
+    return resolve_data_dir() / "tdx_group_aliases.json"
+
+
+def load_aliases() -> Dict[str, str]:
+    """别名表：{组短名: 显示名}；首次调用用历史实锼名播种"""
+    p = aliases_file()
+    if not p.exists():
+        try:
+            save_aliases(dict(_ALIAS_SEED))
+        except Exception:
+            return dict(_ALIAS_SEED)
+        return dict(_ALIAS_SEED)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception:
+        return dict(_ALIAS_SEED)
+
+
+def save_aliases(aliases: Dict[str, str]) -> None:
+    p = aliases_file()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(aliases, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(p)
+
+
+def set_alias(gid: str, name: str) -> Dict[str, str]:
+    """设置/清除（name 空串=清除）一个别名，返回最新全表"""
+    aliases = load_aliases()
+    gid = (gid or "").strip()
+    name = (name or "").strip()
+    if not gid:
+        raise ValueError("gid required")
+    if name:
+        aliases[gid] = name
+    else:
+        aliases.pop(gid, None)
+    save_aliases(aliases)
+    return aliases
 
 
 # ============= 聚合 =============
@@ -247,7 +320,12 @@ def get_watchlist(install_dir: Optional[str] = None, group: Optional[str] = None
             _cache["sig"] = sig
             _cache["data"] = parsed
 
-    wanted = [g for g in parsed["groups"] if not group or g["id"] == group]
+    wanted = [dict(g) for g in parsed["groups"] if not group or g["id"] == group]
+    aliases = load_aliases()
+    for g in wanted:
+        g["alias"] = aliases.get(g["id"], "")
+        if g["alias"]:
+            g["name"] = g["alias"]
     result: Dict[str, Any] = {
         "available": True,
         "dir": str(d),

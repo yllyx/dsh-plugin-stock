@@ -528,6 +528,27 @@ async def tdx_watchlist(
         tdx_watch.get_watchlist, config.tdx_install_dir, group, bool(quotes))
 
 
+class TdxAliasRequest(BaseModel):
+    id: str
+    name: str = ""
+
+
+@app.get("/api/tdx/group-alias")
+async def tdx_group_alias_get():
+    """分组别名表（外部导入板块无中文名，用户在插件内起名）"""
+    return {"aliases": await asyncio.to_thread(tdx_watch.load_aliases)}
+
+
+@app.post("/api/tdx/group-alias")
+async def tdx_group_alias_set(req: TdxAliasRequest):
+    """设置一个分组别名（name 空串=清除恢复默认），返回最新全表"""
+    try:
+        aliases = await asyncio.to_thread(tdx_watch.set_alias, req.id, req.name)
+        return {"ok": True, "aliases": aliases}
+    except Exception as e:
+        raise HTTPException(400, str(e))
+
+
 # 实盘持仓内存直读：frida attach + 全内存扫描 ~5-15s，加 TTL 缓存防重复扫
 _tdx_pos_cache = {"ts": 0.0, "data": None}
 _tdx_pos_lock = threading.Lock()

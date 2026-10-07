@@ -6167,6 +6167,8 @@ window.__ModuleLoader__.load({
             const [gid, setGid] = useState("");   // 交互 state 只存 id 字符串，派生对象 find 按值查
             const [pos, setPos] = useState(null);      // 实盘持仓（tdxw.exe 内存直读）
             const [posBusy, setPosBusy] = useState(false);
+            const [aliasVal, setAliasVal] = useState("");
+            const [aliasMsg, setAliasMsg] = useState("");
 
             const load = useCallback(async () => {
                 try {
@@ -6252,6 +6254,18 @@ window.__ModuleLoader__.load({
             const cur = groups.find((g) => g.id === gid) || groups[0] || null;
             const rows = (cur && data && data.stocks && data.stocks[cur.id]) || [];
 
+            useEffect(() => { setAliasVal(cur ? (cur.alias || "") : ""); setAliasMsg(""); },
+                [cur && cur.id, cur && cur.alias]);
+            const saveAlias = async (clear) => {
+                if (!cur) return;
+                const nm = clear ? "" : aliasVal.trim();
+                try {
+                    await post("/api/tdx/group-alias", { id: cur.id, name: nm });
+                    setAliasMsg(nm ? "已保存：" + nm : "已恢复默认");
+                    await load();
+                } catch (e) { setAliasMsg("保存失败：" + e.message); }
+            };
+
             return React.createElement("div", { className: "kpl-tdx-wrap" },
                 React.createElement("div", { className: "kpl-tdx-head" },
                     React.createElement("b", null, "💼 实盘持仓"),
@@ -6274,6 +6288,17 @@ window.__ModuleLoader__.load({
                         className: "kpl-tdx-chip" + (cur && cur.id === g.id ? " on" : ""),
                         onClick: () => setGid(g.id),
                     }, g.name + " " + g.count))) : null,
+                cur && data && groups.length ? React.createElement("div", { className: "kpl-tdx-aliasrow" },
+                    React.createElement("span", { className: "lab" }, "别名"),
+                    React.createElement("input", {
+                        value: aliasVal,
+                        placeholder: cur.alias ? "当前别名：" + cur.alias : "为「" + cur.name + "」自定义显示名",
+                        onChange: (e) => setAliasVal(e.target.value),
+                        onKeyDown: (e) => { if (e.key === "Enter") saveAlias(false); },
+                    }),
+                    React.createElement("button", { className: "kpl-tdx-btn", onClick: () => saveAlias(false) }, "保存"),
+                    cur.alias ? React.createElement("button", { className: "kpl-tdx-btn", onClick: () => saveAlias(true) }, "恢复默认") : null,
+                    aliasMsg ? React.createElement("span", { className: "msg" }, aliasMsg) : null) : null,
                 cur && rows.length ? React.createElement("div", { className: "kpl-tdx-rows" },
                     rows.map((s) => React.createElement("div", {
                         key: s.market + "_" + s.code,
@@ -6291,7 +6316,7 @@ window.__ModuleLoader__.load({
                             ? "⚠️ " + (data.message || "未找到通达信 blocknew 目录") + "——请在 ⚙️ 系统 Tab 配置通达信安装目录（如 D:\\app\\tdx）"
                             : (cur ? "分组「" + cur.name + "」为空" : "暂无分组")),
                 React.createElement("div", { className: "kpl-tdx-note" },
-                    "自选 = PC 通达信 T0002/blocknew 直读（最后一次云同步状态，手机改组后在 PC 登录同步一次即更新）；持仓 = 已登录交易的 tdxw.exe 进程内存直读。点击个股看K线；仅监控不交易。"));
+                    "自选 = PC 通达信 T0002/blocknew 直读（最后一次云同步状态，手机改组后在 PC 登录同步一次即更新）。显示为短码的分组是外部工具批量导入的板块，通达信里本就无中文名——选中后用「别名」行起名即可，只存插件不影响通达信。点击个股看K线；仅监控不交易。"));
         }
 
         const TDX_TAB_G = kplGuard(TdxTab, "通达信");
@@ -8129,6 +8154,11 @@ window.__ModuleLoader__.load({
                 .kpl-tdx-chip { padding: 3px 10px; border-radius: 12px; background: #f0f0f0; color: #666; font-size: 11px; cursor: pointer; border: 1px solid transparent; white-space: nowrap; }
                 .kpl-tdx-chip:hover { background: #e5e5e5; }
                 .kpl-tdx-chip.on { background: #e0333a; color: #fff; font-weight: 600; }
+                .kpl-tdx-aliasrow { display: flex; align-items: center; gap: 6px; padding: 4px 2px; }
+                .kpl-tdx-aliasrow .lab { font-size: 11px; color: #999; white-space: nowrap; }
+                .kpl-tdx-aliasrow input { flex: 1; min-width: 0; font-size: 11px; padding: 3px 8px; border: 1px solid #e0e0e0; border-radius: 8px; outline: none; background: #fff; color: #111; }
+                .kpl-tdx-aliasrow input:focus { border-color: #e0333a; }
+                .kpl-tdx-aliasrow .msg { font-size: 10px; color: #0aa858; white-space: nowrap; }
                 .kpl-tdx-rows { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; overflow: hidden; }
                 .kpl-tdx-row { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
                 .kpl-tdx-row:last-child { border-bottom: none; }
