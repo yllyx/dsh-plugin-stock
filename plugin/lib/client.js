@@ -6361,46 +6361,47 @@ window.__ModuleLoader__.load({
             const [open, setOpen] = useState(false);
             const [q, setQ] = useState("");
             const [results, setResults] = useState([]);
+            const [hot, setHot] = useState([]);            // KPL 综合热搜股票（搜索默认态）
             const [picked, setPicked] = useState(null);   // {code, name}
             const [busy, setBusy] = useState(false);
             const [msg, setMsg] = useState(null);          // {ok, text}
             const [tab, setTab] = useState("search");      // search | watchlist | holdings
-            const [watch, setWatch] = useState([]);
-            const [holdings, setHoldings] = useState([]);
+            const [tdxw, setTdxw] = useState(null);        // 通达信自选 {available, groups, stocks}
+            const [wGid, setWGid] = useState("zxg");       // 自选组 chips（默认自选股）
+            const [pos, setPos] = useState(null);          // 通达信实盘持仓
 
-            // 搜索防抖
+            // 搜索防抖：开盘啦搜索页同款联想（App 全量 STOCK 表 + 拼音首字母/全拼，gzmt→贵州茅台）
             useEffect(() => {
                 if (!open || tab !== "search" || !q.trim()) { setResults([]); return; }
                 const t = setTimeout(async () => {
                     try {
-                        const d = await api("/api/kpl/search-local?q=" + encodeURIComponent(q.trim()));
-                        setResults((d.results || []).slice(0, 8));
+                        const d = await api("/api/kpl/search/suggest?q=" + encodeURIComponent(q.trim()));
+                        const list = Array.isArray(d) ? d : (d.results || []);
+                        setResults(list.filter((r) => /^\d{6}$/.test(String(r.code || ""))).slice(0, 8));
                     } catch { setResults([]); }
                 }, 300);
                 return () => clearTimeout(t);
             }, [q, tab, open]);
 
-            // 列表懒加载
+            // 列表懒加载：自选/持仓 = 通达信（T0002 分组直读 + 实盘内存持仓）
             useEffect(() => {
                 if (!open) return;
-                if (tab === "watchlist" && !watch.length) {
-                    api("/api/kpl/watchlist").then((d) => {
-                        const codes = Object.values(d.stocks || {})[0] || [];
-                        setWatch(codes.map((c) => ({ code: String(c), name: String(c) })));
-                        codes.forEach(async (c) => {
-                            try {
-                                const r = await api("/api/kpl/quote/" + c);
-                                if (r && r.name) setWatch((w) => w.map((x) => x.code === String(c) ? { ...x, name: r.name } : x));
-                            } catch { /* */ }
-                        });
-                    }).catch(() => setWatch([]));
+                if (tab === "search" && !hot.length) {
+                    api("/api/kpl/search/hot").then((d) => {
+                        setHot((d.stocks || []).slice(0, 10));
+                    }).catch(() => setHot([]));
                 }
-                if (tab === "holdings" && !holdings.length) {
-                    api("/api/holdings").then((d) => {
-                        setHoldings((d.holdings || d || []).map((h) => ({ code: String(h.code), name: h.name || h.code })));
-                    }).catch(() => setHoldings([]));
+                if (tab === "watchlist" && !tdxw) {
+                    api("/api/tdx/watchlist").then((d) => {
+                        setTdxw(d);
+                        const first = (d.groups || []).find((g) => g.id === "zxg") || (d.groups || [])[0];
+                        setWGid(first ? first.id : "");
+                    }).catch(() => setTdxw({ available: false }));
                 }
-            }, [open, tab, watch.length, holdings.length]);
+                if (tab === "holdings" && !pos) {
+                    api("/api/tdx/positions").then((d) => setPos(d)).catch(() => setPos({ ok: false, error: "请求失败" }));
+                }
+            }, [open, tab, hot.length, tdxw, pos]);
 
             const start = async () => {
                 if (!picked || busy) return;
@@ -6430,7 +6431,14 @@ window.__ModuleLoader__.load({
                 onClick: () => setPicked({ code: it.code, name: it.name }),
             },
                 React.createElement("b", null, it.name),
-                React.createElement("span", { className: "cd" }, it.code));
+                React.createElement("span", { className: "cd" }, it.code),
+                it.right != null ? React.createElement("span", {
+                    className: "rt" + (Number(it.right) < 0 ? " down" : Number(it.right) > 0 ? " up" : ""),
+                }, (Number(it.right) > 0 ? "+" : "") + Number(it.right).toFixed(2) + "%") : null);
+
+            const wRows = (tdxw && tdxw.available && tdxw.stocks && tdxw.stocks[wGid]) || [];
+            const wGroups = ((tdxw && tdxw.groups) || []).filter((g) => g.registered !== false);
+            const posRows = (pos && pos.ok && pos.positions) || [];
 
             return React.createElement(React.Fragment, null,
                 React.createElement("div", {
@@ -6450,16 +6458,29 @@ window.__ModuleLoader__.load({
                                 }, pair[1]);
                             })),
                         tab === "search" && React.createElement("input", {
-                            className: "dsh-fab-search", placeholder: "输入代码或名称，如 000678 / 襄阳轴承",
+                            className: "dsh-fab-search", placeholder: "输入代码/名称/拼音简写，如 000678 / xyzc",
                             value: q, onChange: function (e) { setQ(e.target.value); },
                         }),
+                        tab === "watchlist" && wGroups.length > 1 ? React.createElement("div", { className: "dsh-fab-chips" },
+                            wGroups.map((g) => React.createElement("span", {
+                                key: g.id, className: "dsh-fab-chip" + (wGid === g.id ? " on" : ""),
+                                onClick: () => { setWGid(g.id); setPicked(null); },
+                            }, g.name + " " + g.count))) : null,
                         React.createElement("div", { className: "dsh-fab-list" },
-                            tab === "search" && (results.length ? results.map(row)
-                                : React.createElement("div", { className: "dsh-fab-tip" }, q ? "无匹配结果" : "输入关键词搜索（开盘啦全市场）")),
-                            tab === "watchlist" && (watch.length ? watch.map(row)
-                                : React.createElement("div", { className: "dsh-fab-tip" }, "暂无自选股（需登录开盘啦账号）")),
-                            tab === "holdings" && (holdings.length ? holdings.map(row)
-                                : React.createElement("div", { className: "dsh-fab-tip" }, "暂无记账持仓（可在「持仓」Tab 添加）"))),
+                            tab === "search" && (q.trim() ? (results.length ? results.map(row)
+                                : React.createElement("div", { className: "dsh-fab-tip" }, "无匹配结果"))
+                                : (hot.length ? hot.map((s) => row({ code: s.code, name: s.name || s.code, right: s.pct }, s.code))
+                                    : React.createElement("div", { className: "dsh-fab-tip" }, "输入关键词搜索（开盘啦全市场 A 股）"))),
+                            tab === "watchlist" && (!tdxw ? React.createElement("div", { className: "dsh-fab-tip" }, "加载通达信自选…")
+                                : !tdxw.available ? React.createElement("div", { className: "dsh-fab-tip" }, "未找到通达信 blocknew 目录（系统 Tab 配置安装目录）")
+                                    : (wRows.length ? wRows.map((s) => row({ code: s.code, name: s.name || s.code }, s.market + s.code))
+                                        : React.createElement("div", { className: "dsh-fab-tip" }, "该分组为空"))),
+                            tab === "holdings" && (!pos ? React.createElement("div", { className: "dsh-fab-tip" }, "加载通达信实盘持仓…")
+                                : !pos.ok ? React.createElement("div", { className: "dsh-fab-tip" },
+                                    pos.error === "tdxw not running"
+                                        ? "未检测到通达信客户端——打开 PC 通达信并交易登录、看过一次持仓页后重试"
+                                        : "实盘持仓读取失败：" + (pos.error || "未知"))
+                                    : posRows.map((p) => row({ code: p.code_digits, name: p.name || p.code_digits, right: p.plpct }, p.code_digits)))),
                         picked && React.createElement("div", { className: "dsh-fab-picked" },
                             "已选：", React.createElement("b", null, picked.name), "（", picked.code, "）"),
                         React.createElement("button", {
@@ -6468,7 +6489,7 @@ window.__ModuleLoader__.load({
                         }, busy ? "创建分析会话中…" : "开始 AI 分析"),
                         msg && React.createElement("div", { className: "dsh-fab-msg " + (msg.ok ? "ok" : "err") }, msg.text),
                         React.createElement("div", { className: "dsh-fab-foot" },
-                            "分析由 DSH 会话执行（开盘啦数据源：行情/K线/择时/情绪/龙虎榜 + 记账仓位）"))));
+                            "分析由 DSH 会话执行（开盘啦数据源：行情/K线/择时/情绪/龙虎榜 + 通达信实盘持仓）"))));
         }
 
         function WatchlistPanel(props) {
@@ -6818,7 +6839,14 @@ window.__ModuleLoader__.load({
                 .dsh-fab-row:hover { background: #f7f7f7; }
                 .dsh-fab-row.on { background: #fdecec; }
                 .dsh-fab-row b { font-size: 13px; color: #111; }
-                .dsh-fab-row .cd { color: #999; font-size: 11px; }
+                .dsh-fab-row .cd { color: #999; font-size: 11px; flex: 1; }
+                .dsh-fab-row .rt { font-size: 11px; color: #666; font-variant-numeric: tabular-nums; }
+                .dsh-fab-row .rt.up { color: #e0333a; }
+                .dsh-fab-row .rt.down { color: #0aa858; }
+                .dsh-fab-chips { display: flex; gap: 5px; flex-wrap: wrap; max-height: 52px; overflow-y: auto; margin-bottom: 6px; }
+                .dsh-fab-chip { padding: 2px 9px; border-radius: 10px; background: #f2f2f2; color: #666; font-size: 10px; cursor: pointer; white-space: nowrap; border: 1px solid transparent; }
+                .dsh-fab-chip:hover { background: #e7e7e7; }
+                .dsh-fab-chip.on { background: #e0333a; color: #fff; font-weight: 600; }
                 .dsh-fab-tip { color: #999; text-align: center; padding: 24px 0; }
                 .dsh-fab-picked { background: #f7f7f7; border-radius: 8px; padding: 8px 10px; color: #333; }
                 .dsh-fab-go { border: none; border-radius: 8px; background: #e03131; color: #fff; font-size: 14px; font-weight: 700; padding: 10px 0; cursor: pointer; }

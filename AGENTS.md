@@ -214,12 +214,13 @@ git push origin main --tags
 
 **坑（本轮实锤）**：① 3004/3007/3101 带参 cmd **盘后完全静默**（连 110 错误都不回）但**不踢线**——勿把静默当参数错反复盲扫；2100-2126 pb.Empty 族盘后照推；② 曾误判"会话 1s 被踢"为 3004 帧触发——实为 8765 后端进程同 device 互踢残留，**排查互踢先杀 8765 再测**；③ 服务端对**同一会话重复订阅 3004 只推一次**，重订阅静默≠失败；④ DSH 看门狗杀进程后可能不自动拉起（状态卡 running）——手动 DETACHED_PROCESS 拉起 uvicorn 后 DSH 经 isAlreadyRunning 复用
 
-### ⭐ AI 投资分析（悬浮按钮 → 选股 → DSH 会话，2026-10-01）
+### ⭐ AI 投资分析（悬浮按钮 → 选股 → DSH 会话，2026-10-01；2026-10-07 三源换通达信/KPL同款）
 
-- **交互流**：插件每页右下角 🤖 悬浮按钮（StockAnalysisFab，挂 WatchlistPanel 根覆盖全部 Tab）→ 选股浮层（搜索 /api/kpl/search-local + KPL 自选 /api/kpl/watchlist + 记账持仓降级 + 手输）→ `POST /stock-plugin/analyze {code,name}` → 服务端创建独立 DSH 会话（出现在会话列表，标题"股票分析：名称(代码)"）→ AI 按引导 prompt 逐个调 kpl_* 工具 → 输出 ①评级(可买/观望/回避) ②理由与风险 ③建议仓位与止损
+- **交互流**：插件每页右下角 🤖 悬浮按钮（StockAnalysisFab，挂 WatchlistPanel 根覆盖全部 Tab）→ 选股浮层 → `POST /stock-plugin/analyze {code,name}` → 服务端创建独立 DSH 会话（出现在会话列表，标题"股票分析：名称(代码)"）→ AI 按引导 prompt 逐个调 kpl_* 工具 → 输出 ①评级(可买/观望/回避) ②理由与风险 ③建议仓位与止损
+- **三源定案（2026-10-07 用户指定）**：①搜索=开盘啦搜索页同款 `/api/kpl/search/suggest`（App 全量 STOCK 表+拼音首字母/全拼，实测 xyzc→襄阳轴承；正则过滤只留 `^\d{6}$` A 股防选出港股/板块），默认态=综合热搜 `/api/kpl/search/hot` 的 stocks（带腾讯涨幅%）；②自选股=`/api/tdx/watchlist`（组 chips 只列 registered 组、默认 zxg，不再用 KPL 自选逐只 quote 补名）；③持仓=`/api/tdx/positions` 实盘内存直读（行右侧显盈亏%；tdxw 未运行显示引导提示，不再降级记账）。**kpl_position 工具同步改**：优先 TDX 实盘持仓（聚合总市值/总成本/总盈亏+positions 明细，cash=null+cash_note 防臆造），失败降级 /api/position/overview；analyze prompt 第 6 步文案同步
 - **会话创建机制（dsh-better-sidebar 实战验证的宿主公共 API）**：`ctx.get("agents").create({sessionId, meta:{origin:"plugin", plugin}, agentOptions:{}})` + `handle.agent.followup(createUserMessage({content:[{type:"text",text}], source:{kind:"user"}}))`（唤醒 AI 产生首回合）+ `ctx.get("sessionTitle").rename(handle.agent.session, 标题)`；`createUserMessage` import 自 `@deepseek-ai/dsh-llm`（宿主 node_modules 提供，插件无需声明依赖）。**inject 数组加 "webServer"**（property 访问必须声明；ctx.get 动态获取不需要）
 - **桥 = 宿主 webServer 路由**（无需自建端口）：`ctx.webServer.register({kind:"prefix", path:"/stock-plugin/analyze", handler:(req,res)=>{...}})`（Node 原语 req/res，effect 生命周期自动 dispose）；前端**同源相对路径** fetch（client.js 跑在宿主 web server origin）
-- **kpl_* 分析工具 6 个**（14 工具=8 基础+6 分析，test_apply 已同步）：kpl_quote(/api/kpl/quote) / kpl_kline(/api/kpl/kline，Stock/GetStockChart@applhb 日K 530 根含 OHLC 均线量，前复权) / kpl_timing(/api/kpl/timing，2100 情绪条+2110 涨跌+2115 总览+2117 天梯聚合) / kpl_sentiment(/api/kpl/sentiment，综合强度+风向标+风口) / kpl_lhb_seat(/api/kpl/lhb/stock 席位) / kpl_position(/api/position/overview 记账仓位——用户指定仓位沿用原有)。数据源按用户要求：行情/K线/择时/情绪=开盘啦，仓位=原记账
+- **kpl_* 分析工具 6 个**（14 工具=8 基础+6 分析，test_apply 已同步）：kpl_quote(/api/kpl/quote) / kpl_kline(/api/kpl/kline，Stock/GetStockChart@applhb 日K 530 根含 OHLC 均线量，前复权) / kpl_timing(/api/kpl/timing，2100 情绪条+2110 涨跌+2115 总览+2117 天梯聚合) / kpl_sentiment(/api/kpl/sentiment，综合强度+风向标+风口) / kpl_lhb_seat(/api/kpl/lhb/stock 席位) / kpl_position(TDX 实盘优先/记账降级)
 - **⚠️ index.js 是服务端插件：改动必须重启 DSH 才生效**（前端 FAB 只需刷新页面）；本地测试 @deepseek-ai/dsh-llm 用仓库根 node_modules junction 指向宿主包（test_apply 的 rmSync 只清 plugin/node_modules 不冲突）
 - **坑**：① bash heredoc 里的 `
 ` 经 JSON 转义吃掉一层变成真换行写入文件——跨语言脚本注入换行转义需用 Edit 工具修正；② 宿主 API 探路先看 dsh-better-sidebar（唯一大量使用 agents/webServer 的第三方插件）

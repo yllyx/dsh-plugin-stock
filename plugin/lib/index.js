@@ -464,7 +464,7 @@ const kplLhbSeatTool = {
 
 const kplPositionTool = {
     name: "kpl_position",
-    description: "【记账持仓】仓位体检：当前总仓位 vs 大盘阶段建议仓位、现金比例、单票/行业集中度检查、每只持仓的加减仓建议。判断这笔新买入的仓位应该给多少。properties: 无",
+    description: "【实盘持仓】仓位体检：优先返回通达信实盘持仓（tdxw.exe 内存直读：代码/持仓/可用/成本/现价/市值/盈亏），tdxw 未运行或无持仓时降级记账仓位。判断这笔新买入的仓位应该给多少。properties: 无",
     parameters: { type: "object", properties: {}, additionalProperties: false },
     output: {
         schema: JSON_OBJECT_OUTPUT,
@@ -473,6 +473,30 @@ const kplPositionTool = {
         },
     },
     async execute() {
+        try {
+            const tdx = await makeToolRequest(`/api/tdx/positions`);
+            if (tdx && !tdx.error && tdx.ok && Array.isArray(tdx.positions) && tdx.positions.length) {
+                const plist = tdx.positions;
+                const sumMv = plist.reduce((a, p) => a + (p.mv || 0), 0);
+                const sumCost = plist.reduce((a, p) => a + (p.cost || 0) * (p.qty || 0), 0);
+                const sumPl = plist.reduce((a, p) => a + (p.pl || 0), 0);
+                return {
+                    source: "tdx-memory(通达信实盘持仓)",
+                    total_market_value: Math.round(sumMv * 100) / 100,
+                    total_cost: Math.round(sumCost * 100) / 100,
+                    total_profit_loss: Math.round(sumPl * 100) / 100,
+                    total_profit_pct: sumCost > 0 ? Math.round((sumPl / sumCost) * 10000) / 100 : null,
+                    cash: null,
+                    cash_note: "实盘内存直读暂无现金余额字段——涉及剩余可投入资金时按未知处理，勿臆造",
+                    positions: plist.map((p) => ({
+                        code: p.code_digits, name: p.name, qty: p.qty, avail: p.avail,
+                        cost: p.cost, price: p.price, market_value: p.mv,
+                        profit_loss: p.pl, profit_pct: p.plpct,
+                    })),
+                    count: plist.length,
+                };
+            }
+        } catch (e) { /* 降级记账 */ }
         return makeToolRequest(`/api/position/overview`);
     },
 };
@@ -574,7 +598,7 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
             `3. kpl_timing 大盘打板情绪与涨跌家数（判断当前环境能否做多）；`,
             `4. kpl_sentiment 市场情绪温度与风口方向；`,
             `5. kpl_lhb_seat（code=${code}）龙虎榜资金面（若该股近三日有上榜）；`,
-            `6. kpl_position 当前记账仓位（判断新买入额度）。`,
+            `6. kpl_position 当前实盘持仓（通达信内存直读优先，无则降级记账仓位；判断新买入额度，现金余额若为空按未知处理）。`,
             `数据齐后综合给出：① 结论评级（可买 / 观望 / 回避）；② 核心理由（技术面+资金面+情绪面）与主要风险；`,
             `③ 若可买：建议仓位比例、买入参考区间与止损位。请用中文，结论先行，数据引用注明来源工具。`,
         ].join("\n");
