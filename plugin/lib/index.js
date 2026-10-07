@@ -582,9 +582,11 @@ DSH 股票监控插件已激活（交易体系辅助）。你拥有以下工具�
             throw new Error("agents 服务不可用（宿主版本不支持）");
         }
         const sessionId = `stock-analyze-${randomUUID()}`;
+        // ⚠️ 新版宿主 dsh-session 头校验只允许 origin 为 "subagent"（且该值要求父会话地址，
+        // 子代理专用）——独立会话必须完全不传 origin（宿主自身会话头即无 origin 字段）；
+        // meta.cwd 不传时宿主自动补 defaultCwd，会话才能出现在会话列表
         const handle = await agents.create({
             sessionId,
-            meta: { origin: "plugin", plugin: "dsh-plugin-stock" },
             agentOptions: {},
         });
         const title = `股票分析：${name || "未知"}(${code})`;
