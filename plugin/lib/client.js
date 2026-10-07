@@ -6171,6 +6171,7 @@ window.__ModuleLoader__.load({
             const [posBusy, setPosBusy] = useState(false);
             const [aliasVal, setAliasVal] = useState("");
             const [aliasMsg, setAliasMsg] = useState("");
+            const [regOnly, setRegOnly] = useState(() => { try { return localStorage.getItem("kpl_tdx_regonly") !== "0"; } catch { return true; } });
             const gidRef = useRef(gid); gidRef.current = gid;   // 闭包读最新 gid（切组立即按新组刷行情）
 
             const load = useCallback(async () => {
@@ -6258,8 +6259,15 @@ window.__ModuleLoader__.load({
 
             // ---- 自选分组区 ----
             const groups = data ? (data.groups || []) : [];
-            const cur = groups.find((g) => g.id === gid) || groups[0] || null;
+            const orphanN = groups.filter((g) => g.registered === false).length;
+            const shown = regOnly ? groups.filter((g) => g.registered !== false) : groups;
+            const cur = shown.find((g) => g.id === gid) || shown[0] || null;
             const rows = (cur && data && data.stocks && data.stocks[cur.id]) || [];
+            const flipRegOnly = () => {
+                const v = !regOnly;
+                setRegOnly(v);
+                try { localStorage.setItem("kpl_tdx_regonly", v ? "1" : "0"); } catch { }
+            };
 
             useEffect(() => { setAliasVal(cur ? (cur.alias || "") : ""); setAliasMsg(""); },
                 [cur && cur.id, cur && cur.alias]);
@@ -6287,15 +6295,21 @@ window.__ModuleLoader__.load({
                 posBody,
                 React.createElement("div", { className: "kpl-tdx-head" },
                     React.createElement("b", null, "🎯 自选分组"),
-                    React.createElement("span", { className: "sync" },
-                        err ? "⚠️ " + err : (data && data.synced_at ? "云同步于 " + data.synced_at : ""))),
-                data && groups.length ? React.createElement("div", { className: "kpl-tdx-chips" },
-                    groups.map((g) => React.createElement("span", {
+                    React.createElement("span", { className: "kpl-tdx-head-r" },
+                        data && orphanN > 0 ? React.createElement("span", {
+                            className: "kpl-tdx-toggle",
+                            onClick: flipRegOnly,
+                            title: regOnly ? "当前仅显示通达信客户端「自定义板块」里注册的分组；点击显示目录里全部成员文件（含外部工具导入、客户端不显示的）" : "点击恢复仅显示客户端注册组",
+                        }, regOnly ? "☑ 仅客户端注册组" : "☐ 全部分组（含未注册 " + orphanN + "）") : null,
+                        React.createElement("span", { className: "sync" },
+                            err ? "⚠️ " + err : (data && data.synced_at ? "云同步于 " + data.synced_at : "")))),
+                data && shown.length ? React.createElement("div", { className: "kpl-tdx-chips" },
+                    shown.map((g) => React.createElement("span", {
                         key: g.id,
                         className: "kpl-tdx-chip" + (cur && cur.id === g.id ? " on" : ""),
                         onClick: () => setGid(g.id),
                     }, g.name + " " + g.count))) : null,
-                cur && data && groups.length ? React.createElement("div", { className: "kpl-tdx-aliasrow" },
+                cur && data && shown.length ? React.createElement("div", { className: "kpl-tdx-aliasrow" },
                     React.createElement("span", { className: "lab" }, "别名"),
                     React.createElement("input", {
                         value: aliasVal,
@@ -6323,7 +6337,7 @@ window.__ModuleLoader__.load({
                             ? "⚠️ " + (data.message || "未找到通达信 blocknew 目录") + "——请在 ⚙️ 系统 Tab 配置通达信安装目录（如 D:\\app\\tdx）"
                             : (cur ? "分组「" + cur.name + "」为空" : "暂无分组")),
                 React.createElement("div", { className: "kpl-tdx-note" },
-                    "自选 = PC 通达信 T0002/blocknew 直读（最后一次云同步状态，手机改组后在 PC 登录同步一次即更新）。显示为短码的分组是外部工具批量导入的板块，通达信里本就无中文名——选中后用「别名」行起名即可，只存插件不影响通达信。点击个股看K线；仅监控不交易。"));
+                    "默认仅显示通达信客户端「自定义板块」注册的分组（与客户端一致）；目录里还有客户端不显示的外部导入成员文件，点「全部分组」可查看。显示为短码的组可在选中后用「别名」行起名，只存插件不影响通达信。点击个股看K线；仅监控不交易。"));
         }
 
         const TDX_TAB_G = kplGuard(TdxTab, "通达信");
@@ -8166,6 +8180,8 @@ window.__ModuleLoader__.load({
                 .kpl-tdx-aliasrow input { flex: 1; min-width: 0; font-size: 11px; padding: 3px 8px; border: 1px solid #e0e0e0; border-radius: 8px; outline: none; background: #fff; color: #111; }
                 .kpl-tdx-aliasrow input:focus { border-color: #e0333a; }
                 .kpl-tdx-aliasrow .msg { font-size: 10px; color: #0aa858; white-space: nowrap; }
+                .kpl-tdx-toggle { font-size: 10px; color: #666; background: #f7f7f7; border: 1px solid #e8e8e8; border-radius: 10px; padding: 2px 8px; cursor: pointer; white-space: nowrap; user-select: none; }
+                .kpl-tdx-toggle:hover { background: #efefef; color: #111; }
                 .kpl-tdx-rows { background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; overflow: hidden; }
                 .kpl-tdx-row { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid #f5f5f5; cursor: pointer; }
                 .kpl-tdx-row:last-child { border-bottom: none; }

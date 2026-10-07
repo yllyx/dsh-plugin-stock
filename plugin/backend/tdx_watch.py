@@ -231,8 +231,9 @@ def _parse_all(d: Path) -> Dict[str, Any]:
     stocks: Dict[str, List[Dict[str, Any]]] = {}
     latest_mtime = 0.0
 
-    def add_group(gid: str, name: str, f: Optional[Path], members: List[Tuple[int, str]]) -> None:
-        groups.append({"id": gid, "name": name, "count": len(members)})
+    def add_group(gid: str, name: str, f: Optional[Path], members: List[Tuple[int, str]],
+                  registered: bool = True) -> None:
+        groups.append({"id": gid, "name": name, "count": len(members), "registered": registered})
         stocks[gid] = [
             {"code": cd, "market": mk, "market_label": MARKET_NAMES.get(mk, str(mk)),
              "name": _stock_name(cd)}
@@ -268,7 +269,9 @@ def _parse_all(d: Path) -> Dict[str, Any]:
         members = parse_blk(f)
         if members:
             used.add(sid)
-            add_group(sid, sid, f, members)
+            # 索引未注册的孤儿 .blk（外部工具导入/被云同步换索引挤掉的旧本地组）：
+            # 通达信客户端不显示它们，标记 registered=False 供前端默认隐藏
+            add_group(sid, sid, f, members, registered=False)
     return {"groups": groups, "stocks": stocks, "latest_mtime": latest_mtime}
 
 
