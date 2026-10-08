@@ -307,7 +307,9 @@ class KplSocketSession:
                 return None
             prefix = data[7:7 + plen].decode("ascii", "replace")
             m = re.search(r"/(\d{3,5})-", prefix)
-            if not (prefix.startswith("hqDaban|") and m):
+            # ⚠️ 前缀服务标签各异（hqDaban|/global|/hqList|...，AGENTS.md：3010=global|N:20020/3010-0/），
+            # 不能白名单 hqDaban——否则 3007/2103 等其它族的帧被当垃圾重同步丢弃（2026-10-08 实训）
+            if not m or "|" not in prefix:
                 return None
             cmd = int(m.group(1))
             proto = data[7 + plen:5 + total]
@@ -484,9 +486,13 @@ class KplSocketSession:
             from config import config as _cfg
             _uid = str(_cfg.get("kpl_user_id") or "0") or "0"
             _tok = str(_cfg.get("kpl_token") or "0") or "0"
+            # AuthReq 权威字段表（user.proto dex 描述符 2026-10-08）：deviceId1 platformId2
+            # versionName3 channelId4 signature5 userId6 token7 connType8 **curTime9**
+            # apiVersion10 appType11——旧版缺 curTime(9)（260 挑战的 serverTime 回填）
             req = (pb_str(1, self.device_id) + pb_uint(2, 1) + pb_str(3, "6.3.20.0")
                    + pb_uint(4, 129) + pb_str(5, sig) + pb_str(6, _uid) + pb_str(7, _tok)
-                   + pb_uint(8, 99) + pb_str(10, "w48") + pb_uint(11, 0))
+                   + pb_uint(8, 99) + pb_uint(9, int(server_time)) + pb_str(10, "w48")
+                   + pb_uint(11, 0))
             self.sock.sendall(build_frame(610, req, kind=3, seq=self._next_seq(), flags=0))
             resp = self._wait_cmd(610, timeout_s=5)
             if resp is None:

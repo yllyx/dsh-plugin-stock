@@ -1674,15 +1674,20 @@ async def kpl_marketfeed():
 
 
 @app.get("/api/kpl/feeddebug")
-async def kpl_feeddebug(sub: int = 0, bodyhex: str = "", wait: int = 0):
+async def kpl_feeddebug(sub: int = 0, bodyhex: str = "", wait: int = 0, flags: int = 0, seq: int = 0,
+                        rpc: int = 0, prefix60: str = ""):
     """订阅面现场（排障）：远端节点/收帧量/drain 线程/订阅集/推送龄。
-    带参数时变成标定动作：在当前会话上发一帧订阅（sub=cmd, bodyhex=十六进制请求体，
-    wait=等待秒数），返回该 cmd 的推送到达情况——同账号只允许一个会话持推送流，
-    标定必须走后端自己的会话（2026-10-08 实测）。"""
+    标定动作：sub=cmd 走 kind4 订阅帧；rpc=cmd 走 RPC 往返；prefix60 非空时按新 0x60
+    帧格式发请求（[60][total4BE][00][plen][prefix][body]）。"""
     from kpl_socket import get_kpl_socket, build_frame
 
     def _run():
         api = get_kpl_socket()
+        if rpc:
+            body = bytes.fromhex(bodyhex) if bodyhex else b""
+            resp = api._session_rpc(rpc, body, timeout_s=15)
+            return {"cmd": rpc, "resp_len": len(resp) if resp else 0,
+                    "resp_head": resp[:512].hex() if resp else ""}
         if sub:
             s = api._session
             if not (s and s.alive):
@@ -1690,11 +1695,18 @@ async def kpl_feeddebug(sub: int = 0, bodyhex: str = "", wait: int = 0):
             body = bytes.fromhex(bodyhex) if bodyhex else b""
             before = dict(s.sub_latest)
             with s._send_lock:
-                s.sock.sendall(build_frame(sub, body, kind=4, seq=s._next_seq()))
+                if prefix60:
+                    pfx = prefix60.encode("ascii")
+                    inner = b"\x00" + bytes([len(pfx)]) + pfx + body
+                    raw = b"\x60" + len(inner).to_bytes(4, "big") + inner
+                    s.sock.sendall(raw)
+                else:
+                    s.sock.sendall(build_frame(sub, body, kind=4,
+                                               seq=seq or s._next_seq(), flags=flags))
             if wait > 0:
                 time.sleep(min(wait, 60))
             hit = s.sub_latest.get(sub)
-            return {"cmd": sub, "sent_body_len": len(body),
+            return {"cmd": sub, "sent_body_len": len(body), "raw60": bool(prefix60),
                     "pushed": bool(hit), "push_bytes": sum(len(p) for p in hit.get("parts", [])) if hit else 0,
                     "new_since_send": (hit or {}).get("ts", 0) > (before.get(sub, {}).get("ts", 0))}
         return api.debug_info()
@@ -1712,6 +1724,12 @@ async def kpl_dabanlists():
     """打板页三列表（2103 拉取式：pidType 1=竞价 2=即将涨停 3=风向标；休市静默）"""
     from kpl_marketfeed import get_daban_lists
     return await asyncio.to_thread(get_daban_lists)
+
+
+@app.get("/api/kpl/active-plates")
+async def kpl_active_plates():
+    """近期活跃板块（Index/GetInfo BaceFaceList，板块 tab 回退/首页块同源）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_active_plates)
 
 
 @app.get("/api/kpl/mkttrend")

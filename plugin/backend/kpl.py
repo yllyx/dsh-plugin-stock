@@ -3149,6 +3149,24 @@ class KplClient:
             self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    def get_active_plates(self) -> Dict[str, Any]:
+        """近期活跃板块（Index/GetInfo {View:2,3,4,5} BaceFaceList，App 板块 tab 休市回退/首页块同源）。
+        行=[名称, 涨幅, 801板块id]。3007 强度表未破前，板块 tab 回退用。"""
+        def _fetch():
+            d = self.call(HOST_HQ2, "Index", "GetInfo",
+                          {"View": "2,3,4,5"}, authed=False)
+            rows = (d or {}).get("BaceFaceList") or []
+            lst = []
+            for r in rows:
+                if isinstance(r, list) and len(r) >= 3:
+                    try:
+                        lst.append({"name": str(r[0]), "rate": float(r[1]),
+                                    "plateId": str(r[2])})
+                    except (TypeError, ValueError):
+                        continue
+            return {"list": lst}
+        return self._cached_swr("active_plates", 60, _fetch)
+
     def get_qiangdu(self) -> Dict[str, Any]:
         """最强风口（App 首页模块同源 Index/GetInfo 的 ZQFKList，
         [代码,名称,强度,涨幅,概念(顿号分隔)]——2026-09-28 实锤：QiangDu_Article 盘后清空，

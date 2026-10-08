@@ -3385,12 +3385,16 @@ window.__ModuleLoader__.load({
                 React.createElement(KplPlateRankTable, { feed, go, ov }));
         }
 
-        // 板块强度真表（3007 SubPlateTypeQuotasList 盘中推送；休市回落活跃板块）
+        // 板块强度真表（3007 SubPlateTypeQuotasList 盘中推送；未破解前回退活跃板块）
         function KplPlateRankTable({ feed, go, ov }) {
             const pr = feedData(feed, "platerank");
             const items = (pr.data && pr.data.items) || [];
-            const active = ((ov && ov.active_sectors) || []).length ? ov.active_sectors
-                : (((ov && ov.dingpan) || {}).BaceFaceList || []);
+            const [ap, setAp] = useState(null);
+            useEffect(() => {
+                let alive = true;
+                api("/api/kpl/active-plates").then((d) => { if (alive) setAp(d.list || []); }).catch(() => { });
+                return () => { alive = false; };
+            }, []);
             if (items.length) {
                 return React.createElement("div", { className: "kpl-lhb-scroll" },
                     React.createElement("div", { className: "kpl-lhb-table stk" },
@@ -3413,16 +3417,17 @@ window.__ModuleLoader__.load({
                             React.createElement("div", { className: "numcol " + (Number(r.mainNet) >= 0 ? "up" : "down") },
                                 r.mainNet != null ? fmtAmount(r.mainNet) : "--")))));
             }
-            // 休市：活跃板块（App 同源 BaceFaceList）+ 说明
+            // 强度表未到（3007 协议未破）：活跃板块（App 同源 BaceFaceList，点击下钻）
+            const act = ap || [];
             return React.createElement("div", { className: "kpl-page" },
                 React.createElement("div", { className: "kpl-sec-title" }, "📈 近期活跃板块（点击下钻）"),
-                React.createElement("div", { className: "kpl-sector-table" },
-                    active.map(function (sec) {
-                        const arr = Array.isArray(sec) ? sec : [sec.name, sec.change_pct, sec.code];
-                        return React.createElement(KplSectorRow, { key: arr[2], sector: { name: arr[0], code: String(arr[2]) }, go, list: active });
-                    })),
+                act.length ? React.createElement("div", { className: "kpl-sector-table" },
+                    act.map(function (p) {
+                        return React.createElement(KplSectorRow, { key: p.plateId, sector: { name: p.name, code: p.plateId, change_pct: p.rate }, go, list: act });
+                    }))
+                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "加载中…"),
                 React.createElement("div", { className: "kpl-mkt-tips" },
-                    "板块强度/主力净额列为交易时段推送数据（App 休市显示本地缓存），开盘后自动切换"));
+                    "板块强度/主力净额列为交易时段推送数据（App 同源 3007），恢复后自动切换"));
         }
 
         function KplSectorRow({ sector, go, list }) {
