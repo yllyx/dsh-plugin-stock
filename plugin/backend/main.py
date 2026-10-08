@@ -1673,6 +1673,34 @@ async def kpl_marketfeed():
     return await asyncio.to_thread(get_feed().snapshot)
 
 
+@app.get("/api/kpl/feeddebug")
+async def kpl_feeddebug(sub: int = 0, bodyhex: str = "", wait: int = 0):
+    """订阅面现场（排障）：远端节点/收帧量/drain 线程/订阅集/推送龄。
+    带参数时变成标定动作：在当前会话上发一帧订阅（sub=cmd, bodyhex=十六进制请求体，
+    wait=等待秒数），返回该 cmd 的推送到达情况——同账号只允许一个会话持推送流，
+    标定必须走后端自己的会话（2026-10-08 实测）。"""
+    from kpl_socket import get_kpl_socket, build_frame
+
+    def _run():
+        api = get_kpl_socket()
+        if sub:
+            s = api._session
+            if not (s and s.alive):
+                return {"error": "session dead"}
+            body = bytes.fromhex(bodyhex) if bodyhex else b""
+            before = dict(s.sub_latest)
+            with s._send_lock:
+                s.sock.sendall(build_frame(sub, body, kind=4, seq=s._next_seq()))
+            if wait > 0:
+                time.sleep(min(wait, 60))
+            hit = s.sub_latest.get(sub)
+            return {"cmd": sub, "sent_body_len": len(body),
+                    "pushed": bool(hit), "push_bytes": sum(len(p) for p in hit.get("parts", [])) if hit else 0,
+                    "new_since_send": (hit or {}).get("ts", 0) > (before.get(sub, {}).get("ts", 0))}
+        return api.debug_info()
+    return await asyncio.to_thread(_run)
+
+
 @app.get("/api/kpl/avoid-risks")
 async def kpl_avoid_risks():
     """闪电避雷（3011 潜在风险 excel+五类明细 / 3012 ST+退市股列表，App LightningProtection 同源）"""

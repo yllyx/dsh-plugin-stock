@@ -55,11 +55,14 @@ def _zt_list_body() -> bytes:
 
 
 def _stock_rank_body() -> bytes:
-    """3004 个股榜单请求体：全市场开关全开，涨幅序，count 由调用端改（此处 50）"""
+    """3004 个股榜单请求体（RealtimeLHBReq，hq.proto 字段表 2026-10-08 盘中实锤）：
+    quotaType1, sortType2, cxType3, limitType4, stType5, zbType6, cybType7, kcbType8,
+    bjsType9, indexType10, **start14, count15**（旧版误用 20/21 服务端静默丢弃——
+    feeddebug 标定 08 01 10 01 70 00 78 32 立即回 302B），startTime16, endTime17(3101 拉取用)"""
     from kpl_socket import pb_uint
     return (pb_uint(1, 1) + pb_uint(2, 1) + pb_uint(5, 1) + pb_uint(6, 1)
             + pb_uint(7, 1) + pb_uint(8, 1) + pb_uint(9, 1)
-            + pb_uint(20, 0) + pb_uint(21, 50))
+            + pb_uint(14, 0) + pb_uint(15, 50))
 
 
 def _daban_count_body() -> bytes:
@@ -739,16 +742,43 @@ class MarketFeed:
 
     def _keepalive_loop(self):
         """每 25s 检查各订阅 cmd 数据龄：会话活但数据缺失/过期 → 重发订阅帧。
-        会话重连后 _session_rpc 会自动重发 desired_subs；本线程兜底推送停滞。"""
+        会话重连后 _session_rpc 会自动重发 desired_subs；本线程兜底推送停滞。
+        2026-10-08 增加会话回收：盘中（交易时段）订阅帧已发但 sub_latest 持续全空
+        连续 3 轮 → 会话「可鉴权但不推送」（坏节点形态，独立探针对照实测）→ 弃置换节点。"""
         from kpl_socket import build_frame
+        stall_rounds = 0
         while True:
             time.sleep(25)
             try:
                 api = self._api()
                 s = api._session
                 if not (s and s.alive):
+                    # 会话被回收/断线后自动重建（盘中才重建；休市日零推送是正常态不折腾）。
+                    # 用 ensure_subscribed 而非裸 ensure_session：带参订阅（2102/2103/2121/3004/3007）
+                    # 只在这里发，裸重建会漏发导致个股/板块/打板三 tab 无数据
+                    try:
+                        from trade_calendar import get_cal
+                        if get_cal().is_trading_now():
+                            self.ensure_subscribed()
+                    except Exception:
+                        pass
                     continue
                 now = time.time()
+                # 盘中零推送自愈（新会话 60s 首推宽限；探针实测正常节点首推 <1s）
+                try:
+                    from trade_calendar import get_cal
+                    trading = get_cal().is_trading_now()
+                except Exception:
+                    trading = True
+                fresh = bool(s.connected_at) and (now - s.connected_at) > 60
+                if trading and fresh and s.sub_cmds and not s.sub_latest:
+                    stall_rounds += 1
+                    if stall_rounds >= 3:
+                        api.recycle_session("盘中订阅零推送连续3轮")
+                        stall_rounds = 0
+                        continue
+                else:
+                    stall_rounds = 0
                 ages = s.sub_latest
                 stale_cmds = [c for c in SUB_CMDS
                               if c not in ages or now - ages[c]["ts"] > MAX_PUSH_AGE]
@@ -818,7 +848,8 @@ class MarketFeed:
                             "stale": (now - hit["ts"]) > MAX_PUSH_AGE,
                             "source": "push", "waiting": False}
         result["_meta"] = {"alive": bool(alive), "ages": api.push_ages(),
-                           "day": time.strftime("%Y-%m-%d")}
+                           "day": time.strftime("%Y-%m-%d"),
+                           "debug": api.debug_info()}
         fresh = sum(1 for k, v in result.items()
                     if k != "_meta" and isinstance(v, dict) and v.get("data"))
         if fresh == 0:

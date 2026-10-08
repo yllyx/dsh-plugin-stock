@@ -279,21 +279,104 @@ class KplSocketSession:
         self.sub_cmds: set = set()
         self.sub_latest: Dict[int, Dict[str, Any]] = {}
         self._drain_buf = bytearray()
+        # ---- 观测（2026-10-08 排障：会话活但订阅零推送——部分节点不推送，需可观测+可换节点）----
+        self.remote = ""            # 已鉴权服务端 host:port
+        self.drained_total = 0      # drain 线程累计收到字节数（含非订阅帧）
+        self.connected_at = 0.0
+        self.seen_cmds: Dict[Any, int] = {}   # 观测：cmd → 累计 body 字节数
+        self.err110: list = []                # 观测：最近 110 错误码（服务端拒绝原因）
+
+    _PUSH_MAGIC = 0x60
+
+    def _try_parse_push60(self, data: bytes):
+        """新推帧格式（2026-10-08 盘中实锤，部分会话/节点下发）：
+        [0x60][total4 BE][0x00][前缀长1B][ASCII前缀 hqDaban|<sid>:<pushid>/<cmd>-0/][protobuf]
+        total = 0x60/total 域之后的全部字节数；cmd 从前缀 /NNNN- 提取。
+        返回 (cmd, 合成 body, 消费字节数) 或 None。合成 body=1b03+BE16前缀长+前缀+protobuf，
+        与旧 kind4 帧的 body 布局（mini头 bytes[2:4]=前缀长）一致，parse_cmd 无需改动。"""
+        try:
+            if len(data) < 8 or data[0] != self._PUSH_MAGIC:
+                return None
+            total = int.from_bytes(data[1:5], "big")
+            if total < 8 or total > 8 * 1024 * 1024:
+                return None
+            if len(data) < 5 + total:
+                return "partial"           # 帧未收全，等后续字节
+            plen = data[6]
+            if plen <= 0 or plen > 128:
+                return None
+            prefix = data[7:7 + plen].decode("ascii", "replace")
+            m = re.search(r"/(\d{3,5})-", prefix)
+            if not (prefix.startswith("hqDaban|") and m):
+                return None
+            cmd = int(m.group(1))
+            proto = data[7 + plen:5 + total]
+            body = b"\x1b\x03" + plen.to_bytes(2, "big") + data[7:7 + plen] + proto
+            return cmd, body, 5 + total
+        except Exception:
+            return None
 
     def _feed_frames(self, chunk: bytes) -> None:
-        """字节流 → 完整帧；订阅 cmd 的帧交由 _feed_push 入库，其余直接丢弃。"""
+        """字节流 → 完整帧；订阅 cmd 的帧交由 _feed_push 入库，其余直接丢弃。
+        双格式：旧 kind4 帧（try_parse_frame）+ 新 0x60 推帧（_try_parse_push60）；
+        两格式都不匹配时按字节重同步（找下一个 0x60 魔数），避免一帧失步全流报废。"""
         if not chunk:
             return
         self._drain_buf.extend(chunk)
+        buf = self._drain_buf
         pos = 0
-        while pos < len(self._drain_buf):
-            f, consumed = try_parse_frame(bytes(self._drain_buf[pos:]))
-            if f is None:
+        n = len(buf)
+        while pos < n:
+            # 0x60 魔数优先：旧解析器把 0x60 当 kind6 也会"合法"误吞新格式帧
+            if buf[pos] == self._PUSH_MAGIC:
+                hit = self._try_parse_push60(bytes(buf[pos:]))
+                if isinstance(hit, tuple):
+                    cmd, body, used = hit
+                    try:
+                        seen = self.seen_cmds
+                        seen[cmd] = seen.get(cmd, 0) + len(body)
+                    except Exception:
+                        pass
+                    if cmd in self.sub_cmds:
+                        self._feed_push(cmd, body)
+                    pos += used
+                    continue
+                if hit == "partial":           # 新格式帧未收全，等后续字节
+                    break
+                # 0x60 但前缀校验不过 → 落到旧解析/重同步
+            f, consumed = try_parse_frame(bytes(buf[pos:]))
+            if f is not None:
+                cmd = f.get("cmd")
+                if cmd == 110:
+                    # 观测：服务端错误码（2026-10-08 排障 3004/3007/2103 订阅被拒）
+                    try:
+                        for _fno, _wt, _v in pb_flat(f.get("body") or b""):
+                            if _fno == 1:
+                                self.err110.append(_v)
+                                if len(self.err110) > 10:
+                                    self.err110 = self.err110[-10:]
+                    except Exception:
+                        pass
+                try:
+                    seen = self.seen_cmds
+                    seen[cmd] = seen.get(cmd, 0) + len(f.get("body") or b"")
+                except Exception:
+                    pass
+                if cmd in self.sub_cmds:
+                    self._feed_push(cmd, bytes(f["body"] or b""))
+                pos += consumed
+                continue
+            # 双格式都失败 → 重同步：跳过当前字节找下一个 0x60 魔数
+            nxt = buf.find(b"\x60", pos + 1)
+            if nxt == -1:
+                # 后段没有魔数：尾部留 512B 以内等待更多数据，其余是死垃圾直接丢
+                if n - pos <= 512:
+                    pos = n
+                else:
+                    pos = n - 512
+                    del self._drain_buf[:pos]
                 break
-            pos += consumed
-            cmd = f.get("cmd")
-            if cmd in self.sub_cmds:
-                self._feed_push(cmd, bytes(f["body"] or b""))
+            pos = nxt
         if pos:
             del self._drain_buf[:pos]
         if len(self._drain_buf) > 1 << 20:
@@ -417,6 +500,8 @@ class KplSocketSession:
                              name="kpl-drain").start()
             global _last_good_server
             _last_good_server = (host, port)
+            self.remote = f"{host}:{port}"
+            self.connected_at = time.time()
             logger.info(f"KPL Socket: 已鉴权连接 {host}:{port}")
             return True
         return False
@@ -526,6 +611,7 @@ class KplSocketSession:
                             self._alive = False
                             break
                         drained += len(d)
+                        self.drained_total += len(d)
                         self._feed_frames(d)
                         if drained > 8 * 1024 * 1024:
                             break
@@ -679,6 +765,50 @@ class KplSocketAPI:
             return {}
         now = time.time()
         return {c: round(now - v["ts"], 1) for c, v in s.sub_latest.items()}
+
+    def debug_info(self) -> Dict[str, Any]:
+        """订阅面现场（2026-10-08 排障）：远端节点/收帧量/drain 线程/订阅集/推送龄"""
+        s = self._session
+        if not s:
+            return {"session": None}
+        drain = None
+        for t in threading.enumerate():
+            if t.name == "kpl-drain":
+                drain = t.is_alive()
+                break
+        now = time.time()
+        return {
+            "session": True,
+            "remote": s.remote,
+            "alive": s.alive,
+            "connected_for_s": round(now - s.connected_at, 1) if s.connected_at else None,
+            "drained_total_b": s.drained_total,
+            "drain_thread_alive": drain,
+            "sub_cmds": sorted(s.sub_cmds),
+            "desired_subs": sorted(getattr(self, "desired_subs", set())),
+            "sub_latest": {c: round(now - v["ts"], 1) for c, v in s.sub_latest.items()},
+            "seen_cmds": dict(sorted(s.seen_cmds.items(), key=lambda kv: -kv[1])[:20]),
+            "err110": s.err110,
+            "drain_buf_len": len(s._drain_buf),
+            "drain_buf_head": bytes(s._drain_buf[:160]).hex(),
+            "last_good_server": list(_last_good_server) if _last_good_server else None,
+        }
+
+    def recycle_session(self, reason: str = "") -> None:
+        """强制弃置当前会话（keepalive 检测盘中订阅零推送时调用）：
+        close 后 _last_good_server 一并清空，下次 connect 重新全表扫描换节点，
+        避免粘在「可鉴权但不推送」的服务器上（2026-10-08 实测该形态存在）"""
+        s = self._session
+        logger.warning(f"KPL 会话回收({reason}): remote={s.remote if s else '?'} "
+                       f"drained={s.drained_total if s else '?'}")
+        try:
+            if s:
+                s.close()
+        except Exception:
+            pass
+        self._session = None
+        global _last_good_server
+        _last_good_server = None
 
     # ---- 板块详情：股票池（龙一排序+全字段行情） ----
 

@@ -212,7 +212,16 @@ git push origin main --tags
 
 **港股 tab**：HKFragment/HKStockListFragment/GetHKIndustry_Ranking/GetHKSubject_Ranking 已定位（api_registry），协议未逆向（三卡恒指/国企/恒生科技疑=3006 传 HK 指数 id），页面骨架占位
 
-**坑（本轮实锤）**：① 3004/3007/3101 带参 cmd **盘后完全静默**（连 110 错误都不回）但**不踢线**——勿把静默当参数错反复盲扫；2100-2126 pb.Empty 族盘后照推；② 曾误判"会话 1s 被踢"为 3004 帧触发——实为 8765 后端进程同 device 互踢残留，**排查互踢先杀 8765 再测**；③ 服务端对**同一会话重复订阅 3004 只推一次**，重订阅静默≠失败；④ DSH 看门狗杀进程后可能不自动拉起（状态卡 running）——手动 DETACHED_PROCESS 拉起 uvicorn 后 DSH 经 isAlreadyRunning 复用
+**坑（本轮实锤）**：① 3004/3007/3101 带参 cmd **盘后完全静默**（连 110 错误都不回）但**不踢线**——勿把静默当参数错反复盲扫；2100-2126 pb.Empty 族盘后照推；② 曾误判"会话 1s 被踢"为 3004 帧触发——实为 8765 后端进程同 device 互踢残留，**排查互踢先杀 8765 再测**；③ ~~服务端对同一会话重复订阅 3004 只推一次~~ **已推翻（2026-10-08）：同会话重订换参数立即生效**（2121 换 bsType 秒回新列表），此前"只推一次"是参数没变服务端推同内容；④ DSH 看门狗杀进程后可能不自动拉起（状态卡 running）——手动 DETACHED_PROCESS 拉起 uvicorn 后 DSH 经 isAlreadyRunning 复用
+
+### ⭐⭐ 行情菜单零数据排障（2026-10-08 盘中，两个根因全修+观测/自愈体系落地）
+
+- **现象**：10-08 复市开盘 个股/板块/打板（情绪/直播也波及）全空。`_meta.ages={}`、drain 收到字节但 `try_parse_frame` 一帧都啃不动、磁盘 kpl_marketfeed_cache.json 从未落盘
+- **根因一（主）：服务端推流帧格式变了（新 0x60 格式）**。drain_buf 头采样实锤：`60 0000005f 00 19 "hqDaban|134:20010/2115-0/" + protobuf`——新推帧=`[0x60][total4 大端][0x00][前缀长1B][ASCII前缀][protobuf]`，total=0x60/total 域之后全部字节数，**cmd 从前缀 `/(\d{3,5})-/` 提取**（2115），不再有 kind4 的 seq/cmd 头；旧解析器把 0x60 当 kind6 也不会匹配→一帧不解析→全流报废（曾累计 1.3MB 全废）。**修法**：`_feed_frames` 双格式解析（0x60 魔数优先，防旧解析器 kind6 误吞）+ body 合成 mini头（`1b03`+BE16 前缀长+前缀+proto，与旧 kind4 body 布局一致 parse_cmd 零改动）+ 失步重同步（双格式都败→`find(0x60)` 跳字节）。离线单测全过（净流/垃圾前缀/半帧续读）
+- **根因二：会话"可鉴权但不推送"形态 + 同账号单推送槽**。独立探针对照实验：探针会话订阅秒回（首推<1s，25s 收 55KB），后端会话同服务器同账号却零推送——**同账号服务端只给一个会话推流，后鉴权者抢走，输家 TCP 保持可 RPC 但被静音**；半开会话（进程被杀服务端未察觉）也占槽。10:09 的探针把后端顶哑、后端重建又抢回来，交替拉锯。**修法（自愈三件套）**：① keepalive 盘中（trade_calendar 判定）订阅集已发但 sub_latest 全空连续 3 轮（75s，新会话 60s 首推宽限）→ `recycle_session`（close+`_last_good_server=None` 强制全表重扫换节点）；② keepalive 发现会话缺失时自动 `ensure_subscribed()` 重建（勿用裸 ensure_session——带参订阅只在这里发）；③ `/api/kpl/feeddebug` 观测端点（remote/收帧量/drain 线程/订阅集/推送龄/seen_cmds 直方图/err110/drain_buf 头部 hex 采样）+ `?sub=cmd&bodyhex=&wait=` 在线标定动作（在活会话上发订阅帧等推送——**标定必须走后端自己的会话，独立探针会同账号抢槽**）
+- **根因三（3004 个股表专项）：RealtimeLHBReq 字段号错**。hq.proto 全字段表从 dex 内嵌描述符提取（`Hq;<clinit>` const-string 串）：`quotaType1 sortType2 cxType3 limitType4 stType5 zbType6 cybType7 kcbType8 bjsType9 indexType10 **start14 count15 startTime16 endTime17**`——旧版 start/count 用了 20/21（臆造），服务端静默丢弃。改为 14/15 后 feeddebug 标定 `0801100170007832` 立即回 302B 头部（total=340）。**items 仍不增量下发**（头部到了行不来，待续）；
+- **标定结论（盘中实测）**：2102 filter 全 0 ✓ 推；2121 `{bsType1,orderType2,sortType3}` bsType=1..6 全推（bs1/bs2 ~12K、bs3 6.6K，打板页竞价/即将涨停疑=bs2/bs3，换订后 parse items=0 待查载荷形态）；**3007 PlateTypeQuotasList 字段号虽对（1/2/3/4/5）但 quotaType/plateType/sortType 全值域扫描（0/1/2/3）+ 邻号 3005/2104/2105 全静默**——板块强度表仍无解；2103 DaBanStockListReq pidType 0-5 全静默（字段号经 proto 表核对无误）——打板竞价/即将涨停列表仍无解。hq.proto 全消息字段表已落 kanpan_spec/tools/out_shq.txt（从 classes2 dex 内嵌 descriptor 提取，后续任何 socket 请求体构造先查此表勿再臆字段号）
+- **排障方法论新增**：① 推流问题先看 drain_buf 头部 hex（观测端点直出）再猜；② "会话活但零推送"≠会话死——先 feeddebug 对照独立会话；③ 同账号多会话（自己的探针/模拟器 App）会互相抢推送槽，**联调期别开第二个同账号会话**；④ dex 内嵌 proto descriptor（socket/data/ServiceXxx 类 <clinit>）是字段号权威源
 
 ### ⭐ AI 投资分析（悬浮按钮 → 选股 → DSH 会话，2026-10-01；2026-10-07 三源换通达信/KPL同款）
 
