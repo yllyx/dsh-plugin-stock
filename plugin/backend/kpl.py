@@ -3149,6 +3149,146 @@ class KplClient:
             self._cache[key] = {"data": out, "ts": time.time()}
         return out
 
+    def get_plate_strength(self, industry: bool = False) -> Dict[str, Any]:
+        """板块强度表（App 行情·板块 tab 强度表同源数据的 HTTP 通道）。
+        ZhiShuRanking/RealRankingInfo Type=12 {ZSType:3, Index:<行偏移>, st:40, Order:1}
+        分页抓全（Count≈132，Index=行偏移每页推进，~92 请求 12s，磁盘缓存 5min+SWR）。
+        行字段（2026-10-08 与 App 截图逐位对拍）：f0 id f1 名 **f2 强度** f3 涨幅%
+        f6 主力净额 **f14 第二季度机构增仓**（Type=12；Type=13/14 附加列为 2026/2027PE）。
+        子板块（如 锂电池→固态电池）经 SonPlate_Info{PlateID} 嵌行（[id,名,强度]）。
+        3007 socket 推送同数据但服务端对本插件会话拒答，HTTP 组装为等效同源通道。"""
+        import json as _json
+        try:
+            from storage import storage as _st
+            cache_p = _st.data_dir / "kpl_plate_strength_cache.json"
+        except Exception:
+            cache_p = None
+        if cache_p is not None and cache_p.exists():
+            try:
+                dj = _json.loads(cache_p.read_text(encoding="utf-8"))
+                if dj.get("day") == time.strftime("%Y-%m-%d") and time.time() - dj.get("ts", 0) < 300:
+                    return dj["data"]
+            except Exception:
+                pass
+
+        def _fetch_all():
+            # 批量直连（绕 _rate_wait 同域串行——92 请求×2.5s 会拖 4 分钟，livenews PanKou 同法）
+            import requests as _rq
+            sess = self._get_client()
+            rows: Dict[str, list] = {}
+            common = self._common(False)
+            total = 132
+            for idx in range(0, 70):
+                try:
+                    data = {**common, "c": "ZhiShuRanking", "a": "RealRankingInfo",
+                            "Type": "12", "ZSType": "3", "Index": str(idx),
+                            "st": "80", "Order": "1"}
+                    r = sess.post(HOST_HQ2, data=data, timeout=10,
+                                  headers={"User-Agent": "lhb/6.3.20.0 okhttp/4.x"})
+                    lst = (r.json() or {}).get("list") or []
+                except Exception:
+                    break
+                if not lst:
+                    break
+                new = 0
+                for row in lst:
+                    if isinstance(row, list) and len(row) > 14:
+                        if str(row[0]) not in rows:
+                            rows[str(row[0])] = row
+                            new += 1
+                if new == 0 or len(rows) >= total:
+                    break
+                time.sleep(0.06)
+            out = []
+            for row in rows.values():
+                try:
+                    out.append({"plateId": str(row[0]), "name": str(row[1]),
+                                "strength": float(row[2]), "incRate": float(row[3]),
+                                "mainNet": float(row[6]), "instInc": float(row[14])})
+                except (TypeError, ValueError, IndexError):
+                    continue
+            out.sort(key=lambda x: -x["strength"])
+            return out
+
+        data = None
+        hit = self._cache.get("plate_strength")
+        if hit and time.time() - hit["ts"] < 300:
+            data = hit["data"]
+        if data is None:
+            if hit and not hit.get("refreshing"):
+                hit["refreshing"] = True
+                data = hit["data"]          # 先回旧值
+                def _bg():
+                    try:
+                        fresh = {"day": time.strftime("%Y-%m-%d"), "ts": time.time(), "list": _fetch_all()}
+                        self._cache["plate_strength"] = {"data": fresh, "ts": time.time()}
+                        if cache_p is not None:
+                            cache_p.write_text(_json.dumps({"day": fresh["day"], "ts": fresh["ts"], "data": fresh},
+                                                           ensure_ascii=False), encoding="utf-8")
+                    except Exception:
+                        pass
+                    finally:
+                        if "plate_strength" in self._cache:
+                            self._cache["plate_strength"]["refreshing"] = False
+                import threading as _th
+                _th.Thread(target=_bg, daemon=True, name="plstr").start()
+            else:
+                fresh = {"day": time.strftime("%Y-%m-%d"), "ts": time.time(), "list": _fetch_all()}
+                self._cache["plate_strength"] = {"data": fresh, "ts": time.time()}
+                if cache_p is not None:
+                    try:
+                        cache_p.write_text(_json.dumps({"day": fresh["day"], "ts": fresh["ts"], "data": fresh},
+                                                       ensure_ascii=False), encoding="utf-8")
+                    except Exception:
+                        pass
+                data = fresh
+        lst = (data or {}).get("list") or []
+        # 子板块嵌行：对强度 top8 父板块并发拉 SonPlate_Info（App 同款父→子缩进行）
+        if lst and not industry:
+            parents = [r for r in lst[:8] if r["strength"] > 300]
+            submap: Dict[str, Dict[str, Any]] = {}
+
+            def _son(pid):
+                try:
+                    d = self.call(HOST_HQ2, "ZhiShuRanking", "SonPlate_Info",
+                                  {"PlateID": pid}, authed=False)
+                    return pid, (d or {}).get("List") or []
+                except Exception:
+                    return pid, []
+
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for pid, sons in ex.map(_son, [r["plateId"] for r in parents]):
+                    if sons:
+                        submap[pid] = [{"plateId": str(s[0]), "name": str(s[1]),
+                                        "strength": float(s[2])}
+                                       for s in sons if isinstance(s, list) and len(s) >= 3]
+            nested = []
+            for r in lst:
+                nested.append(r)
+                for sub in submap.get(r["plateId"], []):
+                    sub["parent"] = r["plateId"]
+                    nested.append(sub)
+            lst = nested
+        return {"day": (data or {}).get("day") or time.strftime("%Y-%m-%d"), "list": lst}
+
+    def get_wpqc(self) -> Dict[str, Any]:
+        """尾盘抢筹（StockBidYiDong/GetWPQCIndex @HQ，App 板块 tab 折叠行盘后频道同源）。
+        List 行=[代码(未登录打码), 名称(打码), 0, 0, 抢筹金额, 0, ts]；
+        App 行文案「尾盘抢筹 10-08 **** 挂单抢筹5317万」← max(抢筹金额)/1e4。"""
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetWPQCIndex", {}, authed=False)
+            d = d or {}
+            lst = []
+            for r in d.get("List") or []:
+                if isinstance(r, list) and len(r) >= 5:
+                    lst.append({"code": str(r[0]), "name": str(r[1]), "amount": r[4]})
+            mx = max((x["amount"] or 0) for x in lst) if lst else 0
+            return {"day": d.get("Day") or "", "state": d.get("State"),
+                    "list": lst, "top_amount": mx,
+                    "text": f"挂单抢筹{round(mx / 1e4)}万" if mx else ""}
+        return self._cached_swr("wpqc", 60, _fetch)
+
     def get_active_plates(self) -> Dict[str, Any]:
         """近期活跃板块（Index/GetInfo {View:2,3,4,5} BaceFaceList，App 板块 tab 休市回退/首页块同源）。
         行=[名称, 涨幅, 801板块id]。3007 强度表未破前，板块 tab 回退用。"""

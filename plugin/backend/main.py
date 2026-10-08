@@ -1726,6 +1726,19 @@ async def kpl_dabanlists():
     return await asyncio.to_thread(get_daban_lists)
 
 
+@app.get("/api/kpl/plate-strength")
+async def kpl_plate_strength(industry: bool = False):
+    """板块强度表（RealRankingInfo HTTP 组装，App 板块 tab 强度表同源数值；
+    强度/涨幅/主力净额/机构增仓全字段，强度降序，含子板块嵌行）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_plate_strength, industry)
+
+
+@app.get("/api/kpl/wpqc")
+async def kpl_wpqc():
+    """尾盘抢筹（GetWPQCIndex，板块 tab 折叠行盘后频道：挂单抢筹 X 万）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_wpqc)
+
+
 @app.get("/api/kpl/active-plates")
 async def kpl_active_plates():
     """近期活跃板块（Index/GetInfo BaceFaceList，板块 tab 回退/首页块同源）"""

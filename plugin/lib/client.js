@@ -3348,7 +3348,6 @@ window.__ModuleLoader__.load({
             const radar = feedData(feed, "radar");
             const radarItems = ((radar.data && radar.data.items) || []).slice().reverse();
             const [idxSel, setIdxSel] = useState("SH");
-            const [radarOpen, setRadarOpen] = useState(false);
             const [ptab, setPtab] = useState("jx");
             const ix = idxes.find(x => x.num === idxSel) || idxes[0];
             const ixLast = ix && ix.points && ix.points.length ? ix.points[ix.points.length - 1].v : (ix ? ix.preClose : null);
@@ -3358,7 +3357,6 @@ window.__ModuleLoader__.load({
             let eMain = "", eInc = "";
             const em = /^([\d.]+亿)\(([\d.]+)%,增量([\d.]+)亿\)$/.exec((e && e.text) || "");
             if (em) { eMain = em[1]; eInc = "增量" + em[3] + "亿(" + em[2] + "%)"; }
-            const r0 = radarItems[0] || null;
             return React.createElement("div", { className: "kpl-page" },
                 // 顶部横滑卡：沪深创 / 沪深京预测量能 / 涨跌家数
                 React.createElement("div", { className: "kpl-plt-cards" },
@@ -3393,23 +3391,8 @@ window.__ModuleLoader__.load({
                             React.createElement("span", { className: "rd" }, z.realZt != null ? z.realZt : "-"),
                             " : ",
                             React.createElement("span", { className: "gn" }, z.realDt != null ? z.realDt : "-"))) : null),
-                // 盘中雷达（App：标题+最新一条 时间红 + 股名蓝 + 状态红，点击展开全部）
-                React.createElement("div", { className: "kpl-plt-radar" },
-                    React.createElement("div", { className: "hd", onClick: function () { setRadarOpen(!radarOpen); } },
-                        React.createElement("span", { className: "t" }, "盘中雷达"),
-                        r0 ? React.createElement("span", { className: "rt" },
-                            React.createElement("i", { className: "tm" }, fmtTs(Number(r0.ts))),
-                            React.createElement("i", { className: "nm" }, r0.name || ""),
-                            React.createElement("i", { className: "st" }, r0.status || "")) : null,
-                        React.createElement("i", { className: "ar" }, radarOpen ? "∧" : "∨")),
-                    radarOpen && React.createElement("div", { className: "bd" },
-                        radarItems.map(function (r, i) {
-                            return React.createElement("div", { key: i, className: "it" },
-                                React.createElement("span", { className: "tm" }, fmtTs(Number(r.ts))),
-                                React.createElement("span", { className: "nm" }, r.name || ""),
-                                React.createElement("span", { className: "st" }, r.status || ""),
-                                React.createElement("span", { className: "tx" }, r.content || ""));
-                        }))),
+                // 折叠频道行（App：盘中=盘中雷达 2101；盘后=尾盘抢筹 GetWPQCIndex）
+                React.createElement(KplPlateTicker, { radarItems: radarItems, go: go }),
                 // 精选/行业 + 右侧入口
                 React.createElement("div", { className: "kpl-plt-filter" },
                     React.createElement("span", {
@@ -3437,75 +3420,101 @@ window.__ModuleLoader__.load({
                     React.createElement("span", { className: "his", onClick: function () { go({ page: "func_pending", name: "历史统计" }); } }, "⇄ 历史统计")));
         }
 
-        // 板块强度真表（3007 SubPlateTypeQuotasList 盘中推送；未破解前回退活跃板块）
-        function KplPlateRankTable({ feed, go, industry }) {
-            const pr = feedData(feed, "platerank");
-            const items = (pr.data && pr.data.items) || [];
-            const [ap, setAp] = useState(null);
+        // 折叠频道行（App：盘中=盘中雷达 2101；盘后=尾盘抢筹 GetWPQCIndex「尾盘抢筹 10-08 **** 挂单抢筹5317万」）
+        function KplPlateTicker({ radarItems, go }) {
+            const [wp, setWp] = useState(null);
+            const [open, setOpen] = useState(false);
             useEffect(function () {
                 let alive = true;
-                api("/api/kpl/active-plates").then(function (d) { if (alive) setAp(d.list || []); }).catch(function () { });
+                api("/api/kpl/wpqc").then(function (d) { if (alive) setWp(d); }).catch(function () { });
                 return function () { alive = false; };
             }, []);
+            const trading = window.__kplTradeCal && typeof isTradingNowCal === "function" && isTradingNowCal();
+            const r0 = radarItems[0] || null;
+            const useRadar = trading && r0;
+            const title = useRadar ? "盘中雷达" : (wp && wp.text ? "尾盘抢筹" : "盘中雷达");
+            const kids = [];
+            kids.push(React.createElement("div", { className: "hd", key: "hd", onClick: function () { setOpen(!open); } },
+                React.createElement("span", { className: "t" }, title),
+                useRadar ? React.createElement("span", { className: "rt" },
+                    React.createElement("i", { className: "tm" }, fmtTs(Number(r0.ts))),
+                    React.createElement("i", { className: "nm" }, r0.name || ""),
+                    React.createElement("i", { className: "st" }, r0.status || "")) : null,
+                !useRadar && wp && wp.text ? React.createElement("span", { className: "rt" },
+                    React.createElement("i", { className: "tm" }, wp.day || ""),
+                    React.createElement("i", { className: "st" }, "****"),
+                    React.createElement("i", { className: "st" }, wp.text)) : null,
+                React.createElement("i", { className: "ar" }, open ? "∧" : "∨")));
+            if (open) {
+                if (useRadar) {
+                    kids.push(React.createElement("div", { className: "bd", key: "bd" },
+                        radarItems.map(function (r, i) {
+                            return React.createElement("div", { key: i, className: "it" },
+                                React.createElement("span", { className: "tm" }, fmtTs(Number(r.ts))),
+                                React.createElement("span", { className: "nm" }, r.name || ""),
+                                React.createElement("span", { className: "st" }, r.status || ""),
+                                React.createElement("span", { className: "tx" }, r.content || ""));
+                        })));
+                } else if (wp && (wp.list || []).length) {
+                    kids.push(React.createElement("div", { className: "bd", key: "bd" },
+                        wp.list.map(function (r, i) {
+                            return React.createElement("div", { key: i, className: "it" },
+                                React.createElement("span", { className: "nm" }, r.code || ""),
+                                React.createElement("span", { className: "st" }, r.name || ""),
+                                React.createElement("span", { className: "tx" },
+                                    "挂单抢筹 " + (r.amount != null ? fmtAmount(r.amount) : "--")));
+                        })));
+                }
+            }
+            return React.createElement("div", { className: "kpl-plt-radar" }, kids);
+        }
+
+        // 板块强度表（RealRankingInfo HTTP 组装，与 App 强度列逐位对拍 2026-10-08：
+        // 锂电池 6290/石油石化 3210/并购重组 1377；子板块 SonPlate_Info 嵌行）
+        function KplPlateRankTable({ go, industry }) {
+            const [d, setD] = useState(null);
+            const [error, setError] = useState(null);
+            useEffect(function () {
+                let alive = true;
+                api("/api/kpl/plate-strength" + (industry ? "?industry=1" : ""))
+                    .then(function (x) { if (alive) setD(x); })
+                    .catch(function (e) { if (alive) setError(e.message); });
+                return function () { alive = false; };
+            }, [industry]);
+            const rows = (d && d.list) || [];
             const head = React.createElement("div", { className: "kpl-plt-thead" },
                 React.createElement("span", { className: "c nm" }, "板块"),
                 React.createElement("span", { className: "c hl" }, "强度", React.createElement("i", { className: "srt dn" }, "▼")),
                 React.createElement("span", { className: "c" }, "主力净额", React.createElement("i", { className: "srt" }, "⇅")),
-                React.createElement("span", { className: "c" }, "涨幅", React.createElement("i", { className: "srt" }, "⇅")));
-            if (items.length) {
+                React.createElement("span", { className: "c" }, "第二季度机构增仓", React.createElement("i", { className: "srt" }, "⇅")));
+            if (error) {
                 return React.createElement("div", { className: "kpl-plt-table" },
-                    head,
-                    items.map(function (r, i) {
-                        return React.createElement("div", {
-                            key: r.plateId + i, className: "kpl-plt-trow",
-                            onClick: function () { go && go({ page: "sectorDetail", plateId: r.plateId, name: r.plateName }); },
-                        },
-                            React.createElement("div", { className: "c nm" },
-                                React.createElement("b", null, r.plateName || "--"),
-                                React.createElement("span", { className: "cd" }, r.plateId || "")),
-                            React.createElement("div", { className: "c hl" }, r.strength != null ? Number(r.strength).toFixed(0) : "--"),
-                            React.createElement("div", { className: "c " + (Number(r.mainNet) >= 0 ? "up" : "dn") },
-                                r.mainNet != null ? fmtAmount(r.mainNet) : "--"),
-                            React.createElement("div", { className: "c " + (Number(r.incRate) >= 0 ? "up" : "dn") },
-                                r.incRate != null ? Number(r.incRate).toFixed(2) + "%" : "--"));
-                    }));
+                    head, React.createElement("div", { className: "kpl-mkt-empty sm" }, "加载失败：" + error));
             }
-            // 强度表未到（3007 协议未破）：活跃板块（App 同源 BaceFaceList），行内异步补主力净额/涨幅
-            const act = ap || [];
+            if (!d) {
+                return React.createElement("div", { className: "kpl-plt-table" },
+                    head, React.createElement("div", { className: "kpl-mkt-empty sm" }, "加载中…"));
+            }
             return React.createElement("div", { className: "kpl-plt-table" },
                 head,
-                act.length ? act.map(function (p) {
-                    return React.createElement(KplPlateFallbackRow, { key: p.plateId, plate: p, go: go });
-                })
-                    : React.createElement("div", { className: "kpl-mkt-empty sm" }, "加载中…"),
-                React.createElement("div", { className: "kpl-plt-tips" },
-                    "强度列为交易时段推送数据（App 同源 3007），恢复后自动切换"));
-        }
-
-        // 回退行：板块名+code，异步拉板块详情补 涨幅/主力净额（KplSectorRow 同源数据）
-        function KplPlateFallbackRow({ plate, go }) {
-            const [info, setInfo] = useState(null);
-            useEffect(function () {
-                let alive = true;
-                const t = setTimeout(async function () {
-                    try { const d = await api("/api/kpl/plate/" + plate.plateId); if (alive) setInfo(d.info); }
-                    catch (e) { /* */ }
-                }, Math.floor(Math.random() * 2000));
-                return function () { alive = false; clearTimeout(t); };
-            }, [plate.plateId]);
-            const pct = info ? info.change_pct : (plate.rate != null ? plate.rate : null);
-            return React.createElement("div", {
-                className: "kpl-plt-trow",
-                onClick: function () { go && go({ page: "sectorDetail", plateId: plate.plateId, name: plate.name }); },
-            },
-                React.createElement("div", { className: "c nm" },
-                    React.createElement("b", null, plate.name || "--"),
-                    React.createElement("span", { className: "cd" }, plate.plateId || "")),
-                React.createElement("div", { className: "c hl dim" }, "--"),
-                React.createElement("div", { className: "c " + (info && info.main_net >= 0 ? "up" : "dn") },
-                    info && info.main_net != null ? fmtAmount(info.main_net) : "--"),
-                React.createElement("div", { className: "c " + (Number(pct) >= 0 ? "up" : "dn") },
-                    pct != null ? Number(pct).toFixed(2) + "%" : "--"));
+                rows.map(function (r, i) {
+                    const isSub = !!r.parent;
+                    return React.createElement("div", {
+                        key: r.plateId + i,
+                        className: "kpl-plt-trow" + (isSub ? " sub" : ""),
+                        onClick: function () { go && go({ page: "sectorDetail", plateId: r.plateId, name: r.name }); },
+                    },
+                        React.createElement("div", { className: "c nm" },
+                            isSub ? React.createElement("i", { className: "ln" }) : null,
+                            React.createElement("b", null, r.name || "--"),
+                            React.createElement("span", { className: "cd" }, r.plateId || "")),
+                        React.createElement("div", { className: "c hl" },
+                            r.strength != null ? Number(r.strength).toFixed(0) : "--"),
+                        React.createElement("div", { className: "c " + (Number(r.mainNet) >= 0 ? "up" : "dn") },
+                            r.mainNet != null ? fmtAmount(r.mainNet) : "--"),
+                        React.createElement("div", { className: "c " + (Number(r.instInc) >= 0 ? "up" : "dn") },
+                            r.instInc != null ? fmtAmount(r.instInc) : "--"));
+                }));
         }
         function KplSectorRow({ sector, go, list }) {
             const [info, setInfo] = useState(null);
@@ -7222,7 +7231,12 @@ window.__ModuleLoader__.load({
                 .kpl-plt-filter .tools { margin-left: auto; display: flex; gap: 10px; }
                 .kpl-plt-filter .tools i { font-style: normal; font-size: 12px; color: #666; cursor: pointer; }
                 .kpl-plt-table { background: #fff; margin: 0 0 8px; }
-                .kpl-plt-thead, .kpl-plt-trow { display: grid; grid-template-columns: 1.4fr 0.9fr 1fr 0.9fr; align-items: center; padding-left: 12px; padding-right: 12px; }
+                .kpl-plt-thead, .kpl-plt-trow { display: grid; grid-template-columns: 1.25fr 0.75fr 0.95fr 1.25fr; align-items: center; padding-left: 12px; padding-right: 12px; }
+                .kpl-plt-trow.sub { padding-top: 8px; padding-bottom: 8px; background: #fbfdff; }
+                .kpl-plt-trow.sub .c.nm { padding-left: 18px; position: relative; }
+                .kpl-plt-trow.sub .c.nm .ln { position: absolute; left: 2px; top: 50%; width: 12px; height: 1px; background: #d0d7e2; }
+                .kpl-plt-trow.sub .c.nm b { font-size: 14px; font-weight: 600; color: #333; }
+                .kpl-plt-trow.sub .c { font-size: 14px; }
                 .kpl-plt-thead { padding-top: 10px; padding-bottom: 8px; border-bottom: 1px solid #f0f0f0; }
                 .kpl-plt-thead .c { font-size: 14px; color: #666; text-align: right; }
                 .kpl-plt-thead .c.nm { text-align: left; }
