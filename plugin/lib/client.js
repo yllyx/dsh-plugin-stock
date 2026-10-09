@@ -3344,6 +3344,12 @@ window.__ModuleLoader__.load({
             const radar = feedData(feed, "radar");
             const radarItems = ((radar.data && radar.data.items) || []).slice().reverse();
             const [idxSel, setIdxSel] = useState("SH");
+            const [idxCards, setIdxCards] = useState([]);
+            useEffect(function () {
+                let alive = true;
+                api("/api/kpl/index-cards").then(function (d) { if (alive) setIdxCards(d.cards || []); }).catch(function () { });
+                return function () { alive = false; };
+            }, []);
             const [ptab, setPtab] = useState("jx");
             const ix = idxes.find(function (x) { return x.num === idxSel; }) || idxes[0];
             const ixLast = ix && ix.points && ix.points.length ? ix.points[ix.points.length - 1].v : (ix ? ix.preClose : null);

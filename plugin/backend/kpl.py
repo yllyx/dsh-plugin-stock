@@ -3272,6 +3272,76 @@ class KplClient:
             lst = nested
         return {"day": (data or {}).get("day") or time.strftime("%Y-%m-%d"), "list": lst}
 
+    def get_index_cards(self) -> Dict[str, Any]:
+        """板块 tab 顶部指数卡（App 同源 ServiceHqList/SubIndexSimpleQuotas @socket 3006：
+        HQStockIdListReq{stockIds[]} → IndexSimpleQuotasResp{items}，2026-10-09 实测逐位：
+        科创50 SH000688 / 上证50 SH000016 / 沪深300 SH000300 / 北证50 BJ899050；
+        Item: f1 id(str) f2 name(str) f3 点位×1e4(varint) f4 涨跌点×1e4(int64 溢出需转符号)
+        f5 涨跌幅%(float；proto3 缺省不序列化，0 值字段缺失)。微盘股指数 id 待定。"""
+        ids = ["SH000688", "SH000016", "SH000300", "BJ899050"]
+
+        def _varint(b, i):
+            v = 0; sh = 0
+            while True:
+                x = b[i]; i += 1
+                v |= (x & 0x7f) << sh; sh += 7
+                if not x & 0x80: break
+            return v, i
+
+        def _signed64(v):
+            return v - (1 << 64) if v >= (1 << 63) else v
+
+        def _fetch():
+            from kpl_socket import get_kpl_socket, pb_str
+            api = get_kpl_socket()
+            s = api._session
+            if not (s and s.alive):
+                api.ensure_session(timeout_s=30)
+                s = api._session
+            if not (s and s.alive):
+                return {"cards": []}
+            body = b"".join(pb_str(1, x) for x in ids)
+            resp = api._session_rpc(3006, body, timeout_s=10)
+            if not resp:
+                return {"cards": []}
+            try:
+                plen = int.from_bytes(resp[2:4], "big")
+                body = resp[4 + plen:]
+                cards = []
+                i = 0
+                while i < len(body):
+                    if body[i] != 0x0a: break
+                    i += 1
+                    seg_len, i = _varint(body, i)
+                    seg = body[i:i + seg_len]; i += seg_len
+                    it: Dict[str, Any] = {}; j = 0
+                    while j < len(seg):
+                        tag = seg[j]; j += 1
+                        fno, wt = tag >> 3, tag & 7
+                        if wt == 2:
+                            ln = seg[j]; j += 1
+                            it[fno] = seg[j:j + ln].decode("utf-8", "replace"); j += ln
+                        elif wt == 0:
+                            v, j = _varint(seg, j)
+                            it[fno] = _signed64(v) if fno in (3, 4) else v
+                        elif wt == 5:
+                            import struct as _s
+                            it[fno] = round(float(_s.unpack_from("<f", seg, j)[0]), 3); j += 4
+                        elif wt == 1:
+                            import struct as _s
+                            it[fno] = float(_s.unpack_from("<d", seg, j)[0]); j += 8
+                    if it.get(1):
+                        cards.append({
+                            "id": it[1], "name": it.get(2) or it[1],
+                            "price": round(it[3] / 1e4, 2) if it.get(3) is not None else None,
+                            "incPrice": round(it[4] / 1e4, 2) if it.get(4) is not None else 0,
+                            "incRate": round(float(it.get(5) or 0), 2),
+                        })
+            except Exception:
+                    pass
+            return {"cards": cards}
+        return self._cached_swr("index_cards", 30, _fetch)
+
     def get_bkjj(self) -> Dict[str, Any]:
         """竞价异动板块（StockBidYiDong/GetBKJJSearch @HQ，App 板块 tab 轮播第 4 卡同源）。
         竞价时段（约 9:20-9:25）返回板块竞价爆量数据，其余时段 List 为空（App 亦缓存展示）。

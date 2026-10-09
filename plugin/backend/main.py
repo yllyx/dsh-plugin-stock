@@ -1733,6 +1733,12 @@ async def kpl_plate_strength(industry: bool = False):
     return await asyncio.to_thread(kpl_api.get_kpl().get_plate_strength, industry)
 
 
+@app.get("/api/kpl/index-cards")
+async def kpl_index_cards():
+    """板块 tab 顶部指数卡（socket 3006 SubIndexSimpleQuotas：科创50/上证50/沪深300/北证50 实时点位）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_index_cards)
+
+
 @app.get("/api/kpl/bkjj")
 async def kpl_bkjj():
     """竞价异动板块（GetBKJJSearch，板块 tab 轮播第 4 卡；竞价时段有数据）"""
