@@ -3298,12 +3298,18 @@ class KplClient:
             if not (s and s.alive):
                 api.ensure_session(timeout_s=30)
                 s = api._session
-            if not (s and s.alive):
-                return {"cards": []}
-            body = b"".join(pb_str(1, x) for x in ids)
-            resp = api._session_rpc(3006, body, timeout_s=10)
+            # 会话未建/首拍为空时重试（后端冷启动期 socket 建立需数十秒）
+            for _try in range(3):
+                if not (s and s.alive):
+                    api.ensure_session(timeout_s=30)
+                    s = api._session
+                if s and s.alive:
+                    resp = api._session_rpc(3006, b"".join(pb_str(1, x) for x in ids), timeout_s=10)
+                    if resp:
+                        break
+                time.sleep(2)
             if not resp:
-                return {"cards": []}
+                return {"cards": [], "pending": True}
             try:
                 plen = int.from_bytes(resp[2:4], "big")
                 body = resp[4 + plen:]
@@ -3340,7 +3346,11 @@ class KplClient:
             except Exception:
                     pass
             return {"cards": cards}
-        return self._cached_swr("index_cards", 30, _fetch)
+        data = self._cached_swr("index_cards", 30, _fetch)
+        # 空结果不落缓存（_cached_swr 已缓存则清掉，前端下次进入重拉）
+        if data and not data.get("cards") and "index_cards" in self._cache:
+            self._cache.pop("index_cards", None)
+        return data
 
     def get_bkjj(self) -> Dict[str, Any]:
         """竞价异动板块（StockBidYiDong/GetBKJJSearch @HQ，App 板块 tab 轮播第 4 卡同源）。

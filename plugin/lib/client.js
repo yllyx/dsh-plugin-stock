@@ -3345,11 +3345,14 @@ window.__ModuleLoader__.load({
             const radarItems = ((radar.data && radar.data.items) || []).slice().reverse();
             const [idxSel, setIdxSel] = useState("SH");
             const [idxCards, setIdxCards] = useState([]);
-            useEffect(function () {
-                let alive = true;
-                api("/api/kpl/index-cards").then(function (d) { if (alive) setIdxCards(d.cards || []); }).catch(function () { });
-                return function () { alive = false; };
+            const loadIdx = useCallback(async function () {
+                try {
+                    const d = await api("/api/kpl/index-cards");
+                    if (d && d.cards && d.cards.length) setIdxCards(d.cards);
+                } catch (e) { /* 下一轮重试 */ }
             }, []);
+            useEffect(function () { loadIdx(); }, [loadIdx]);
+            usePolling(loadIdx, 30000, []);
             const [ptab, setPtab] = useState("jx");
             const ix = idxes.find(function (x) { return x.num === idxSel; }) || idxes[0];
             const ixLast = ix && ix.points && ix.points.length ? ix.points[ix.points.length - 1].v : (ix ? ix.preClose : null);
