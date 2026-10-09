@@ -3408,7 +3408,7 @@ window.__ModuleLoader__.load({
                     idxCard, volCard, zdCard,
                     // 指数卡（App 卡流后段：微盘股/科创50/北证50/上证50/沪深300——点位源 MainIndexQuotas 接入中）
                     // 指数卡（App 卡流后段：socket 3006 SubIndexSimpleQuotas 同源实时点位）
-                    idxCards.map(function (c) {
+                    [{ id: "WP", name: "微盘股", price: null, incPrice: null, incRate: 0 }].concat(idxCards).map(function (c) {
                         var up = Number(c.incRate) >= 0;
                         return React.createElement("div", { className: "kpl-plt-card " + (up ? "upbg" : "dnbg"), key: c.id },
                             React.createElement("div", { className: "kpl-plt-lbl" }, c.name || c.id),
