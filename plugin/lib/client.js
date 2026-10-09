@@ -2821,7 +2821,7 @@ window.__ModuleLoader__.load({
                 try {
                     const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
                     const timer = ctl ? setTimeout(() => ctl.abort(), 30000) : null;
-                    const resp = await fetch("/api/kpl/marketfeed", { signal: ctl ? ctl.signal : undefined });
+                    const resp = await fetch(`${PLUGIN_API_BASE}/api/kpl/marketfeed`, { signal: ctl ? ctl.signal : undefined });
                     if (timer) clearTimeout(timer);
                     if (resp.ok) setFeed(await resp.json());
                 } catch (e) { /* 超时/失败保留旧值，下轮轮询重试 */ }
@@ -3407,11 +3407,16 @@ window.__ModuleLoader__.load({
                 React.createElement("div", { className: "kpl-plt-cards" },
                     idxCard, volCard, zdCard,
                     // 指数卡（App 卡流后段：微盘股/科创50/北证50/上证50/沪深300——点位源 MainIndexQuotas 接入中）
-                    [["微盘股"], ["科创50"], ["北证50"], ["上证50"], ["沪深300"]].map(function (pair) {
-                        return React.createElement("div", { className: "kpl-plt-card dnbg", key: pair[0] },
-                            React.createElement("div", { className: "kpl-plt-lbl" }, pair[0]),
-                            React.createElement("div", { className: "kpl-plt-big dn" }, "--"),
-                            React.createElement("div", { className: "kpl-plt-sub" }, " "));
+                    // 指数卡（App 卡流后段：socket 3006 SubIndexSimpleQuotas 同源实时点位）
+                    idxCards.map(function (c) {
+                        var up = Number(c.incRate) >= 0;
+                        return React.createElement("div", { className: "kpl-plt-card " + (up ? "upbg" : "dnbg"), key: c.id },
+                            React.createElement("div", { className: "kpl-plt-lbl" }, c.name || c.id),
+                            React.createElement("div", { className: "kpl-plt-big " + (up ? "up" : "dn") },
+                                c.price != null ? c.price.toFixed(2) : "--"),
+                            React.createElement("div", { className: "kpl-plt-sub " + (up ? "up" : "dn") },
+                                (c.incPrice != null ? (up ? "+" : "") + c.incPrice.toFixed(2) + "  " : "") +
+                                (up ? "+" : "") + Number(c.incRate).toFixed(2) + "%"));
                     })),
                 // 折叠频道行（App PlateFragment：横向轮播 4 卡，默认第 1 张；左右滑动切卡）
                 React.createElement(KplPlateTicker, { radarItems: radarItems, go: go }),
