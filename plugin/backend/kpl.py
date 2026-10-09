@@ -3272,6 +3272,16 @@ class KplClient:
             lst = nested
         return {"day": (data or {}).get("day") or time.strftime("%Y-%m-%d"), "list": lst}
 
+    def get_bkjj(self) -> Dict[str, Any]:
+        """竞价异动板块（StockBidYiDong/GetBKJJSearch @HQ，App 板块 tab 轮播第 4 卡同源）。
+        竞价时段（约 9:20-9:25）返回板块竞价爆量数据，其余时段 List 为空（App 亦缓存展示）。
+        GetBKJJBL 需参数（1020），本轮未破。"""
+        def _fetch():
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetBKJJSearch", {}, authed=False)
+            d = d or {}
+            return {"day": time.strftime("%Y-%m-%d"), "list": d.get("List") or []}
+        return self._cached_swr("bkjj", 60, _fetch)
+
     def get_wpqc(self) -> Dict[str, Any]:
         """尾盘抢筹（StockBidYiDong/GetWPQCIndex @HQ，App 板块 tab 折叠行盘后频道同源）。
         List 行=[代码(未登录打码), 名称(打码), 0, 0, 抢筹金额, 0, ts]；

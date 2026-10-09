@@ -1733,6 +1733,12 @@ async def kpl_plate_strength(industry: bool = False):
     return await asyncio.to_thread(kpl_api.get_kpl().get_plate_strength, industry)
 
 
+@app.get("/api/kpl/bkjj")
+async def kpl_bkjj():
+    """竞价异动板块（GetBKJJSearch，板块 tab 轮播第 4 卡；竞价时段有数据）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_bkjj)
+
+
 @app.get("/api/kpl/wpqc")
 async def kpl_wpqc():
     """尾盘抢筹（GetWPQCIndex，板块 tab 折叠行盘后频道：挂单抢筹 X 万）"""
