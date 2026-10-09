@@ -3349,10 +3349,18 @@ window.__ModuleLoader__.load({
                 try {
                     const d = await api("/api/kpl/index-cards");
                     if (d && d.cards && d.cards.length) setIdxCards(d.cards);
-                } catch (e) { /* 下一轮重试 */ }
+                } catch (e) { /* 快速重试兜底 */ }
             }, []);
-            useEffect(function () { loadIdx(); }, [loadIdx]);
-            usePolling(loadIdx, 30000, []);
+            useEffect(function () {
+                loadIdx();
+                let n = 0;
+                const t = setInterval(async function () {
+                    n++;
+                    await loadIdx();
+                    if (n >= 20) clearInterval(t);   // 前 100 秒每 5s 快速重试，之后由 30s 轮询接管
+                }, 5000);
+                return function () { clearInterval(t); };
+            }, []);
             const [ptab, setPtab] = useState("jx");
             const ix = idxes.find(function (x) { return x.num === idxSel; }) || idxes[0];
             const ixLast = ix && ix.points && ix.points.length ? ix.points[ix.points.length - 1].v : (ix ? ix.preClose : null);
