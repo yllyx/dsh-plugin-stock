@@ -3387,7 +3387,15 @@ window.__ModuleLoader__.load({
                     React.createElement("span", { className: "gn" }, z.realDt != null ? z.realDt : "-")));
             return React.createElement("div", { className: "kpl-page" },
                 // 顶部横滑卡：沪深创 / 沪深京预测量能 / 涨跌家数（App 多卡横滑流）
-                React.createElement("div", { className: "kpl-plt-cards" }, idxCard, volCard, zdCard),
+                React.createElement("div", { className: "kpl-plt-cards" },
+                    idxCard, volCard, zdCard,
+                    // 指数卡（App 卡流后段：微盘股/科创50/北证50/上证50/沪深300——点位源 MainIndexQuotas 接入中）
+                    [["微盘股"], ["科创50"], ["北证50"], ["上证50"], ["沪深300"]].map(function (pair) {
+                        return React.createElement("div", { className: "kpl-plt-card dnbg", key: pair[0] },
+                            React.createElement("div", { className: "kpl-plt-lbl" }, pair[0]),
+                            React.createElement("div", { className: "kpl-plt-big dn" }, "--"),
+                            React.createElement("div", { className: "kpl-plt-sub" }, " "));
+                    })),
                 // 折叠频道行（App PlateFragment：横向轮播 4 卡，默认第 1 张；左右滑动切卡）
                 React.createElement(KplPlateTicker, { radarItems: radarItems, go: go }),
                 // 精选/行业 + 右侧入口
