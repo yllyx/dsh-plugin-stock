@@ -3408,7 +3408,7 @@ window.__ModuleLoader__.load({
                     idxCard, volCard, zdCard,
                     // 指数卡（App 卡流后段：微盘股/科创50/北证50/上证50/沪深300——点位源 MainIndexQuotas 接入中）
                     // 指数卡（App 卡流后段：socket 3006 SubIndexSimpleQuotas 同源实时点位）
-                    [{ id: "WP", name: "微盘股", price: null, incPrice: null, incRate: 0 }].concat(idxCards).map(function (c) {
+                    idxCards.map(function (c) {
                         var up = Number(c.incRate) >= 0;
                         return React.createElement("div", { className: "kpl-plt-card " + (up ? "upbg" : "dnbg"), key: c.id },
                             React.createElement("div", { className: "kpl-plt-lbl" }, c.name || c.id),
@@ -7286,6 +7286,12 @@ window.__ModuleLoader__.load({
                 .kpl-plt-lbl { font-size: 13px; color: #666; margin-bottom: 4px; }
                 .kpl-plt-big { font-size: 22px; font-weight: 700; line-height: 1.2; }
                 .kpl-plt-mid { font-size: 20px; font-weight: 700; }
+                .kpl-plt-mid .up { color: #e0333a; }
+                .kpl-plt-mid .dn { color: #0aa858; }
+                .kpl-plt-sub .up { color: #e0333a; }
+                .kpl-plt-sub .dn { color: #0aa858; }
+                .kpl-plt-sub .rd { color: #e0333a; }
+                .kpl-plt-sub .gn { color: #0aa858; }
                 .kpl-plt-mid .sep { color: #bbb; margin: 0 6px; font-weight: 400; }
                 .kpl-plt-sub { font-size: 12px; margin-top: 3px; }
                 .kpl-plt-big.up, .kpl-plt-sub.up { color: #e0333a; }

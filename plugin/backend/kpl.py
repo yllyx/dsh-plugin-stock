@@ -3278,7 +3278,7 @@ class KplClient:
         科创50 SH000688 / 上证50 SH000016 / 沪深300 SH000300 / 北证50 BJ899050；
         Item: f1 id(str) f2 name(str) f3 点位×1e4(varint) f4 涨跌点×1e4(int64 溢出需转符号)
         f5 涨跌幅%(float；proto3 缺省不序列化，0 值字段缺失)。微盘股指数 id 待定。"""
-        ids = ["SH000688", "SH000016", "SH000300", "BJ899050"]
+        ids = ["803010", "SH000688", "SH000016", "SH000300", "BJ899050"]
 
         def _varint(b, i):
             v = 0; sh = 0
