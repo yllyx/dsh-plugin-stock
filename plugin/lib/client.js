@@ -3451,88 +3451,135 @@ window.__ModuleLoader__.load({
         // 折叠频道行（App PlateFragment：横向轮播 4 卡，默认第 1 张；左右滑动切卡）
         // 卡1 盘中雷达（2101 收起摘要）· 卡2 市场雷达（2101 明细）· 卡3 尾盘抢筹（GetWPQCIndex）
         // · 卡4 竞价异动板块（GetBKJJSearch，竞价时段数据）
+        // 折叠频道行（App PlateFragment：横向轮播 4 卡，默认第 1 张，左右滑切卡）
+        // 卡序（App 同款）：①竞价涨停委买 ②竞价异动板块 ③市场雷达 ④尾盘抢筹
+        // 每卡显示 3 条数据，点卡片标题区展开/收起，点「详情」跳转对应详情页
+        // 轮播卡详情页（App：点卡片进对应详情；四类数据满列表）
+        function KplTickerDetail({ kind, go }) {
+            const meta = {
+                bidbuy: { title: "竞价涨停委买", api: "/api/kpl/bidbuy", key: "list", empty: "竞价涨停委买为集合竞价时段（9:15-9:25）数据" },
+                bkjj: { title: "竞价异动板块", api: "/api/kpl/bkjj", key: "list", empty: "竞价异动为集合竞价时段（9:20-9:25）数据" },
+                radar: { title: "市场雷达", api: null, key: "items", empty: "市场雷达为交易时段推送" },
+                wpqc: { title: "尾盘抢筹", api: "/api/kpl/wpqc", key: "list", empty: "尾盘抢筹为 14:30 后数据" },
+            }[kind] || { title: "详情", api: null, key: "list", empty: "--" };
+            const [d, setD] = useState(null);
+            const [error, setError] = useState(null);
+            useEffect(function () {
+                let alive = true;
+                if (meta.api) api(meta.api).then(function (x) { if (alive) setD(x); }).catch(function (e) { if (alive) setError(e.message); });
+                return function () { alive = false; };
+            }, []);
+            const rows = (d && d[meta.key]) || [];
+            return React.createElement("div", { className: "kpl-page" },
+                React.createElement(KplPageHeader, { title: meta.title, onBack: function () { go({ page: "back" }); } }),
+                React.createElement(ErrorBox, { error }),
+                React.createElement("div", { className: "kpl-tk-detail" },
+                    kind === "radar" ? (rows.length ? rows.map(function (r, i) {
+                        return React.createElement("div", { key: i, className: "kpl-tk-drow",
+                            onClick: function () { go({ page: "stock", stock: { code: r.code, name: r.name } }); } },
+                            React.createElement("span", { className: "tm" }, fmtTs(Number(r.ts))),
+                            React.createElement("span", { className: "nm" }, r.name || ""),
+                            React.createElement("span", { className: "st" }, r.status || ""),
+                            React.createElement("span", { className: "tx" }, r.content || ""));
+                    }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, meta.empty)) :
+                    kind === "wpqc" ? (rows.length ? rows.map(function (r, i) {
+                        return React.createElement("div", { key: i, className: "kpl-tk-drow" },
+                            React.createElement("span", { className: "tm" }, d.day || ""),
+                            React.createElement("span", { className: "st" }, "****"),
+                            React.createElement("span", { className: "tx" }, "挂单抢筹 ",
+                                React.createElement("b", { className: "rd" }, fmtAmount(r.amount))));
+                    }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, meta.empty)) :
+                    kind === "bkjj" ? (rows.length ? rows.map(function (r, i) {
+                        var cells = Array.isArray(r) ? r : [];
+                        return React.createElement("div", { key: i, className: "kpl-tk-drow" },
+                            React.createElement("span", { className: "nm" }, String(cells[0] || "")),
+                            React.createElement("span", { className: "tx" }, "竞价爆量 " + String(cells[2] || "") + "倍"),
+                            React.createElement("span", { className: "rd" }, "异动金额 " + String(cells[3] || "")));
+                    }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, meta.empty)) :
+                    (rows.length ? rows.map(function (r, i) {
+                        return React.createElement("div", { key: i, className: "kpl-tk-drow" },
+                            React.createElement("span", { className: "nm" }, r.code || ""),
+                            React.createElement("span", { className: "nm" }, r.name || ""),
+                            React.createElement("span", { className: "rd" }, "委买 " + fmtAmount(r.amount)));
+                    }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, meta.empty))));
+        }
+
+
         function KplPlateTicker({ radarItems, go }) {
             const [wp, setWp] = useState(null);
             const [bk, setBk] = useState(null);
-            const [openMap, setOpenMap] = useState({});   // 各卡展开态（默认卡2/3/4 展开，卡1 收起）
+            const [bb, setBb] = useState(null);
+            const [openMap, setOpenMap] = useState({});
             useEffect(function () {
                 let alive = true;
                 api("/api/kpl/wpqc").then(function (d) { if (alive) setWp(d); }).catch(function () { });
                 api("/api/kpl/bkjj").then(function (d) { if (alive) setBk(d); }).catch(function () { });
+                api("/api/kpl/bidbuy").then(function (d) { if (alive) setBb(d); }).catch(function () { });
                 return function () { alive = false; };
             }, []);
             const isOpen = function (k, def) { return openMap[k] != null ? openMap[k] : def; };
-            const tog = function (k, def) { return function () { setOpenMap(function (m) { const o = Object.assign({}, m); o[k] = (m[k] != null ? m[k] : def) ? false : true; return o; }); }; };
-            const r0 = radarItems[0] || null;
-            const rTop = radarItems.slice(0, 6);
-            const wpList = (wp && wp.list) || [];
-            const bkList = (bk && bk.list) || [];
+            const tog = function (k, def) {
+                return function (e) {
+                    e.stopPropagation();
+                    setOpenMap(function (m) { const o = Object.assign({}, m); o[k] = (m[k] != null ? m[k] : def) ? false : true; return o; });
+                };
+            };
+            const radarTop = radarItems.slice(0, 3);
+            const wpTop = ((wp && wp.list) || []).slice(0, 3);
+            const bkTop = ((bk && bk.list) || []).slice(0, 3);
+            const bbTop = ((bb && bb.list) || []).slice(0, 3);
+            const fmtWan = function (v) { return v != null ? fmtAmount(v) : "--"; };
 
-            function cardHead(key, defOpen, title, right) {
-                return React.createElement("div", { className: "hd", onClick: tog(key, defOpen) },
-                    React.createElement("span", { className: "t" }, title),
-                    React.createElement("span", { className: "rt" }, right || null),
-                    React.createElement("i", { className: "col" }, isOpen(key, defOpen) ? "收起" : "展开"));
+            function card(key, defOpen, title, badge, rows, emptyText, onRow, detailKind) {
+                const open = isOpen(key, defOpen);
+                return React.createElement("div", { className: "kpl-tk-card", key: key },
+                    React.createElement("div", { className: "hd" },
+                        React.createElement("span", { className: "t", onClick: tog(key, defOpen) }, title),
+                        badge ? React.createElement("span", { className: "rt" }, badge) : null,
+                        React.createElement("i", { className: "dt", onClick: function () { go({ page: "tickerDetail", kind: detailKind }); } }, "详情"),
+                        React.createElement("i", { className: "col", onClick: tog(key, defOpen) }, open ? "收起" : "展开")),
+                    open && React.createElement("div", { className: "bd" },
+                        rows.length ? rows.map(function (r, i) {
+                            return React.createElement("div", { key: i, className: "it", onClick: onRow ? function () { onRow(r); } : undefined },
+                                typeof r === 'string' ? React.createElement("span", { className: "tx" }, r) : r);
+                        }) : React.createElement("div", { className: "it" }, React.createElement("span", { className: "tx" }, emptyText))));
             }
 
-            // 卡1 盘中雷达（收起=单行最新；展开=列表）
-            const radarCard = React.createElement("div", { className: "kpl-tk-card", key: "radar" },
-                cardHead("radar", false, "盘中雷达",
-                    r0 ? React.createElement("span", { className: "rt" },
-                        React.createElement("i", { className: "tm" }, fmtTs(Number(r0.ts))),
-                        React.createElement("i", { className: "nm" }, r0.name || ""),
-                        React.createElement("i", { className: "st" }, r0.status || "")) : null),
-                isOpen("radar", false) && React.createElement("div", { className: "bd" },
-                    radarItems.length ? radarItems.map(function (r, i) {
-                        return React.createElement("div", { key: i, className: "it" },
-                            React.createElement("span", { className: "tm" }, fmtTs(Number(r.ts))),
-                            React.createElement("span", { className: "nm" }, r.name || ""),
-                            React.createElement("span", { className: "st" }, r.status || ""),
-                            React.createElement("span", { className: "tx" }, r.content || ""));
-                    }) : React.createElement("div", { className: "it" }, React.createElement("span", { className: "tx" }, "盘中雷达为交易时段推送"))));
+            // 卡1 竞价涨停委买（GetBidYiDong，集合竞价时段数据）
+            const bbCard = card("bb", true, "竞价涨停委买", (bb && bb.day) || null,
+                bbTop.map(function (r) {
+                    return [r.code || "", r.name || "", r.amount != null ? "委买 " + fmtWan(r.amount) : ""].join(" ").trim();
+                }),
+                "竞价涨停委买为集合竞价时段（9:15-9:25）数据", null, "bidbuy");
+            // 卡2 竞价异动板块（GetBKJJSearch，集合竞价时段数据）
+            const bkCard = card("bk", true, "竞价异动板块", (bk && bk.day) || null,
+                bkTop.map(function (r) {
+                    var cells = Array.isArray(r) ? r : [];
+                    return [String(cells[0] || ""), "竞价爆量 " + String(cells[2] || "") + "倍", "异动金额 " + String(cells[3] || "")].join(" ").trim();
+                }),
+                "竞价异动为集合竞价时段（9:20-9:25）数据", null, "bkjj");
+            // 卡3 市场雷达（2101 推送明细，行点击进个股）
+            const rdCard = card("rd", true, "市场雷达", null,
+                radarTop.map(function (r) {
+                    return React.createElement(React.Fragment, null,
+                        React.createElement("span", { className: "tm" }, fmtTs(Number(r.ts))),
+                        React.createElement("span", { className: "nm" }, r.name || ""),
+                        React.createElement("span", { className: "st" }, r.status || ""),
+                        React.createElement("span", { className: "tx" }, r.content || ""));
+                }),
+                "市场雷达为交易时段推送", function (r) { if (r.code) go({ page: "stock", stock: { code: r.code, name: r.name } }); }, "radar");
+            // 卡4 尾盘抢筹（GetWPQCIndex）
+            const wpCard = card("wp", true, "尾盘抢筹", (wp && wp.day) || null,
+                wpTop.map(function (r) {
+                    return React.createElement(React.Fragment, null,
+                        React.createElement("span", { className: "tm" }, wp.day || ""),
+                        React.createElement("span", { className: "st" }, "****"),
+                        React.createElement("span", { className: "tx" }, "挂单抢筹 ",
+                            React.createElement("b", { className: "rd" }, fmtWan(r.amount))));
+                }),
+                "尾盘抢筹为 14:30 后数据", null, "wpqc");
 
-            // 卡2 市场雷达（明细，默认展开）
-            const mktCard = React.createElement("div", { className: "kpl-tk-card", key: "mkt" },
-                cardHead("mkt", true, "市场雷达"),
-                isOpen("mkt", true) && React.createElement("div", { className: "bd" },
-                    radarItems.length ? radarItems.slice(0, 8).map(function (r, i) {
-                        return React.createElement("div", { key: i, className: "it" },
-                            React.createElement("span", { className: "tm" }, fmtTs(Number(r.ts))),
-                            React.createElement("span", { className: "nm" }, r.name || ""),
-                            React.createElement("span", { className: "st" }, r.status || ""),
-                            React.createElement("span", { className: "tx" }, r.content || ""));
-                    }) : React.createElement("div", { className: "it" }, React.createElement("span", { className: "tx" }, "盘中雷达为交易时段推送"))));
-
-            // 卡3 尾盘抢筹
-            const wpCard = React.createElement("div", { className: "kpl-tk-card", key: "wp" },
-                cardHead("wp", true, "尾盘抢筹",
-                    wp && wp.day ? React.createElement("span", { className: "rt" },
-                        React.createElement("i", { className: "tm" }, wp.day)) : null),
-                isOpen("wp", true) && React.createElement("div", { className: "bd" },
-                    wpList.length ? wpList.map(function (r, i) {
-                        return React.createElement("div", { key: i, className: "it" },
-                            React.createElement("span", { className: "tm" }, wp.day || ""),
-                            React.createElement("span", { className: "st" }, "****"),
-                            React.createElement("span", { className: "tx" },
-                                "挂单抢筹", React.createElement("b", { className: "rd" },
-                                    r.amount != null ? fmtAmount(r.amount) : "--")));
-                    }) : React.createElement("div", { className: "it" }, React.createElement("span", { className: "tx" }, "尾盘抢筹为 14:30 后数据"))));
-
-            // 卡4 竞价异动板块
-            const bkCard = React.createElement("div", { className: "kpl-tk-card", key: "bk" },
-                cardHead("bk", true, "竞价异动板块"),
-                isOpen("bk", true) && React.createElement("div", { className: "bd" },
-                    bkList.length ? bkList.map(function (r, i) {
-                        const cells = Array.isArray(r) ? r : [];
-                        return React.createElement("div", { key: i, className: "it" },
-                            React.createElement("span", { className: "nm" }, String(cells[0] || "")),
-                            React.createElement("span", { className: "tx" }, String(cells[1] || "竞价爆量")),
-                            React.createElement("span", { className: "tx" }, String(cells[2] || "")),
-                            React.createElement("span", { className: "tx" }, "异动金额"),
-                            React.createElement("span", { className: "tm" }, String(cells[3] || "")));
-                    }) : React.createElement("div", { className: "it" }, React.createElement("span", { className: "tx" }, "竞价异动为集合竞价时段（9:20-9:25）数据"))));
-
-            return React.createElement("div", { className: "kpl-tk-wrap" }, radarCard, mktCard, wpCard, bkCard);
+            return React.createElement("div", { className: "kpl-tk-wrap" }, bbCard, bkCard, rdCard, wpCard);
         }
 
         // 板块强度表（RealRankingInfo HTTP 组装，与 App 强度列逐位对拍 2026-10-08：
@@ -6260,6 +6307,7 @@ window.__ModuleLoader__.load({
                 else if (drill.page === "yidongMany") content = React.createElement(KPL_YD_MANY_G, { go });
                 else if (drill.page === "zdjk") content = React.createElement(KPL_YD_ALERT_G, { go, initTab: "zdjk" });
                 else if (drill.page === "ydAlert") content = React.createElement(KPL_YD_ALERT_G, { go });
+                else if (drill.page === "tickerDetail") content = React.createElement(KplTickerDetail, { go, kind: drill.kind });
                 else if (drill.page === "artCenter") content = React.createElement(KplRecommendPage, { go });
                 else if (drill.page === "stock") content = React.createElement(KPL_STOCK_DETAIL_G, { stock: drill.stock, go });
                 else if (drill.page === "search") content = React.createElement(KplSearch, { go });
@@ -7261,7 +7309,7 @@ window.__ModuleLoader__.load({
                 .kpl-plt-cards > div { scroll-snap-align: start; }
                 /* 折叠行横向轮播（App ViewPager 同款：卡片 92% 宽露出邻卡边，左右滑切换） */
                 .kpl-tk-wrap { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 10px 10px 0; }
-                .kpl-tk-card { flex: 0 0 92%; scroll-snap-align: center; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 0 12px; }
+                .kpl-tk-card { flex: 0 0 78%; scroll-snap-align: center; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 0 12px; }
                 .kpl-tk-card .hd { display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; }
                 .kpl-tk-card .hd .t { font-size: 16px; font-weight: 700; color: #111; }
                 .kpl-tk-card .hd .rt { flex: 1; display: flex; align-items: center; gap: 8px; justify-content: flex-end; overflow: hidden; }
