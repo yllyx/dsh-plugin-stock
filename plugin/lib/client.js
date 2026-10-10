@@ -7309,7 +7309,7 @@ window.__ModuleLoader__.load({
                 .kpl-plt-cards > div { scroll-snap-align: start; }
                 /* 折叠行横向轮播（App ViewPager 同款：卡片 92% 宽露出邻卡边，左右滑切换） */
                 .kpl-tk-wrap { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 10px 10px 0; }
-                .kpl-tk-card { flex: 0 0 78%; scroll-snap-align: center; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 0 12px; }
+                .kpl-tk-card { flex: 0 0 39%; scroll-snap-align: center; background: #fff; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,.06); padding: 0 12px; }
                 .kpl-tk-card .hd { display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; }
                 .kpl-tk-card .hd .t { font-size: 16px; font-weight: 700; color: #111; }
                 .kpl-tk-card .hd .rt { flex: 1; display: flex; align-items: center; gap: 8px; justify-content: flex-end; overflow: hidden; }
