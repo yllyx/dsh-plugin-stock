@@ -3460,7 +3460,7 @@ window.__ModuleLoader__.load({
                 bidbuy: { title: "竞价涨停委买", api: "/api/kpl/bidbuy", key: "list", empty: "竞价涨停委买为集合竞价时段（9:15-9:25）数据" },
                 bkjj: { title: "竞价异动板块", api: "/api/kpl/bkjj", key: "list", empty: "竞价异动为集合竞价时段（9:20-9:25）数据" },
                 radar: { title: "市场雷达", api: null, key: "items", empty: "市场雷达为交易时段推送" },
-                wpqc: { title: "尾盘抢筹", api: "/api/kpl/wpqc", key: "list", empty: "尾盘抢筹为 14:30 后数据" },
+                wpqc: { title: "尾盘抢筹", api: "/api/kpl/wpqc-detail", key: "rows", empty: "尾盘抢筹为 14:30 后数据" },
             }[kind] || { title: "详情", api: null, key: "list", empty: "--" };
             const [d, setD] = useState(null);
             const [error, setError] = useState(null);
@@ -3483,11 +3483,13 @@ window.__ModuleLoader__.load({
                             React.createElement("span", { className: "tx" }, r.content || ""));
                     }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, meta.empty)) :
                     kind === "wpqc" ? (rows.length ? rows.map(function (r, i) {
-                        return React.createElement("div", { key: i, className: "kpl-tk-drow" },
-                            React.createElement("span", { className: "tm" }, d.day || ""),
-                            React.createElement("span", { className: "st" }, "****"),
-                            React.createElement("span", { className: "tx" }, "挂单抢筹 ",
-                                React.createElement("b", { className: "rd" }, fmtAmount(r.amount))));
+                        var up = Number(r.incRate) >= 0;
+                        return React.createElement("div", { key: i, className: "kpl-tk-drow",
+                            onClick: function () { go({ page: "stock", stock: { code: r.code, name: r.name } }); } },
+                            React.createElement("span", { className: "nm" }, r.name || r.code),
+                            React.createElement("span", { className: "tx" }, r.concept || ""),
+                            React.createElement("span", { className: "up" }, r.incRate != null ? (up ? "+" : "") + r.incRate.toFixed(2) + "%" : "--"),
+                            React.createElement("span", { className: "rd" }, "抢筹 " + fmtAmount(r.amount)));
                     }) : React.createElement("div", { className: "kpl-mkt-empty sm" }, meta.empty)) :
                     kind === "bkjj" ? (rows.length ? rows.map(function (r, i) {
                         var cells = Array.isArray(r) ? r : [];
@@ -3507,12 +3509,14 @@ window.__ModuleLoader__.load({
 
         function KplPlateTicker({ radarItems, go }) {
             const [wp, setWp] = useState(null);
+            const [wpd, setWpd] = useState(null);
             const [bk, setBk] = useState(null);
             const [bb, setBb] = useState(null);
             const [openMap, setOpenMap] = useState({});
             useEffect(function () {
                 let alive = true;
                 api("/api/kpl/wpqc").then(function (d) { if (alive) setWp(d); }).catch(function () { });
+                api("/api/kpl/wpqc-detail").then(function (d) { if (alive) setWpd(d); }).catch(function () { });
                 api("/api/kpl/bkjj").then(function (d) { if (alive) setBk(d); }).catch(function () { });
                 api("/api/kpl/bidbuy").then(function (d) { if (alive) setBb(d); }).catch(function () { });
                 return function () { alive = false; };
@@ -3569,12 +3573,14 @@ window.__ModuleLoader__.load({
                 }),
                 "市场雷达为交易时段推送", function (r) { if (r.code) go({ page: "stock", stock: { code: r.code, name: r.name } }); }, "radar");
             // 卡4 尾盘抢筹（GetWPQCIndex）
-            const wpCard = card("wp", true, "尾盘抢筹", (wp && wp.day) || null,
-                wpTop.map(function (r) {
+            const wpDetail = (d && d.rows) || [];
+            const wpCard = card("wp", true, "尾盘抢筹", (wpDetail.length ? wpDetail[0].code + " " + wpDetail[0].name : (wp && wp.day) || null),
+                wpDetail.slice(0, 3).map(function (r) {
+                    var up = Number(r.incRate) >= 0;
                     return React.createElement(React.Fragment, null,
-                        React.createElement("span", { className: "tm" }, wp.day || ""),
-                        React.createElement("span", { className: "st" }, "****"),
-                        React.createElement("span", { className: "tx" }, "挂单抢筹 ",
+                        React.createElement("span", { className: "nm" }, r.name || r.code),
+                        React.createElement("span", { className: "st " + (up ? "up" : "dn") }, r.incRate != null ? (up ? "+" : "") + r.incRate.toFixed(2) + "%" : "--"),
+                        React.createElement("span", { className: "tx" }, "抢筹 ",
                             React.createElement("b", { className: "rd" }, fmtWan(r.amount))));
                 }),
                 "尾盘抢筹为 14:30 后数据", null, "wpqc");

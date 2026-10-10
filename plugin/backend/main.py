@@ -1739,6 +1739,18 @@ async def kpl_index_cards():
     return await asyncio.to_thread(kpl_api.get_kpl().get_index_cards)
 
 
+@app.get("/api/kpl/wpqc-detail")
+async def kpl_wpqc_detail():
+    """尾盘抢筹明细（GetWPQC Type=1：不脱敏全字段，App 详情页同源）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_wpqc_detail)
+
+
+@app.get("/api/kpl/bidbuy")
+async def kpl_bidbuy():
+    """竞价涨停委买（GetBidYiDong，板块 tab 轮播卡；集合竞价时段数据）"""
+    return await asyncio.to_thread(kpl_api.get_kpl().get_bidbuy)
+
+
 @app.get("/api/kpl/bkjj")
 async def kpl_bkjj():
     """竞价异动板块（GetBKJJSearch，板块 tab 轮播第 4 卡；竞价时段有数据）"""

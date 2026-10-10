@@ -3352,15 +3352,96 @@ class KplClient:
             self._cache.pop("index_cards", None)
         return data
 
-    def get_bkjj(self) -> Dict[str, Any]:
-        """竞价异动板块（StockBidYiDong/GetBKJJSearch @HQ，App 板块 tab 轮播第 4 卡同源）。
-        竞价时段（约 9:20-9:25）返回板块竞价爆量数据，其余时段 List 为空（App 亦缓存展示）。
-        GetBKJJBL 需参数（1020），本轮未破。"""
+    def get_wpqc_detail(self) -> Dict[str, Any]:
+        """尾盘抢筹明细（StockBidYiDong/GetWPQC @HQ，App 轮播卡点开详情同源）。
+        请求 {Day?, Type, Order, Index, st}；Type=1/Order=1 实测返回不脱敏全字段
+        （GetWPQCIndex 为脱敏预览版）。行字段（2026-10-10 实测）：
+        f0 code f1 name f4 概念 f5 涨幅% f6流通市值 f8主力净额 **f11 抢筹金额**。"""
+        def _varint(b, i):
+            v = 0; sh = 0
+            while True:
+                x = b[i]; i += 1
+                v |= (x & 0x7f) << sh; sh += 7
+                if not x & 0x80: break
+            return v, i
+
+        # GetWPQC 为 HTTP 接口（StockBidYiDong 控制器）
         def _fetch():
-            d = self.call(HOST_HQ, "StockBidYiDong", "GetBKJJSearch", {}, authed=False)
+            d = self.call(HOST_HQ, "StockBidYiDong", "GetWPQC",
+                          {"Day": time.strftime("%Y-%m-%d"), "Type": "1", "Order": "1",
+                           "Index": "0", "st": "20"}, authed=False)
             d = d or {}
-            return {"day": time.strftime("%Y-%m-%d"), "list": d.get("List") or []}
-        return self._cached_swr("bkjj", 60, _fetch)
+            rows = []
+            for r in d.get("List") or []:
+                if not isinstance(r, list) or len(r) < 12:
+                    continue
+                try:
+                    rows.append({
+                        "code": str(r[0]), "name": str(r[1]), "concept": str(r[4] or ""),
+                        "incRate": float(r[5]) if r[5] != "" else None,
+                        "mainNet": float(r[8]) if r[8] not in ("", None) else None,
+                        "amount": float(r[11]) if r[11] not in ("", None) else None,
+                    })
+                except (TypeError, ValueError, IndexError):
+                    continue
+            return {"day": d.get("Day") or time.strftime("%Y-%m-%d"), "rows": rows}
+        return self._cached_swr("wpqc_detail", 120, _fetch)
+
+    def get_bkjj(self) -> Dict[str, Any]:
+        """竞价异动板块（StockBidYiDong/GetBKJJSearch @HQ，App 板块 tab 轮播卡同源）。
+        竞价时段（约 9:20-9:25）生成板块竞价爆量数据，其余时段 List 为空——
+        App 缓存展示当日竞价结果，插件同款：当日非空结果落盘缓存。"""
+        import json as _json
+        day = time.strftime("%Y-%m-%d")
+        try:
+            from storage import storage as _st
+            cache_p = _st.data_dir / "kpl_bkjj_cache.json"
+        except Exception:
+            cache_p = None
+        if cache_p is not None and cache_p.exists():
+            try:
+                dj = _json.loads(cache_p.read_text(encoding="utf-8"))
+                if dj.get("day") == day and dj.get("list"):
+                    return {"day": dj["day"], "list": dj["list"]}
+            except Exception:
+                pass
+        d = self.call(HOST_HQ, "StockBidYiDong", "GetBKJJSearch", {}, authed=False) or {}
+        lst = d.get("List") or []
+        if lst and cache_p is not None:
+            try:
+                cache_p.write_text(_json.dumps({"day": day, "list": lst}, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+        return {"day": day, "list": lst}
+
+    def get_bidbuy(self) -> Dict[str, Any]:
+        """竞价涨停委买（StockBidYiDong/GetBidYiDong @HQ，App 板块 tab 轮播卡同源）。
+        响应 {Time,Day,Total,List,isDY,JF}；List 行为竞价委买数据，仅集合竞价时段生成——
+        与 App 一致缓存当日非空结果。JF=竞价分。"""
+        import json as _json
+        day = time.strftime("%Y-%m-%d")
+        try:
+            from storage import storage as _st
+            cache_p = _st.data_dir / "kpl_bidbuy_cache.json"
+        except Exception:
+            cache_p = None
+        if cache_p is not None and cache_p.exists():
+            try:
+                dj = _json.loads(cache_p.read_text(encoding="utf-8"))
+                if dj.get("day") == day and dj.get("list"):
+                    return {"day": dj["day"], "total": dj.get("total", 0), "list": dj["list"], "jf": dj.get("jf", 0)}
+            except Exception:
+                pass
+        d = self.call(HOST_HQ, "StockBidYiDong", "GetBidYiDong", {}, authed=False) or {}
+        lst = d.get("List") or []
+        out = {"day": d.get("Day") or day, "total": d.get("Total", 0), "list": lst, "jf": d.get("JF", 0)}
+        if lst and cache_p is not None:
+            try:
+                cache_p.write_text(_json.dumps({"day": out["day"], "total": out["total"], "list": lst, "jf": out["jf"]},
+                                               ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+        return out
 
     def get_wpqc(self) -> Dict[str, Any]:
         """尾盘抢筹（StockBidYiDong/GetWPQCIndex @HQ，App 板块 tab 折叠行盘后频道同源）。
